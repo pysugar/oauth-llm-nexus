@@ -1,0 +1,105 @@
+# Model Routes Configuration for Google Cloud Code Backend
+# This file is loaded on first startup if the ModelRoute table is empty.
+# Users can modify mappings via Dashboard after initial load.
+#
+# Format:
+#   - client: Client-facing model name (from SDK request)
+#   - provider: Backend OAuth provider (currently: google)
+#   - target: Backend model name
+#
+# NOTE: Models not in this list are passed through as-is (e.g., native Gemini models)
+
+routes:
+  # ============================================
+  # Claude Models -> Google Cloud Code
+  # ============================================
+  
+  # Haiku Tier (Fast)
+  - client: claude-3-haiku
+    provider: google
+    target: gemini-3-flash
+  - client: claude-3-5-haiku
+    provider: google
+    target: gemini-3-flash
+  - client: claude-haiku-4-5
+    provider: google
+    target: gemini-3-flash
+  
+  # Sonnet Tier (Balanced)
+  - client: claude-3-sonnet
+    provider: google
+    target: claude-sonnet-4-5
+  - client: claude-3-5-sonnet
+    provider: google
+    target: claude-sonnet-4-5
+  - client: claude-3-5-sonnet-20241022
+    provider: google
+    target: claude-sonnet-4-5-thinking
+  - client: claude-sonnet-4-5
+    provider: google
+    target: claude-sonnet-4-5
+  - client: claude-sonnet-4-5-20250514
+    provider: google
+    target: claude-sonnet-4-5
+  
+  # Opus Tier (Powerful)
+  - client: claude-3-opus
+    provider: google
+    target: claude-opus-4-5-thinking
+  - client: claude-3-opus-20240229
+    provider: google
+    target: claude-opus-4-5-thinking
+  - client: claude-opus-4-5
+    provider: google
+    target: claude-opus-4-5-thinking
+  - client: claude-opus-4-5-20250514
+    provider: google
+    target: claude-opus-4-5-thinking
+
+  # ============================================
+  # OpenAI/Codex Models -> Google Cloud Code
+  # ============================================
+  
+  # Codex Series (2026)
+  - client: gpt-5.2-codex
+    provider: google
+    target: claude-sonnet-4-5-thinking
+  - client: gpt-5.1-codex-max
+    provider: google
+    target: gemini-3-pro-high
+  - client: gpt-5.1-codex-mini
+    provider: google
+    target: gemini-3-flash
+  - client: gpt-5.2
+    provider: google
+    target: gemini-3-pro-high
+  
+  # GPT-4o Series
+  - client: gpt-4o
+    provider: google
+    target: gemini-3-pro-high
+  - client: gpt-4o-mini
+    provider: google
+    target: gemini-2.5-flash-lite
+  
+  # Legacy GPT
+  - client: gpt-4
+    provider: google
+    target: gemini-3-pro-high
+  - client: gpt-4-turbo
+    provider: google
+    target: gemini-3-pro-high
+  - client: gpt-3.5-turbo
+    provider: google
+    target: gpt-oss-120b-medium
+  
+  # Reasoning Models
+  - client: o1
+    provider: google
+    target: gemini-2.5-flash
+  - client: o1-preview
+    provider: google
+    target: gemini-2.5-flash
+  - client: o3
+    provider: google
+    target: gemini-3-pro-high

@@ -74,6 +74,12 @@ func AccountModelsHandler(tokenMgr *token.Manager, upstreamClient *upstream.Clie
 			return
 		}
 
+		tokenSuffix := "..."
+		if len(cachedToken.AccessToken) > 10 {
+			tokenSuffix = "..." + cachedToken.AccessToken[len(cachedToken.AccessToken)-10:]
+		}
+		log.Printf("📊 Fetching models for Account: %s (Token: %s)", cachedToken.Email, tokenSuffix)
+
 		resp, err := upstreamClient.FetchAvailableModels(cachedToken.AccessToken)
 		if err != nil {
 			http.Error(w, "Failed to fetch models: "+err.Error(), http.StatusBadGateway)
@@ -98,11 +104,11 @@ func AccountModelsHandler(tokenMgr *token.Manager, upstreamClient *upstream.Clie
 }
 
 // SetPrimaryAccountHandler handles POST /api/accounts/{id}/promote
-func SetPrimaryAccountHandler(db *gorm.DB) http.HandlerFunc {
+func SetPrimaryAccountHandler(database *gorm.DB, tokenMgr *token.Manager) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
 
-		err := db.Transaction(func(tx *gorm.DB) error {
+		err := database.Transaction(func(tx *gorm.DB) error {
 			// 1. Demote all accounts
 			if err := tx.Model(&models.Account{}).Where("is_primary = ?", true).Update("is_primary", false).Error; err != nil {
 				return err
@@ -122,6 +128,9 @@ func SetPrimaryAccountHandler(db *gorm.DB) http.HandlerFunc {
 			http.Error(w, "Failed to set primary account", http.StatusInternalServerError)
 			return
 		}
+
+		// Reload token cache to reflect primary change
+		tokenMgr.ReloadAllTokens()
 
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"status":"ok"}`))
@@ -235,14 +244,46 @@ const dashboardHTML = `<!DOCTYPE html>
             <p class="text-xs text-gray-500 mt-2">Use this key with any SDK: <code>api_key="sk-..."</code></p>
         </div>
 
-        <!-- Available Models Card -->
+        <!-- Model Routes Card -->
         <div class="bg-gray-800 rounded-xl p-4 mb-6">
             <div class="flex justify-between items-center mb-2">
-                <h3 class="text-sm font-semibold text-gray-400">🤖 Available Models</h3>
-                <button onclick="loadModels()" class="text-xs bg-gray-600 hover:bg-gray-500 px-3 py-1 rounded">🔄 Refresh</button>
+                <h3 class="text-sm font-semibold text-gray-400">🗺️ Model Routes <span class="text-xs text-gray-500 ml-1">(Client → Google Backend)</span></h3>
+                <div class="flex gap-2">
+                    <button onclick="showAddRouteModal()" class="text-xs bg-blue-600 hover:bg-blue-500 px-3 py-1 rounded">➕ Add</button>
+                    <button onclick="resetModelRoutes()" class="text-xs bg-gray-600 hover:bg-gray-500 px-3 py-1 rounded">🔄 Reset</button>
+                    <button onclick="loadModelRoutes()" class="text-xs bg-gray-600 hover:bg-gray-500 px-3 py-1 rounded">↻</button>
+                </div>
             </div>
-            <div id="models-container" class="grid sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 text-sm">
-                <div class="text-gray-400">Loading models...</div>
+            <div id="routes-container" class="max-h-64 overflow-y-auto space-y-1 text-sm">
+                <div class="text-gray-400">Loading routes...</div>
+            </div>
+        </div>
+
+        <!-- Add/Edit Route Modal -->
+        <div id="route-modal" class="hidden fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+            <div class="bg-gray-800 rounded-xl p-6 max-w-md w-full mx-4 border border-gray-700">
+                <h3 id="route-modal-title" class="text-lg font-semibold mb-4">Add Model Route</h3>
+                <form id="route-form" onsubmit="saveRoute(event)">
+                    <input type="hidden" id="route-id" value="">
+                    <div class="mb-3">
+                        <label class="block text-sm text-gray-400 mb-1">Client Model</label>
+                        <input type="text" id="route-client" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white" placeholder="e.g., gpt-4" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="block text-sm text-gray-400 mb-1">Backend Provider</label>
+                        <select id="route-provider" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white">
+                            <option value="google" selected>google</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="block text-sm text-gray-400 mb-1">Target Model</label>
+                        <input type="text" id="route-target" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white" placeholder="e.g., gemini-3-pro-high" required>
+                    </div>
+                    <div class="flex justify-end gap-2 mt-4">
+                        <button type="button" onclick="hideRouteModal()" class="px-4 py-2 text-gray-400 hover:text-white">Cancel</button>
+                        <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded text-white">Save</button>
+                    </div>
+                </form>
             </div>
         </div>
 
@@ -314,7 +355,7 @@ const dashboardHTML = `<!DOCTYPE html>
 
         async function loadAll() {
             try {
-                const res = await fetch('/api/accounts');
+                const res = await fetch('/api/accounts', { cache: 'no-cache' });
                 const data = await res.json();
                 document.getElementById('account-count').textContent = data.count + ' linked';
 
@@ -341,7 +382,7 @@ const dashboardHTML = `<!DOCTYPE html>
                     let modelsDict = null;
                     if (acc.is_active) {
                         try {
-                            const mRes = await fetch('/api/accounts/' + acc.id + '/models');
+                            const mRes = await fetch('/api/accounts/' + acc.id + '/models', { cache: 'no-cache' });
                             if (mRes.ok) { 
                                 const mData = await mRes.json(); 
                                 modelsDict = mData.models?.models || null;
@@ -508,29 +549,131 @@ const dashboardHTML = `<!DOCTYPE html>
             }
         }
 
-        // Models Functions
-        async function loadModels() {
-            const container = document.getElementById('models-container');
+        // Model Routes Functions
+        async function loadModelRoutes() {
+            const container = document.getElementById('routes-container');
             container.innerHTML = '<div class="text-gray-400">Loading...</div>';
             try {
-                const res = await fetch('/api/models');
+                const res = await fetch('/api/model-routes', { cache: 'no-cache' });
                 if (res.ok) {
                     const data = await res.json();
                     let html = '';
-                    if (data.models && data.models.length > 0) {
-                        data.models.forEach(m => {
-                            html += '<div class="bg-gray-700/50 rounded p-2 flex justify-between items-center group">';
-                            html += '<span class="font-mono text-blue-300">' + m.id + '</span>';
-                            html += '<button onclick="navigator.clipboard.writeText(\'' + m.id + '\')" class="opacity-0 group-hover:opacity-100 text-xs bg-gray-600 hover:bg-gray-500 px-2 py-0.5 rounded text-white">Copy</button>';
-                            html += '</div>';
+                    if (data.routes && data.routes.length > 0) {
+                        html += '<div class="grid grid-cols-5 gap-2 text-xs text-gray-500 pb-1 border-b border-gray-700 mb-1">';
+                        html += '<span>Client</span><span>Provider</span><span class="text-center">→</span><span>Target</span><span class="text-right">Actions</span></div>';
+                        data.routes.forEach(r => {
+                            html += '<div class="grid grid-cols-5 gap-2 items-center hover:bg-gray-700/50 rounded px-1 py-0.5 group">';
+                            html += '<code class="text-blue-300 truncate text-xs">' + r.client_model + '</code>';
+                            html += '<span class="text-purple-400 text-xs">' + r.target_provider + '</span>';
+                            html += '<span class="text-gray-500 text-center">→</span>';
+                            html += '<code class="text-green-300 truncate text-xs">' + r.target_model + '</code>';
+                            html += '<div class="text-right opacity-0 group-hover:opacity-100">';
+                            html += '<button onclick="editRoute(' + r.id + ',\'' + r.client_model + '\',\'' + r.target_provider + '\',\'' + r.target_model + '\')" class="text-xs text-blue-400 hover:text-blue-300 mr-2">✏️</button>';
+                            html += '<button onclick="deleteRoute(' + r.id + ')" class="text-xs text-red-400 hover:text-red-300">🗑️</button>';
+                            html += '</div></div>';
                         });
+                        html += '<div class="text-xs text-gray-500 pt-2">' + data.count + ' routes configured</div>';
                     } else {
-                        html = '<div class="text-gray-500 italic col-span-full">No models available. Link an account first.</div>';
+                        html = '<div class="text-gray-500 italic">No routes configured. Click "Reset" to load defaults.</div>';
                     }
                     container.innerHTML = html;
                 }
             } catch (e) {
-                container.innerHTML = '<div class="text-red-400">Failed to load models.</div>';
+                container.innerHTML = '<div class="text-red-400">Failed to load routes.</div>';
+            }
+        }
+
+        function showAddRouteModal() {
+            document.getElementById('route-modal-title').textContent = 'Add Model Route';
+            document.getElementById('route-id').value = '';
+            document.getElementById('route-client').value = '';
+            document.getElementById('route-provider').value = 'google';
+            document.getElementById('route-target').value = '';
+            document.getElementById('route-modal').classList.remove('hidden');
+        }
+
+        function editRoute(id, client, provider, target) {
+            document.getElementById('route-modal-title').textContent = 'Edit Model Route';
+            document.getElementById('route-id').value = id;
+            document.getElementById('route-client').value = client;
+            document.getElementById('route-provider').value = provider;
+            document.getElementById('route-target').value = target;
+            document.getElementById('route-modal').classList.remove('hidden');
+        }
+
+        function hideRouteModal() {
+            document.getElementById('route-modal').classList.add('hidden');
+        }
+
+        async function saveRoute(e) {
+            e.preventDefault();
+            const id = document.getElementById('route-id').value;
+            const client = document.getElementById('route-client').value.trim();
+            const provider = document.getElementById('route-provider').value;
+            const target = document.getElementById('route-target').value.trim();
+
+            if (!client || !target) {
+                alert('Client Model and Target Model are required');
+                return;
+            }
+
+            const payload = {
+                client_model: client,
+                target_provider: provider,
+                target_model: target,
+                is_active: true
+            };
+
+            try {
+                let res;
+                if (id) {
+                    // Update
+                    res = await fetch('/api/model-routes/' + id, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                } else {
+                    // Create
+                    res = await fetch('/api/model-routes', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                }
+
+                if (res.ok) {
+                    hideRouteModal();
+                    loadModelRoutes();
+                } else {
+                    const err = await res.json();
+                    alert('Error: ' + (err.error || 'Failed to save'));
+                }
+            } catch (e) {
+                alert('Failed: ' + e.message);
+            }
+        }
+
+        async function deleteRoute(id) {
+            if (!confirm('Delete this route?')) return;
+            try {
+                const res = await fetch('/api/model-routes/' + id, { method: 'DELETE' });
+                if (res.ok) loadModelRoutes();
+            } catch (e) {
+                alert('Failed to delete: ' + e.message);
+            }
+        }
+
+        async function resetModelRoutes() {
+            if (!confirm('Reset all model routes to default YAML configuration?')) return;
+            try {
+                const res = await fetch('/api/model-routes/reset', { method: 'POST' });
+                if (res.ok) {
+                    loadModelRoutes();
+                    alert('Model routes reset to defaults!');
+                }
+            } catch (e) {
+                alert('Failed to reset: ' + e.message);
             }
         }
 
@@ -538,7 +681,7 @@ const dashboardHTML = `<!DOCTYPE html>
         window.addEventListener('load', () => {
             loadAll();
             loadAPIKey();
-            loadModels();
+            loadModelRoutes();
         });
         
         // Polling

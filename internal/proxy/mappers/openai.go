@@ -82,37 +82,8 @@ type GeminiGenerationConfig struct {
 	StopSequences   []string `json:"stopSequences,omitempty"`
 }
 
-// Model mapping from OpenAI names to Gemini internal names
-var ModelMapping = map[string]string{
-	// GPT-4 family -> Gemini 3 Pro
-	"gpt-4":             "gemini-3-pro-high",
-	"gpt-4-turbo":       "gemini-3-pro-high",
-	"gpt-4o":            "gemini-3-pro-high",
-	"gpt-4o-mini":       "gemini-3-pro-low",
-	
-	// GPT-3.5 -> Gemini Flash
-	"gpt-3.5-turbo":     "gemini-3-flash",
-	"gpt-3.5":           "gemini-3-flash",
-	
-	// o1 family -> Gemini 2.5 Pro (thinking)
-	"o1":                "gemini-2.5-pro",
-	"o1-preview":        "gemini-2.5-pro",
-	"o1-mini":           "gemini-2.5-flash",
-	
-	// Claude family -> mapped models
-	"claude-3-opus":     "gemini-3-pro-high",
-	"claude-3-sonnet":   "claude-sonnet-4-5",
-	"claude-3-haiku":    "gemini-3-flash",
-	"claude-3.5-sonnet": "claude-sonnet-4-5-thinking",
-	
-	// Direct Gemini names
-	"gemini-pro":        "gemini-2.5-pro",
-	"gemini-flash":      "gemini-2.5-flash",
-	"gemini-2.5-pro":    "gemini-2.5-pro",
-	"gemini-2.5-flash":  "gemini-2.5-flash",
-	"gemini-3-pro":      "gemini-3-pro-high",
-	"gemini-3-flash":    "gemini-3-flash",
-}
+// Model mapping is now handled via database (see db.ResolveModel)
+// Legacy hardcoded map removed in favor of config/model_routes.yaml
 
 // OpenAIToGemini converts an OpenAI chat request to Gemini format
 func OpenAIToGemini(req OpenAIChatRequest, projectID string) GeminiRequest {
@@ -135,11 +106,8 @@ func OpenAIToGemini(req OpenAIChatRequest, projectID string) GeminiRequest {
 		})
 	}
 	
-	// Map model name
-	model := req.Model
-	if mapped, ok := ModelMapping[model]; ok {
-		model = mapped
-	}
+	// Resolve model via database (passthrough if not found)
+	model := ResolveModelForGoogle(req.Model)
 	
 	geminiReq := GeminiRequest{
 		Project:   projectID,

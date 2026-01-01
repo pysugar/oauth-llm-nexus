@@ -58,23 +58,6 @@ type ClaudeDelta struct {
 	StopReason string `json:"stop_reason,omitempty"`
 }
 
-// Claude model mapping
-var ClaudeModelMapping = map[string]string{
-	"claude-3-opus-20240229":       "gemini-3-pro-high",
-	"claude-3-sonnet-20240229":     "claude-sonnet-4-5",
-	"claude-3-haiku-20240307":      "gemini-3-flash",
-	"claude-3-5-sonnet-20241022":   "claude-sonnet-4-5-thinking",
-	"claude-3-5-haiku-20241022":    "gemini-3-flash",
-	"claude-sonnet-4-5-20250514":   "claude-sonnet-4-5",
-	"claude-opus-4-5-20250514":     "claude-opus-4-5-thinking",
-	
-	// Common aliases
-	"claude-3-opus":      "gemini-3-pro-high",
-	"claude-3-sonnet":    "claude-sonnet-4-5",
-	"claude-3-haiku":     "gemini-3-flash",
-	"claude-3.5-sonnet":  "claude-sonnet-4-5-thinking",
-}
-
 // ClaudeToGemini converts a Claude request to Gemini format
 func ClaudeToGemini(req ClaudeRequest, projectID string) GeminiRequest {
 	contents := make([]GeminiContent, 0, len(req.Messages)+1)
@@ -103,11 +86,8 @@ func ClaudeToGemini(req ClaudeRequest, projectID string) GeminiRequest {
 		})
 	}
 	
-	// Map model name
-	model := req.Model
-	if mapped, ok := ClaudeModelMapping[model]; ok {
-		model = mapped
-	}
+	// Resolve model via database (passthrough if not found)
+	model := ResolveModelForGoogle(req.Model)
 	
 	geminiReq := GeminiRequest{
 		Project:   projectID,

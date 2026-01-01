@@ -154,18 +154,33 @@ func (m *Manager) RefreshAccountToken(accountID string) error {
 	return nil
 }
 
+func maskToken(t string) string {
+	if len(t) < 20 {
+		return t
+	}
+	return "..." + t[len(t)-12:]
+}
+
 // GetPrimaryOrDefaultToken returns token for Primary account, or first active if no primary set
 func (m *Manager) GetPrimaryOrDefaultToken() (*CachedToken, error) {
 	// 1. Try to find Primary account
 	var primaryAccount models.Account
 	if err := m.db.Where("is_primary = ? AND is_active = ?", true, true).First(&primaryAccount).Error; err == nil {
-		return m.GetTokenByAccountID(primaryAccount.ID)
+		token, err := m.GetTokenByAccountID(primaryAccount.ID)
+		if err == nil {
+			log.Printf("🎫 Using PRIMARY token for: %s (ID: %s, Token: %s)", token.Email, primaryAccount.ID, maskToken(token.AccessToken))
+			return token, nil
+		}
 	}
 
 	// 2. Fallback to first active account (ordered by last used descending)
 	var fallbackAccount models.Account
 	if err := m.db.Where("is_active = ?", true).Order("last_used_at DESC").First(&fallbackAccount).Error; err == nil {
-		return m.GetTokenByAccountID(fallbackAccount.ID)
+		token, err := m.GetTokenByAccountID(fallbackAccount.ID)
+		if err == nil {
+			log.Printf("⚠️ Using FALLBACK token for: %s (ID: %s, Token: %s)", token.Email, fallbackAccount.ID, maskToken(token.AccessToken))
+			return token, nil
+		}
 	}
 
 	return nil, fmt.Errorf("no active accounts available")
