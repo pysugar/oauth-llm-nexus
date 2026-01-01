@@ -7,9 +7,9 @@ import (
 	"os"
 	"sync"
 
+	"github.com/glebarez/sqlite"
 	"github.com/pysugar/oauth-llm-nexus/internal/db/models"
 	"gopkg.in/yaml.v3"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
