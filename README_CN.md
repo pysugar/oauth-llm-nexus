@@ -79,7 +79,7 @@ OAuth-LLM-Nexus 位于你的 AI 客户端和 Google 内部 API 之间：
 
 ```mermaid
 graph LR
-    Client[客户端应用\n(Claude Code, Cursor)] -->|OpenAI/Anthropic 协议| Proxy[OAuth-LLM-Nexus]
+    Client["客户端应用\n(Claude Code, Cursor)"] -->|OpenAI/Anthropic 协议| Proxy[OAuth-LLM-Nexus]
     Proxy -->|v1internal 协议| Google[Google Cloud Code API]
     Proxy --OAuth 流程--> Users[Google 账号]
 ```

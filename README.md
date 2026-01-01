@@ -79,7 +79,7 @@ OAuth-LLM-Nexus sits between your AI clients and Google's internal API:
 
 ```mermaid
 graph LR
-    Client[Client Apps\n(Claude Code, Cursor)] -->|OpenAI/Anthropic Protocol| Proxy[OAuth-LLM-Nexus]
+    Client["Client Apps\n(Claude Code, Cursor)"] -->|OpenAI/Anthropic Protocol| Proxy[OAuth-LLM-Nexus]
     Proxy -->|v1internal Protocol| Google[Google Cloud Code API]
     Proxy --OAuth Flow--> Users[Google Accounts]
 ```
