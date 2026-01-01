@@ -1,93 +1,170 @@
 # OAuth-LLM-Nexus
 
+[![Release](https://img.shields.io/github/v/release/pysugar/oauth-llm-nexus)](https://github.com/pysugar/oauth-llm-nexus/releases)
+[![Go](https://img.shields.io/badge/Go-1.22+-00ADD8?logo=go)](https://go.dev)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 **OAuth-LLM-Nexus** is a powerful, lightweight proxy server that bridges standard LLM clients (OpenAI, Anthropic, Google GenAI) with Google's internal "Cloud Code" API (Gemini). It allows you to use your Google account's free tier quotas to power your favorite AI tools like Claude Code, Cursor, generic OpenAI clients, and more.
 
-## Features
+## ✨ Features
 
 -   **Multi-Protocol Support**:
     -   **OpenAI Compatible**: `/v1/chat/completions` (Works with Cursor, Open WebUI, etc.)
     -   **Anthropic Compatible**: `/anthropic/v1/messages` (Works with Claude Code, Aider, etc.)
     -   **Google GenAI Compatible**: `/genai/v1beta/models` (Works with official Google SDKs)
--   **Smart Proxying**: Automatically translates requests from standard formats to the internal Cloud Code API format.
+-   **Smart Model Mapping**: Configurable routing from client model names to backend models via Dashboard.
 -   **Account Pool Management**: Link multiple Google accounts to pool quotas and increase limits.
 -   **Automatic Failover**: Automatically switches to the next available account if one hits a rate limit (429).
--   **Dashboard**: A built-in web dashboard to manage accounts, view usage, and get your API key.
+-   **Dashboard**: A built-in web dashboard to manage accounts, model routes, view usage, and get your API key.
 -   **Secure**: API Key authentication for client access.
+-   **Homebrew Support**: Easy installation via `brew tap` with service management.
 
-## Getting Started
+## 🚀 Installation
 
-### Prerequisites
+### Option 1: Homebrew (macOS/Linux)
 
--   Go 1.22+ (to build)
--   A Google Cloud Project with OAuth credentials configured.
+```bash
+# Add tap
+brew tap pysugar/tap
 
-### Installation
+# Install
+brew install oauth-llm-nexus
 
-1.  **Clone the repository**:
-    ```bash
-    git clone https://github.com/yourusername/oauth-llm-nexus.git
-    cd oauth-llm-nexus
-    ```
+# Start as service
+brew services start oauth-llm-nexus
+```
 
-2.  **Build the binary**:
-    ```bash
-    go build -o nexus ./cmd/nexus
-    ```
+### Option 2: Download Binary
 
-3.  **Run the server**:
-    ```bash
-    # Set your OAuth credentials
-    export GOOGLE_CLIENT_ID="your-client-id.apps.googleusercontent.com"
-    export GOOGLE_CLIENT_SECRET="your-client-secret"
-    
-    # Optional: Set a custom port (default 8080)
-    # export PORT=9090
+Download the latest release for your platform from [Releases](https://github.com/pysugar/oauth-llm-nexus/releases).
 
-    ./nexus
-    ```
+```bash
+# macOS Apple Silicon
+curl -LO https://github.com/pysugar/oauth-llm-nexus/releases/latest/download/nexus-darwin-arm64
+chmod +x nexus-darwin-arm64
+./nexus-darwin-arm64
+```
 
-### Usage
+### Option 3: Build from Source
 
-1.  **Open the Dashboard**:
-    Visit `http://localhost:8080` in your browser.
+```bash
+git clone https://github.com/pysugar/oauth-llm-nexus.git
+cd oauth-llm-nexus
+go build -o nexus ./cmd/nexus
+./nexus
+```
 
-2.  **Link Account**:
-    Click "Add Account" and sign in with your Google account. (You need to use the Google account that has access to Gemini/Cloud Code).
+## ⚙️ Quick Start
 
-3.  **Get API Key**:
-    Copy your API Key from the dashboard (`sk-xxxxxxxx...`).
+Just run the binary - no configuration needed for most users:
 
-4.  **Configure Clients**:
+```bash
+./nexus
+```
 
-    **OpenAI SDK / Compatible Apps**:
-    -   Base URL: `http://localhost:8080/v1`
-    -   API Key: `sk-xxxxxxxx...`
-    -   Model: `gpt-4o`, `gpt-3.5-turbo`, or `gemini-2.5-pro`
+The server will start on port `8086` by default. Visit `http://localhost:8086` to access the dashboard.
 
-    **Anthropic / Claude Code**:
-    -   Base URL: `http://localhost:8080/anthropic` (For some tools you might need to set `ANTHROPIC_BASE_URL`)
-    -   API Key: `sk-xxxxxxxx...`
-    -   Model: `claude-sonnet-4-5`
+**Optional: Custom Port**
+```bash
+export PORT=9090
+./nexus
+```
 
-    **GenAI SDK**:
-    -   Base URL: `http://localhost:8080/genai`
-    -   API Key: `sk-xxxxxxxx...`
+## 📖 Usage
 
-## Architecture
+### 1. Open the Dashboard
 
-OAuth-LLM-Nexus sits between your AI clients and Google's internal API:
+Visit `http://localhost:8086` in your browser.
+
+### 2. Link Account
+
+Click "Add Account" and sign in with your Google account (must have access to Gemini/Cloud Code).
+
+### 3. Get API Key
+
+Copy your API Key from the dashboard (`sk-xxxxxxxx...`).
+
+### 4. Configure Clients
+
+**OpenAI SDK / Compatible Apps (Cursor, Continue, etc.)**:
+```
+Base URL: http://localhost:8086/v1
+API Key: sk-xxxxxxxx...
+Model: gpt-4o, gpt-4, or gemini-2.5-pro
+```
+
+**Anthropic / Claude Code**:
+```bash
+export ANTHROPIC_BASE_URL=http://localhost:8086/anthropic
+export ANTHROPIC_API_KEY=sk-xxxxxxxx...
+# Model: claude-sonnet-4-5, claude-3-5-sonnet, etc.
+```
+
+**GenAI SDK**:
+```python
+import google.generativeai as genai
+genai.configure(api_key="sk-xxx", transport="rest",
+                client_options={"api_endpoint": "http://localhost:8086/genai"})
+```
+
+## 🗺️ Model Mapping
+
+OAuth-LLM-Nexus supports configurable model routing. Configure mappings via the Dashboard or edit `config/model_routes.yaml`:
+
+```yaml
+routes:
+  - client: gpt-4o
+    provider: google
+    target: gemini-3-pro-high
+  - client: claude-sonnet-4-5
+    provider: google
+    target: claude-sonnet-4-5
+```
+
+Models not in the routing table are passed through as-is (e.g., native Gemini models).
+
+## 🏗️ Architecture
 
 ```mermaid
 graph LR
-    Client["Client Apps\n(Claude Code, Cursor)"] -->|OpenAI/Anthropic Protocol| Proxy[OAuth-LLM-Nexus]
+    Client["Client Apps<br/>(Claude Code, Cursor)"] -->|OpenAI/Anthropic Protocol| Proxy[OAuth-LLM-Nexus]
     Proxy -->|v1internal Protocol| Google[Google Cloud Code API]
     Proxy --OAuth Flow--> Users[Google Accounts]
 ```
 
-## Contributing
+## 🍺 Homebrew Service
+
+If installed via Homebrew:
+
+```bash
+# Start service (runs on boot)
+brew services start oauth-llm-nexus
+
+# Stop service
+brew services stop oauth-llm-nexus
+
+# View logs
+tail -f /opt/homebrew/var/log/oauth-llm-nexus.log
+```
+
+**Note**: You need to configure OAuth credentials in the service environment. Edit the plist file or set environment variables in your shell profile.
+
+## 📝 API Endpoints
+
+| Endpoint | Protocol | Description |
+|:---------|:---------|:------------|
+| `GET /` | - | Dashboard UI |
+| `POST /v1/chat/completions` | OpenAI | Chat completions |
+| `GET /v1/models` | OpenAI | List models |
+| `POST /anthropic/v1/messages` | Anthropic | Messages API |
+| `POST /genai/v1beta/models/{model}:generateContent` | GenAI | Generate content |
+| `GET /api/accounts` | Internal | List linked accounts |
+| `GET /api/model-routes` | Internal | List model routes |
+
+## 🤝 Contributing
 
 Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
 
-## License
+## 📄 License
 
-[MIT](https://choosealicense.com/licenses/mit/)
+[MIT](LICENSE)

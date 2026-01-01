@@ -1,93 +1,170 @@
 # OAuth-LLM-Nexus
 
-**OAuth-LLM-Nexus** 是一个功能强大且轻量级的代理服务器，它将标准的 LLM 客户端 API（OpenAI, Anthropic, Google GenAI）桥接到 Google 内部的 "Cloud Code" API (Gemini)。通过它，你可以利用 Google 账号的免费配额来驱动你最喜欢的 AI 工具，如 Claude Code, Cursor, 各类 OpenAI 客户端等。
+[![Release](https://img.shields.io/github/v/release/pysugar/oauth-llm-nexus)](https://github.com/pysugar/oauth-llm-nexus/releases)
+[![Go](https://img.shields.io/badge/Go-1.22+-00ADD8?logo=go)](https://go.dev)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-## 功能特性
+**OAuth-LLM-Nexus** 是一个强大的轻量级代理服务器，它能够将标准 LLM 客户端（OpenAI、Anthropic、Google GenAI）与 Google 内部的 "Cloud Code" API (Gemini) 连接起来。让你使用 Google 账号的免费配额来驱动你喜欢的 AI 工具，如 Claude Code、Cursor、通用 OpenAI 客户端等。
+
+## ✨ 特性
 
 -   **多协议支持**：
-    -   **OpenAI 兼容**：`/v1/chat/completions` (支持 Cursor, Open WebUI 等)
-    -   **Anthropic 兼容**：`/anthropic/v1/messages` (支持 Claude Code, Aider 等)
-    -   **Google GenAI 兼容**：`/genai/v1beta/models` (支持官方 Google SDK)
--   **智能代理**：自动将标准格式的请求转换为 Cloud Code API 所需的内部格式。
--   **账号池管理**：支持链接多个 Google 账号，通过配额池化来提高使用限制。
--   **自动故障转移**：如果当前账号触发速率限制 (429)，自动切换至下一个可用账号。
--   **管理面板**：内置 Web 仪表盘，用于管理账号、查看状态和获取 API Key。
--   **安全**：提供 API Key 认证机制。
+    -   **OpenAI 兼容**：`/v1/chat/completions`（支持 Cursor、Open WebUI 等）
+    -   **Anthropic 兼容**：`/anthropic/v1/messages`（支持 Claude Code、Aider 等）
+    -   **Google GenAI 兼容**：`/genai/v1beta/models`（支持官方 Google SDK）
+-   **智能模型映射**：通过 Dashboard 配置客户端模型名到后端模型的路由。
+-   **账号池管理**：链接多个 Google 账号以池化配额，提升限制。
+-   **自动故障转移**：当一个账号触发速率限制 (429) 时，自动切换到下一个可用账号。
+-   **仪表盘**：内置 Web 仪表盘，管理账号、模型路由、查看使用情况和获取 API Key。
+-   **安全性**：API Key 认证保护客户端访问。
+-   **Homebrew 支持**：通过 `brew tap` 轻松安装，支持服务管理。
 
-## 快速开始
+## 🚀 安装
 
-### 前置要求
+### 方式一：Homebrew (macOS/Linux)
 
--   Go 1.22+ (用于编译)
--   配置好 OAuth 凭证的 Google Cloud Project。
+```bash
+# 添加 tap
+brew tap pysugar/tap
 
-### 安装步骤
+# 安装
+brew install oauth-llm-nexus
 
-1.  **克隆仓库**：
-    ```bash
-    git clone https://github.com/yourusername/oauth-llm-nexus.git
-    cd oauth-llm-nexus
-    ```
+# 启动服务
+brew services start oauth-llm-nexus
+```
 
-2.  **编译二进制文件**：
-    ```bash
-    go build -o nexus ./cmd/nexus
-    ```
+### 方式二：下载预编译二进制
 
-3.  **运行服务器**：
-    ```bash
-    # 设置 OAuth 凭证
-    export GOOGLE_CLIENT_ID="your-client-id.apps.googleusercontent.com"
-    export GOOGLE_CLIENT_SECRET="your-client-secret"
-    
-    # 可选：设置端口 (默认 8080)
-    # export PORT=9090
+从 [Releases](https://github.com/pysugar/oauth-llm-nexus/releases) 下载适合你平台的最新版本。
 
-    ./nexus
-    ```
+```bash
+# macOS Apple Silicon
+curl -LO https://github.com/pysugar/oauth-llm-nexus/releases/latest/download/nexus-darwin-arm64
+chmod +x nexus-darwin-arm64
+./nexus-darwin-arm64
+```
 
-### 使用方法
+### 方式三：从源码构建
 
-1.  **打开仪表盘**：
-    在浏览器中访问 `http://localhost:8080`。
+```bash
+git clone https://github.com/pysugar/oauth-llm-nexus.git
+cd oauth-llm-nexus
+go build -o nexus ./cmd/nexus
+./nexus
+```
 
-2.  **链接账号**：
-    点击 "Add Account" 并登录你的 Google 账号。（需要使用有权访问 Gemini/Cloud Code 的 Google 账号）。
+## ⚙️ 快速开始
 
-3.  **获取 API Key**：
-    从仪表盘复制你的 API Key (`sk-xxxxxxxx...`)。
+直接运行二进制文件即可，大多数用户无需任何配置：
 
-4.  **配置客户端**：
+```bash
+./nexus
+```
 
-    **OpenAI SDK / 兼容应用**：
-    -   Base URL: `http://localhost:8080/v1`
-    -   API Key: `sk-xxxxxxxx...`
-    -   Model: `gpt-4o`, `gpt-3.5-turbo`, 或 `gemini-2.5-pro`
+服务器默认在端口 `8086` 启动。访问 `http://localhost:8086` 打开仪表盘。
 
-    **Anthropic / Claude Code**：
-    -   Base URL: `http://localhost:8080/anthropic` (部分工具可能需要设置 `ANTHROPIC_BASE_URL`)
-    -   API Key: `sk-xxxxxxxx...`
-    -   Model: `claude-sonnet-4-5`
+**可选：自定义端口**
+```bash
+export PORT=9090
+./nexus
+```
 
-    **GenAI SDK**：
-    -   Base URL: `http://localhost:8080/genai`
-    -   API Key: `sk-xxxxxxxx...`
+## 📖 使用方法
 
-## 架构
+### 1. 打开仪表盘
 
-OAuth-LLM-Nexus 位于你的 AI 客户端和 Google 内部 API 之间：
+在浏览器中访问 `http://localhost:8086`。
+
+### 2. 链接账号
+
+点击 "Add Account" 并使用你的 Google 账号登录（必须有 Gemini/Cloud Code 访问权限）。
+
+### 3. 获取 API Key
+
+从仪表盘复制你的 API Key (`sk-xxxxxxxx...`)。
+
+### 4. 配置客户端
+
+**OpenAI SDK / 兼容应用（Cursor、Continue 等）**：
+```
+Base URL: http://localhost:8086/v1
+API Key: sk-xxxxxxxx...
+Model: gpt-4o, gpt-4, 或 gemini-2.5-pro
+```
+
+**Anthropic / Claude Code**：
+```bash
+export ANTHROPIC_BASE_URL=http://localhost:8086/anthropic
+export ANTHROPIC_API_KEY=sk-xxxxxxxx...
+# Model: claude-sonnet-4-5, claude-3-5-sonnet, 等
+```
+
+**GenAI SDK**：
+```python
+import google.generativeai as genai
+genai.configure(api_key="sk-xxx", transport="rest",
+                client_options={"api_endpoint": "http://localhost:8086/genai"})
+```
+
+## 🗺️ 模型映射
+
+OAuth-LLM-Nexus 支持可配置的模型路由。通过 Dashboard 配置映射或编辑 `config/model_routes.yaml`：
+
+```yaml
+routes:
+  - client: gpt-4o
+    provider: google
+    target: gemini-3-pro-high
+  - client: claude-sonnet-4-5
+    provider: google
+    target: claude-sonnet-4-5
+```
+
+不在路由表中的模型会直接透传（如原生 Gemini 模型）。
+
+## 🏗️ 架构
 
 ```mermaid
 graph LR
-    Client["客户端应用\n(Claude Code, Cursor)"] -->|OpenAI/Anthropic 协议| Proxy[OAuth-LLM-Nexus]
+    Client["客户端应用<br/>(Claude Code, Cursor)"] -->|OpenAI/Anthropic 协议| Proxy[OAuth-LLM-Nexus]
     Proxy -->|v1internal 协议| Google[Google Cloud Code API]
     Proxy --OAuth 流程--> Users[Google 账号]
 ```
 
-## 贡献
+## 🍺 Homebrew 服务
 
-欢迎提交 Pull Request。对于重大更改，请先开 issue 讨论您想要改变的内容。
+如果通过 Homebrew 安装：
 
-## 许可证
+```bash
+# 启动服务（开机自启）
+brew services start oauth-llm-nexus
 
-[MIT](https://choosealicense.com/licenses/mit/)
+# 停止服务
+brew services stop oauth-llm-nexus
+
+# 查看日志
+tail -f /opt/homebrew/var/log/oauth-llm-nexus.log
+```
+
+**注意**：你需要在服务环境中配置 OAuth 凭据。编辑 plist 文件或在 shell profile 中设置环境变量。
+
+## 📝 API 端点
+
+| 端点 | 协议 | 描述 |
+|:---------|:---------|:------------|
+| `GET /` | - | 仪表盘 UI |
+| `POST /v1/chat/completions` | OpenAI | 聊天补全 |
+| `GET /v1/models` | OpenAI | 列出模型 |
+| `POST /anthropic/v1/messages` | Anthropic | Messages API |
+| `POST /genai/v1beta/models/{model}:generateContent` | GenAI | 生成内容 |
+| `GET /api/accounts` | 内部 | 列出已链接账号 |
+| `GET /api/model-routes` | 内部 | 列出模型路由 |
+
+## 🤝 贡献
+
+欢迎提交 Pull Request。对于重大更改，请先开 Issue 讨论你想要更改的内容。
+
+## 📄 许可证
+
+[MIT](LICENSE)

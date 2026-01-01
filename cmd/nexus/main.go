@@ -105,7 +105,7 @@ func main() {
 	// Start server
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8080"
+		port = "8086"
 	}
 
 	log.Printf("🚀 OAuth-LLM-Nexus starting on http://localhost:%s", port)
