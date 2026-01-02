@@ -27,7 +27,16 @@ func HandleCallback(db *gorm.DB) http.HandlerFunc {
 
 		// Exchange authorization code for tokens
 		code := r.URL.Query().Get("code")
-		config := GetOAuthConfig("http://localhost:8080/auth/google/callback")
+		
+		// Dynamically construct redirect URL from the request
+		scheme := "http"
+		if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+			scheme = "https"
+		}
+		host := r.Host
+		redirectURL := fmt.Sprintf("%s://%s/auth/google/callback", scheme, host)
+		
+		config := GetOAuthConfig(redirectURL)
 
 		token, err := config.Exchange(context.Background(), code)
 		if err != nil {

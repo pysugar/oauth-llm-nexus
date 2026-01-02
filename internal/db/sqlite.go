@@ -106,11 +106,21 @@ func ensureModelRoutes(db *gorm.DB) {
 		return
 	}
 
-	// Try to load from config file
+	// Try to load from config file - check multiple locations
+	homeDir, _ := os.UserHomeDir()
 	configPaths := []string{
 		"config/model_routes.yaml",
 		"./config/model_routes.yaml",
 		"/etc/nexus/model_routes.yaml",
+		"/opt/homebrew/etc/nexus/model_routes.yaml",
+		"/usr/local/etc/nexus/model_routes.yaml",
+	}
+	// Add home directory paths
+	if homeDir != "" {
+		configPaths = append(configPaths,
+			homeDir+"/.config/nexus/model_routes.yaml",
+			homeDir+"/.nexus/model_routes.yaml",
+		)
 	}
 
 	var data []byte

@@ -62,12 +62,21 @@ Just run the binary - no configuration needed for most users:
 ./nexus
 ```
 
-The server will start on port `8086` by default. Visit `http://localhost:8086` to access the dashboard.
+The server will start on `127.0.0.1:8080` by default. Visit `http://localhost:8080` to access the dashboard.
 
-**Optional: Custom Port**
+### Environment Variables
+
+| Variable | Default | Description |
+|:---------|:--------|:------------|
+| `PORT` | `8080` | Server port |
+| `HOST` | `127.0.0.1` | Bind address. Set to `0.0.0.0` for LAN access |
+
+**Example: LAN Access**
 ```bash
-export PORT=9090
+export HOST=0.0.0.0
+export PORT=8086
 ./nexus
+# Now accessible from other devices on your network
 ```
 
 ## 📖 Usage

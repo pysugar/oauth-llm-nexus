@@ -72,6 +72,10 @@ func main() {
 
 		// Test endpoint
 		r.Get("/test", handlers.TestHandler(tokenManager, upstreamClient))
+
+		// Discovery
+		r.Get("/discovery/scan", handlers.DiscoveryScanHandler())
+		r.Post("/discovery/import", handlers.DiscoveryImportHandler(database))
 	})
 
 	// ============================================
@@ -103,18 +107,28 @@ func main() {
 	})
 
 	// Start server
+	host := os.Getenv("HOST")
+	if host == "" {
+		host = "127.0.0.1" // Default to localhost, set HOST=0.0.0.0 for LAN access
+	}
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8086"
+		port = "8080" // Default for development, set PORT=8086 for production
+	}
+	
+	addr := host + ":" + port
+	displayURL := "localhost:" + port
+	if host == "0.0.0.0" {
+		displayURL = "<your-ip>:" + port
 	}
 
-	log.Printf("🚀 OAuth-LLM-Nexus starting on http://localhost:%s", port)
-	log.Printf("📊 Dashboard: http://localhost:%s", port)
-	log.Printf("🔌 OpenAI API: http://localhost:%s/v1", port)
-	log.Printf("🔌 Anthropic API: http://localhost:%s/anthropic/v1", port)
-	log.Printf("🔌 GenAI API: http://localhost:%s/genai/v1beta", port)
+	log.Printf("🚀 OAuth-LLM-Nexus starting on http://%s", addr)
+	log.Printf("📊 Dashboard: http://%s", displayURL)
+	log.Printf("🔌 OpenAI API: http://%s/v1", displayURL)
+	log.Printf("🔌 Anthropic API: http://%s/anthropic/v1", displayURL)
+	log.Printf("🔌 GenAI API: http://%s/genai/v1beta", displayURL)
 
-	if err := http.ListenAndServe(":"+port, r); err != nil {
+	if err := http.ListenAndServe(addr, r); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
 }

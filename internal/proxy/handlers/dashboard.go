@@ -284,6 +284,69 @@ const dashboardHTML = `<!DOCTYPE html>
                         <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded text-white">Save</button>
                     </div>
                 </form>
+        </div>
+
+        <!-- Discovery Card -->
+        <div class="bg-gray-800 rounded-xl p-4 mb-6">
+            <div class="flex justify-between items-center mb-2">
+                <h3 class="text-sm font-semibold text-gray-400">🔍 Account Discovery</h3>
+                <button onclick="scanForAccounts()" class="text-xs bg-blue-600 hover:bg-blue-500 px-3 py-1 rounded">Scan</button>
+            </div>
+            <p class="text-xs text-gray-500 mb-2">Discover OAuth tokens from Antigravity, Gemini CLI, Codex, and other AI tools.</p>
+            <div id="discovery-container" class="text-sm">
+                <div class="text-gray-500 italic">Click "Scan" to search for existing credentials.</div>
+            </div>
+        </div>
+
+        <!-- IDE Configuration Guide Card -->
+        <div class="bg-gray-800 rounded-xl p-4 mb-6">
+            <div class="flex justify-between items-center mb-2">
+                <h3 class="text-sm font-semibold text-gray-400">📋 IDE Configuration</h3>
+            </div>
+            <p class="text-xs text-gray-500 mb-3">Configure your AI tools to use Nexus proxy:</p>
+            <div class="space-y-3 text-xs">
+                <div class="bg-gray-700/50 rounded p-2">
+                    <div class="font-semibold text-blue-300 mb-1">Claude Code / Aider</div>
+                    <code class="text-green-300 block">export ANTHROPIC_BASE_URL=http://localhost:8080/anthropic</code>
+                    <code class="text-green-300 block">export ANTHROPIC_API_KEY=<span id="ide-apikey-1">sk-xxx</span></code>
+                </div>
+                <div class="bg-gray-700/50 rounded p-2">
+                    <div class="font-semibold text-emerald-300 mb-1">Cursor / Continue / OpenAI SDK</div>
+                    <code class="text-green-300 block">Base URL: http://localhost:8080/v1</code>
+                    <code class="text-green-300 block">API Key: <span id="ide-apikey-2">sk-xxx</span></code>
+                </div>
+                <div class="bg-gray-700/50 rounded p-2">
+                    <div class="font-semibold text-purple-300 mb-1">Codex / OpenCode</div>
+                    <code class="text-green-300 block">OPENAI_BASE_URL=http://localhost:8080/v1</code>
+                    <code class="text-green-300 block">OPENAI_API_KEY=<span id="ide-apikey-3">sk-xxx</span></code>
+                </div>
+            </div>
+        </div>
+
+        <!-- Discovery Import Modal -->
+        <div id="discovery-modal" class="hidden fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+            <div class="bg-gray-800 rounded-xl p-6 max-w-md w-full mx-4 border border-gray-700">
+                <h3 class="text-lg font-semibold mb-4">Import Account</h3>
+                <form id="discovery-form" onsubmit="importDiscoveredAccount(event)">
+                    <input type="hidden" id="discovery-source" value="">
+                    <input type="hidden" id="discovery-index" value="">
+                    <div class="mb-3">
+                        <label class="block text-sm text-gray-400 mb-1">Source</label>
+                        <input type="text" id="discovery-source-display" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white" readonly>
+                    </div>
+                    <div class="mb-3">
+                        <label class="block text-sm text-gray-400 mb-1">Email (required)</label>
+                        <input type="email" id="discovery-email" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white" placeholder="user@gmail.com" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="block text-sm text-gray-400 mb-1">Access Token</label>
+                        <input type="text" id="discovery-access-token" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-400" readonly>
+                    </div>
+                    <div class="flex justify-end gap-2 mt-4">
+                        <button type="button" onclick="hideDiscoveryModal()" class="px-4 py-2 text-gray-400 hover:text-white">Cancel</button>
+                        <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded text-white">Import</button>
+                    </div>
+                </form>
             </div>
         </div>
 
@@ -676,11 +739,94 @@ const dashboardHTML = `<!DOCTYPE html>
                 alert('Failed to reset: ' + e.message);
             }
         }
+        // Discovery Functions
+        let discoveredCredentials = [];
+
+        async function scanForAccounts() {
+            const container = document.getElementById('discovery-container');
+            container.innerHTML = '<div class="text-gray-400">Scanning...</div>';
+            try {
+                const res = await fetch('/api/discovery/scan', { cache: 'no-cache' });
+                if (res.ok) {
+                    const data = await res.json();
+                    discoveredCredentials = data.credentials || [];
+                    let html = '';
+                    if (discoveredCredentials.length > 0) {
+                        discoveredCredentials.forEach((cred, idx) => {
+                            html += '<div class="flex justify-between items-center bg-gray-700/50 rounded p-2 mb-1">';
+                            html += '<div>';
+                            html += '<span class="text-purple-400 text-xs">' + cred.source + '</span> ';
+                            html += '<span class="text-gray-300">' + (cred.email || 'Unknown email') + '</span>';
+                            html += '</div>';
+                            html += '<button onclick="showDiscoveryModal(\'' + cred.source + '\',' + idx + ',\'' + (cred.email || '') + '\',\'' + cred.access_token + '\')" class="text-xs bg-green-600 hover:bg-green-500 px-2 py-1 rounded">Import</button>';
+                            html += '</div>';
+                        });
+                        html += '<div class="text-xs text-gray-500 pt-2">Found ' + discoveredCredentials.length + ' credentials</div>';
+                    } else {
+                        html = '<div class="text-gray-500 italic">No credentials found. Try adding accounts via OAuth login.</div>';
+                    }
+                    container.innerHTML = html;
+                }
+            } catch (e) {
+                container.innerHTML = '<div class="text-red-400">Scan failed: ' + e.message + '</div>';
+            }
+        }
+
+        function showDiscoveryModal(source, index, email, accessToken) {
+            document.getElementById('discovery-source').value = source;
+            document.getElementById('discovery-index').value = index;
+            document.getElementById('discovery-source-display').value = source;
+            document.getElementById('discovery-email').value = email;
+            document.getElementById('discovery-access-token').value = accessToken;
+            document.getElementById('discovery-modal').classList.remove('hidden');
+        }
+
+        function hideDiscoveryModal() {
+            document.getElementById('discovery-modal').classList.add('hidden');
+        }
+
+        async function importDiscoveredAccount(e) {
+            e.preventDefault();
+            const source = document.getElementById('discovery-source').value;
+            const index = parseInt(document.getElementById('discovery-index').value);
+            const email = document.getElementById('discovery-email').value.trim();
+
+            if (!email) {
+                alert('Email is required');
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/discovery/import', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ source, index, email })
+                });
+
+                if (res.ok) {
+                    hideDiscoveryModal();
+                    loadAll();
+                    scanForAccounts();
+                    alert('Account imported successfully!');
+                } else {
+                    const err = await res.json();
+                    alert('Error: ' + (err.error || 'Failed to import'));
+                }
+            } catch (e) {
+                alert('Failed: ' + e.message);
+            }
+        }
 
         // Initial Load
         window.addEventListener('load', () => {
             loadAll();
-            loadAPIKey();
+            loadAPIKey().then(() => {
+                // Update IDE config snippets with actual API key
+                const apiKey = document.getElementById('api-key-display').textContent;
+                document.getElementById('ide-apikey-1').textContent = apiKey;
+                document.getElementById('ide-apikey-2').textContent = apiKey;
+                document.getElementById('ide-apikey-3').textContent = apiKey;
+            });
             loadModelRoutes();
         });
         
