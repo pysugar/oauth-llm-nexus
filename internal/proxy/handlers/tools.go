@@ -127,17 +127,20 @@ const toolsPageHTML = `<!DOCTYPE html>
             <p class="subtitle">View and inspect all AI IDE configurations on your system</p>
         </header>
 
+        <!-- Card 1: Local Discovery -->
         <div class="card">
             <div class="card-header">
-                <span class="card-title">📋 Configuration Check</span>
+                <span class="card-title">🔍 Local Discovery</span>
                 <button onclick="checkConfigs()" class="btn btn-primary" id="check-btn">
-                    <span>🔄</span> Check All Configs
+                    <span>🔄</span> Scan All
                 </button>
             </div>
             <div class="card-body">
+                <div style="background:#1e3a5f;border:1px solid #3b82f6;border-radius:0.5rem;padding:0.75rem;margin-bottom:1rem;font-size:0.75rem;color:#93c5fd;">
+                    🔒 <strong>Privacy:</strong> All scans run locally on your machine. No data is sent to any cloud service.
+                </div>
                 <div class="tabs">
                     <button class="tab active" data-tab="ides">IDEs</button>
-                    <button class="tab" data-tab="guide">Config Guide</button>
                     <button class="tab" data-tab="mcp">MCP Servers</button>
                     <button class="tab" data-tab="discovery">Account Discovery</button>
                     <button class="tab" data-tab="prompts">Prompts</button>
@@ -146,7 +149,7 @@ const toolsPageHTML = `<!DOCTYPE html>
                 
                 <div id="tab-discovery" class="tab-content">
                     <div id="discovery-container">
-                        <div class="empty-state">Scan for local credentials to import into Nexus.</div>
+                        <div class="empty-state">Click "Scan All" to discover local credentials.</div>
                     </div>
                 </div>
                 
@@ -170,11 +173,19 @@ const toolsPageHTML = `<!DOCTYPE html>
                 
                 <div id="tab-skills" class="tab-content">
                     <div id="skills-container">
-                        <div class="empty-state">Run config check to see installed skills.</div>
+                        <div class="empty-state">Run scan to see installed skills.</div>
                     </div>
                 </div>
-                
-                <div id="tab-guide" class="tab-content">
+            </div>
+        </div>
+
+        <!-- Card 2: Config Reference -->
+        <div class="card" style="margin-top:1.5rem;">
+            <div class="card-header">
+                <span class="card-title">📚 Config Reference</span>
+            </div>
+            <div class="card-body">
+                <div id="tab-guide" class="tab-content active">
                     <div class="config-section" style="background:#0f172a;border-radius:0.5rem;padding:1rem;margin-bottom:1rem;">
                         <h3 style="color:white;margin-bottom:0.75rem;">🔧 Configure Your IDE to Use Nexus Proxy</h3>
                         <p style="color:#94a3b8;font-size:0.875rem;margin-bottom:1rem;">Use these examples to configure your AI IDEs. API Key: <code id="api-key-display" style="background:#1e293b;padding:0.25rem 0.5rem;border-radius:0.25rem;">Loading...</code></p>
@@ -377,7 +388,7 @@ const toolsPageHTML = `<!DOCTYPE html>
             }
             
             btn.disabled = false;
-            btn.innerHTML = '<span>🔄</span> Check All Configs';
+            btn.innerHTML = '<span>🔄</span> Scan All';
         }
 
         function renderIDEConfigs(configs) {
@@ -467,7 +478,18 @@ const toolsPageHTML = `<!DOCTYPE html>
                                 }
                                 html += '</div>';
                             }
-                        });
+                            });
+                    }
+                    
+                    // Extra info (for CC-Switch database, etc.)
+                    if (cfg.extra && Object.keys(cfg.extra).length > 0) {
+                        html += '<div class="code-block">';
+                        html += '<div class="code-block-header"><span class="code-block-title">Additional Info</span></div>';
+                        html += '<pre>';
+                        for (const [k, v] of Object.entries(cfg.extra)) {
+                            html += '<span class="json-key">' + k + '</span>: <span class="json-string">' + v + '</span>\n';
+                        }
+                        html += '</pre></div>';
                     }
                 } else {
                     html += '<div class="empty-state">Configuration file not found at this location.</div>';
