@@ -255,7 +255,34 @@ const toolsPageHTML = `<!DOCTYPE html>
             </div>
 
         <div class="footer">
-            <a href="/">← Dashboard</a> • <span style="color:#cbd5e1; font-weight:bold;">v0.0.8</span> • <a href="/healthz">Health Check</a>
+            <a href="/">← Dashboard</a> • <span style="color:#cbd5e1; font-weight:bold;">v0.0.9</span> • <a href="/healthz">Health Check</a>
+        </div>
+
+        <!-- Import Preview Modal -->
+        <div id="import-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:1000;align-items:center;justify-content:center;">
+            <div style="background:#1e293b;border:1px solid #334155;border-radius:0.75rem;padding:1.5rem;max-width:400px;width:90%;">
+                <h3 style="margin:0 0 1rem;color:#f1f5f9;">Import Account</h3>
+                <form id="import-form" onsubmit="confirmImport(event)">
+                    <input type="hidden" id="import-source">
+                    <input type="hidden" id="import-index">
+                    <div style="margin-bottom:0.75rem;">
+                        <label style="display:block;font-size:0.75rem;color:#94a3b8;margin-bottom:0.25rem;">Email <span style="color:#ef4444;">*</span></label>
+                        <input type="email" id="import-email" required style="width:100%;background:#0f172a;border:1px solid #334155;border-radius:0.375rem;padding:0.5rem;color:#f1f5f9;">
+                    </div>
+                    <div style="margin-bottom:0.75rem;">
+                        <label style="display:block;font-size:0.75rem;color:#94a3b8;margin-bottom:0.25rem;">Source</label>
+                        <input type="text" id="import-source-display" readonly style="width:100%;background:#020617;border:1px solid #334155;border-radius:0.375rem;padding:0.5rem;color:#64748b;">
+                    </div>
+                    <div style="margin-bottom:0.75rem;">
+                        <label style="display:block;font-size:0.75rem;color:#94a3b8;margin-bottom:0.25rem;">Project ID (optional)</label>
+                        <input type="text" id="import-project" style="width:100%;background:#0f172a;border:1px solid #334155;border-radius:0.375rem;padding:0.5rem;color:#f1f5f9;" placeholder="e.g., my-gcp-project">
+                    </div>
+                    <div style="display:flex;gap:0.5rem;justify-content:flex-end;margin-top:1rem;">
+                        <button type="button" onclick="closeImportModal()" class="btn btn-ghost">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Confirm Import</button>
+                    </div>
+                </form>
+            </div>
         </div>
     </div>
 
@@ -532,35 +559,58 @@ const toolsPageHTML = `<!DOCTYPE html>
             }
         }
 
+        // Store discovered credentials for preview
+        let discoveredCreds = [];
+
         function renderDiscovery(creds) {
+            discoveredCreds = creds;
             const container = document.getElementById('discovery-container');
             if (creds.length === 0) {
                 container.innerHTML = '<div class="empty-state">No credentials found in local files.</div>';
                 return;
             }
 
-            let html = '<div style="margin-bottom:1rem;font-size:0.875rem;color:#94a3b8;">Found ' + creds.length + ' credentials. Click "Import" to add them to Nexus.</div>';
+            let html = '<div style="margin-bottom:1rem;font-size:0.875rem;color:#94a3b8;">Found ' + creds.length + ' credentials. Click "Preview" to review before importing.</div>';
             creds.forEach((cred, idx) => {
                 const icon = getIDEIcon(cred.source);
                 html += '<div class="mcp-item" style="margin-bottom:0.75rem;background:#0f172a;border:1px solid #334155;">';
                 html += '<div style="display:flex;align-items:center;gap:0.75rem;">';
                 html += '<div class="config-icon ' + icon.class + '" style="width:2.5rem;height:2.5rem;">' + icon.emoji + '</div>';
                 html += '<div>';
-                html += '<div class="mcp-name">' + (cred.email || 'Unknown Account') + '</div>';
+                html += '<div class="mcp-name">' + (cred.email || '<span style="color:#f59e0b;">Email missing</span>') + '</div>';
                 html += '<div class="mcp-command" style="font-size:0.75rem;">Source: ' + cred.source + ' • Path: ' + cred.config_path + '</div>';
                 if (cred.project_id) {
                     html += '<div class="mcp-command" style="font-size:0.75rem;color:#60a5fa;">Project: ' + cred.project_id + '</div>';
                 }
                 html += '</div></div>';
-                html += '<button onclick="importCredential(\'' + cred.source + '\', ' + idx + ', \'' + (cred.email || '') + '\')" class="btn btn-sm btn-primary" id="import-btn-' + cred.source + '-' + idx + '">📥 Import</button>';
+                html += '<button onclick="showImportModal(\'' + cred.source + '\', ' + idx + ')" class="btn btn-sm btn-primary" id="import-btn-' + cred.source + '-' + idx + '">🔍 Preview</button>';
                 html += '</div>';
             });
             container.innerHTML = html;
         }
 
-        async function importCredential(source, index, email) {
+        function showImportModal(source, index) {
+            const cred = discoveredCreds[index];
+            document.getElementById('import-source').value = source;
+            document.getElementById('import-index').value = index;
+            document.getElementById('import-email').value = cred.email || '';
+            document.getElementById('import-source-display').value = cred.source + ' (' + cred.config_path + ')';
+            document.getElementById('import-project').value = cred.project_id || '';
+            document.getElementById('import-modal').style.display = 'flex';
+        }
+
+        function closeImportModal() {
+            document.getElementById('import-modal').style.display = 'none';
+        }
+
+        async function confirmImport(e) {
+            e.preventDefault();
+            const source = document.getElementById('import-source').value;
+            const index = parseInt(document.getElementById('import-index').value);
+            const email = document.getElementById('import-email').value;
             const btn = document.getElementById('import-btn-' + source + '-' + index);
-            const originalText = btn.innerHTML;
+            
+            closeImportModal();
             btn.disabled = true;
             btn.innerHTML = '⏳...';
 
@@ -573,24 +623,24 @@ const toolsPageHTML = `<!DOCTYPE html>
                 const result = await res.json();
                 
                 if (result.success) {
-                    btn.innerHTML = '✅ Done';
+                    btn.innerHTML = '✅ Imported';
                     btn.classList.remove('btn-primary');
                     btn.classList.add('btn-ghost');
                     btn.style.color = '#4ade80';
-                } else if (result.success === false && result.skip) {
-                    btn.innerHTML = '⏭️ Skipped';
+                } else if (result.skip) {
+                    btn.innerHTML = '⏭️ Exists';
                     btn.classList.remove('btn-primary');
                     btn.classList.add('btn-ghost');
                     btn.title = result.message;
                 } else {
                     alert('Error: ' + result.message);
                     btn.disabled = false;
-                    btn.innerHTML = originalText;
+                    btn.innerHTML = '🔍 Preview';
                 }
             } catch (e) {
                 alert('Import failed: ' + e.message);
                 btn.disabled = false;
-                btn.innerHTML = originalText;
+                btn.innerHTML = '🔍 Preview';
             }
         }
         const baseUrl = window.location.origin;

@@ -341,7 +341,7 @@ const dashboardHTML = `<!DOCTYPE html>
 
         <div class="mt-6 text-center py-3 border-t border-gray-700">
             <a href="/tools" class="inline-block px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded text-white text-sm font-medium mr-2">🛠️ Config Inspector</a>
-            <span class="text-gray-500 text-xs"><span id="status">Ready</span> • <span class="text-gray-300 font-bold">v0.0.8</span> • <a href="/healthz" class="hover:text-gray-300">Health</a></span>
+            <span class="text-gray-500 text-xs"><span id="status">Ready</span> • <span class="text-gray-300 font-bold">v0.0.9</span> • <a href="/healthz" class="hover:text-gray-300">Health</a></span>
         </div>
     </div>
 

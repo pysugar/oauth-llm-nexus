@@ -91,21 +91,13 @@ func DiscoveryImportHandler(database *gorm.DB) http.HandlerFunc {
 		// Check if account already exists
 		var existing models.Account
 		if err := database.Where("email = ? AND provider = ?", email, "google").First(&existing).Error; err == nil {
-			// Update existing account
-			existing.AccessToken = cred.AccessToken
-			existing.RefreshToken = cred.RefreshToken
-			existing.ExpiresAt = cred.ExpiresAt
-			existing.UpdatedAt = time.Now()
-			if cred.ProjectID != "" {
-				existing.Metadata = `{"project_id":"` + cred.ProjectID + `","source":"` + cred.Source + `"}`
-			}
-			database.Save(&existing)
-
+			// Skip existing account
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"success": true,
-				"message": "Account updated",
+				"success":    false,
+				"message":    "Account already exists",
 				"account_id": existing.ID,
+				"skip":       true,
 			})
 			return
 		}
