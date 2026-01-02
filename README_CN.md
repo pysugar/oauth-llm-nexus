@@ -68,16 +68,28 @@ go build -o nexus ./cmd/nexus
 
 | 变量 | 默认值 | 说明 |
 |:---------|:--------|:------------|
-| `PORT` | `8080` | 服务端口 |
+| `PORT` | `8080` (开发) / `8086` (发布) | 服务端口 |
 | `HOST` | `127.0.0.1` | 绑定地址。设置为 `0.0.0.0` 可供局域网访问 |
+| `NEXUS_MODE` | - | 设置为 `release` 启用生产模式（默认端口改为 8086） |
+| `NEXUS_ADMIN_PASSWORD` | - | 可选密码，用于保护 Dashboard 和 API 端点 |
 
-**示例：局域网共享**
+**示例：带密码保护的局域网共享**
 ```bash
 export HOST=0.0.0.0
 export PORT=8086
+export NEXUS_ADMIN_PASSWORD=mysecret
 ./nexus
-# 现在可以从局域网其他设备访问
+# 现在可以从局域网其他设备访问，需要密码验证
 ```
+
+### 🔐 仪表盘安全
+
+当设置了 `NEXUS_ADMIN_PASSWORD` 时，Dashboard 和 `/api/*` 端点会启用 HTTP Basic 认证：
+
+- **用户名**：任意值（如 `admin`、你的邮箱，或留空）
+- **密码**：`NEXUS_ADMIN_PASSWORD` 的值
+
+如果未设置，Dashboard 可以无需认证直接访问（本地开发默认行为）。
 
 ### 💡 部署小技巧：无头/云服务器部署
 
@@ -94,6 +106,7 @@ scp nexus.db user@your-server:/path/to/nexus/
 
 # 服务器端
 export HOST=0.0.0.0
+export NEXUS_ADMIN_PASSWORD=yourpassword
 ./nexus
 ```
 

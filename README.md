@@ -68,16 +68,28 @@ The server will start on `127.0.0.1:8080` by default. Visit `http://localhost:80
 
 | Variable | Default | Description |
 |:---------|:--------|:------------|
-| `PORT` | `8080` | Server port |
+| `PORT` | `8080` (dev) / `8086` (release) | Server port |
 | `HOST` | `127.0.0.1` | Bind address. Set to `0.0.0.0` for LAN access |
+| `NEXUS_MODE` | - | Set to `release` for production (changes default port to 8086) |
+| `NEXUS_ADMIN_PASSWORD` | - | Optional password to protect Dashboard and API endpoints |
 
-**Example: LAN Access**
+**Example: LAN Access with Password Protection**
 ```bash
 export HOST=0.0.0.0
 export PORT=8086
+export NEXUS_ADMIN_PASSWORD=mysecret
 ./nexus
-# Now accessible from other devices on your network
+# Now accessible from other devices with password protection
 ```
+
+### 🔐 Dashboard Security
+
+When `NEXUS_ADMIN_PASSWORD` is set, the Dashboard and `/api/*` endpoints are protected by HTTP Basic Authentication:
+
+- **Username**: Any value (e.g., `admin`, your email, or leave empty)
+- **Password**: The value of `NEXUS_ADMIN_PASSWORD`
+
+If not set, the Dashboard is accessible without authentication (default for local development).
 
 ### 💡 Deployment Tip: Headless/Cloud Server
 
@@ -94,6 +106,7 @@ scp nexus.db user@your-server:/path/to/nexus/
 
 # Server
 export HOST=0.0.0.0
+export NEXUS_ADMIN_PASSWORD=yourpassword
 ./nexus
 ```
 
