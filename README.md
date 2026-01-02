@@ -21,6 +21,20 @@
 
 📚 **Quick Start Guide**: [Claude Code Setup](docs/CLAUDE_CODE_SETUP.md) | [English README](README.md) | [中文文档](README_CN.md)
 
+## 🖼️ Preview
+
+<p align="center">
+  <img src="docs/preview_01.png" width="600" alt="Dashboard Overview" />
+</p>
+
+<p align="center">
+  <img src="docs/preview_02.png" width="600" alt="Config Inspector - Local Discovery" />
+</p>
+
+<p align="center">
+  <img src="docs/preview_03.png" width="600" alt="Config Inspector - Config Reference" />
+</p>
+
 ## 🚀 Installation
 
 ### Option 1: Homebrew (macOS/Linux)

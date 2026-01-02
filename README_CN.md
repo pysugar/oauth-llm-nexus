@@ -21,6 +21,20 @@
 
 📚 **快速入门**：[Claude Code 配置指南](docs/CLAUDE_CODE_SETUP.md) | [English](README.md) | [中文](README_CN.md)
 
+## 🖼️ 界面预览
+
+<p align="center">
+  <img src="docs/preview_01.png" width="600" alt="Dashboard 总览" />
+</p>
+
+<p align="center">
+  <img src="docs/preview_02.png" width="600" alt="Config Inspector - 本地发现" />
+</p>
+
+<p align="center">
+  <img src="docs/preview_03.png" width="600" alt="Config Inspector - 配置参考" />
+</p>
+
 ## 🚀 安装
 
 ### 方式一：Homebrew (macOS/Linux)
