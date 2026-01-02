@@ -404,6 +404,65 @@ func checkCCSwitch() IDEConfig {
 					config.Extra["providers"] = strings.Join(providerList, ", ")
 				}
 			}
+
+			// Count MCP servers
+			var mcpCount int
+			if err := db.QueryRow("SELECT COUNT(*) FROM mcp_servers").Scan(&mcpCount); err == nil {
+				config.Extra["mcp_server_count"] = strconv.Itoa(mcpCount)
+			}
+
+			// Get MCP server names
+			mcpRows, err := db.Query("SELECT name, enabled_claude, enabled_codex, enabled_gemini FROM mcp_servers")
+			if err == nil {
+				defer mcpRows.Close()
+				var mcpList []string
+				for mcpRows.Next() {
+					var name string
+					var claude, codex, gemini bool
+					if err := mcpRows.Scan(&name, &claude, &codex, &gemini); err == nil {
+						apps := []string{}
+						if claude {
+							apps = append(apps, "C")
+						}
+						if codex {
+							apps = append(apps, "X")
+						}
+						if gemini {
+							apps = append(apps, "G")
+						}
+						if len(apps) > 0 {
+							mcpList = append(mcpList, name+" ["+strings.Join(apps, ",")+"]")
+						} else {
+							mcpList = append(mcpList, name)
+						}
+					}
+				}
+				if len(mcpList) > 0 {
+					config.Extra["mcp_servers"] = strings.Join(mcpList, ", ")
+				}
+			}
+
+			// Count installed skills
+			var skillCount int
+			if err := db.QueryRow("SELECT COUNT(*) FROM skills WHERE installed = 1").Scan(&skillCount); err == nil {
+				config.Extra["installed_skill_count"] = strconv.Itoa(skillCount)
+			}
+
+			// Get installed skill keys
+			skillRows, err := db.Query("SELECT key FROM skills WHERE installed = 1")
+			if err == nil {
+				defer skillRows.Close()
+				var skillList []string
+				for skillRows.Next() {
+					var key string
+					if err := skillRows.Scan(&key); err == nil {
+						skillList = append(skillList, key)
+					}
+				}
+				if len(skillList) > 0 {
+					config.Extra["installed_skills"] = strings.Join(skillList, ", ")
+				}
+			}
 		}
 	}
 

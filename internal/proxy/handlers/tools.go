@@ -128,7 +128,7 @@ const toolsPageHTML = `<!DOCTYPE html>
         </header>
 
         <!-- Card 1: Local Discovery -->
-        <div class="card">
+        <div class="card" id="discovery-card">
             <div class="card-header">
                 <span class="card-title">🔍 Local Discovery</span>
                 <button onclick="checkConfigs()" class="btn btn-primary" id="check-btn">
@@ -298,11 +298,12 @@ const toolsPageHTML = `<!DOCTYPE html>
     </div>
 
     <script>
-        // Tab switching
-        document.querySelectorAll('.tab').forEach(tab => {
+        // Tab switching (scoped to discovery card only)
+        const discoveryCard = document.getElementById('discovery-card');
+        discoveryCard.querySelectorAll('.tab').forEach(tab => {
             tab.addEventListener('click', () => {
-                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-                document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                discoveryCard.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                discoveryCard.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
                 tab.classList.add('active');
                 document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
             });
