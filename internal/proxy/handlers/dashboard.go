@@ -200,6 +200,18 @@ const dashboardHTML = `<!DOCTYPE html>
             theme: { extend: { colors: { primary: '#6366f1' } } }
         }
     </script>
+    <noscript>
+        <style>
+            body { font-family: system-ui, sans-serif; background: #1a1a2e; color: #eee; padding: 2rem; }
+            .container { max-width: 800px; margin: auto; }
+        </style>
+    </noscript>
+    <style>
+        /* Fallback styles if Tailwind fails to load */
+        body:not(.bg-gray-900) { font-family: system-ui, sans-serif; background: #1a1a2e; color: #eee; padding: 2rem; }
+        body:not(.bg-gray-900) .container { max-width: 800px; margin: auto; }
+        body:not(.bg-gray-900)::before { content: '⚠️ Styles failed to load. Check network or visit github.com/pysugar/oauth-llm-nexus for help.'; display: block; background: #f59e0b; color: #000; padding: 0.5rem 1rem; text-align: center; font-size: 14px; }
+    </style>
 </head>
 <body class="bg-gray-900 text-gray-100 min-h-screen">
     <div class="container mx-auto px-4 py-6 max-w-6xl">
@@ -576,7 +588,7 @@ const dashboardHTML = `<!DOCTYPE html>
                         });
                         html += '<div class="text-xs text-gray-500 pt-2">' + data.count + ' routes configured</div>';
                     } else {
-                        html = '<div class="text-gray-500 italic">No routes configured. Click "Reset" to load defaults.</div>';
+                        html = '<div class="text-gray-500 italic">No routes configured. <a href="https://github.com/pysugar/oauth-llm-nexus/blob/main/config/model_routes.yaml" target="_blank" class="text-blue-400 hover:underline">Download template</a> or click "Reset" to load defaults.</div>';
                     }
                     container.innerHTML = html;
                 }

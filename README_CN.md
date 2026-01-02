@@ -185,6 +185,17 @@ tail -f /opt/homebrew/var/log/oauth-llm-nexus.log
 
 **注意**：你需要在服务环境中配置 OAuth 凭据。编辑 plist 文件或在 shell profile 中设置环境变量。
 
+## 🌐 离线 / 受限环境
+
+如果在隔离网络或防火墙受限环境中运行：
+
+1. **模型路由**：下载 [`config/model_routes.yaml`](https://github.com/pysugar/oauth-llm-nexus/blob/main/config/model_routes.yaml) 并放置到以下位置之一：
+   - `./config/model_routes.yaml`
+   - `~/.config/nexus/model_routes.yaml`
+   - `/etc/nexus/model_routes.yaml`
+
+2. **仪表盘样式**：仪表盘使用 Tailwind CSS CDN。如果 CDN 被阻止，将显示基础样式的回退提示信息。
+
 ## 📝 API 端点
 
 | 端点 | 协议 | 描述 |

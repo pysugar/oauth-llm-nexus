@@ -185,6 +185,17 @@ tail -f /opt/homebrew/var/log/oauth-llm-nexus.log
 
 **Note**: You need to configure OAuth credentials in the service environment. Edit the plist file or set environment variables in your shell profile.
 
+## 🌐 Offline / Restricted Environment
+
+If you're running in an air-gapped or firewall-restricted environment:
+
+1. **Model Routes**: Download [`config/model_routes.yaml`](https://github.com/pysugar/oauth-llm-nexus/blob/main/config/model_routes.yaml) and place it in one of:
+   - `./config/model_routes.yaml`
+   - `~/.config/nexus/model_routes.yaml`
+   - `/etc/nexus/model_routes.yaml`
+
+2. **Dashboard Styles**: The dashboard uses Tailwind CSS CDN. If CDN is blocked, a fallback message will appear with basic styling.
+
 ## 📝 API Endpoints
 
 | Endpoint | Protocol | Description |
