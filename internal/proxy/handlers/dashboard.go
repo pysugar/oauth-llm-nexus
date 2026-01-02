@@ -244,6 +244,15 @@ const dashboardHTML = `<!DOCTYPE html>
             <p class="text-xs text-gray-500 mt-2">Use this key with any SDK: <code>api_key="sk-..."</code></p>
         </div>
 
+        <!-- Test Result Panel (shown after clicking Test button) -->
+        <div id="test-panel" class="hidden bg-gray-800 rounded-xl overflow-hidden mb-6">
+            <div class="px-4 py-3 border-b border-gray-700 flex justify-between items-center">
+                <h2 class="font-semibold">🧪 Test Result</h2>
+                <button onclick="document.getElementById('test-panel').classList.add('hidden')" class="text-gray-400 hover:text-white">✕</button>
+            </div>
+            <pre id="test-result" class="p-3 text-xs overflow-x-auto max-h-48"></pre>
+        </div>
+
         <!-- Main Content: Linked Accounts -->
         <div class="mb-6">
             <div class="flex justify-between items-center mb-4">
@@ -313,21 +322,14 @@ const dashboardHTML = `<!DOCTYPE html>
                     <div class="flex justify-end gap-2 mt-4">
                         <button type="button" onclick="hideRouteModal()" class="px-4 py-2 text-gray-400 hover:text-white">Cancel</button>
                         <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded text-white">Save</button>
+                    </div>
                 </form>
             </div>
         </div>
 
-        <!-- Test Result Panel -->
-        <div id="test-panel" class="hidden mt-4 bg-gray-800 rounded-xl overflow-hidden">
-            <div class="px-4 py-3 border-b border-gray-700 flex justify-between items-center">
-                <h2 class="font-semibold">🧪 Test Result</h2>
-                <button onclick="document.getElementById('test-panel').classList.add('hidden')" class="text-gray-400 hover:text-white">✕</button>
-            </div>
-            <pre id="test-result" class="p-3 text-xs overflow-x-auto max-h-48"></pre>
-        </div>
-
-        <div class="mt-4 text-center text-gray-500 text-xs">
-            <span id="status">Ready</span> • <a href="/healthz" class="hover:text-gray-300">Health</a>
+        <div class="mt-6 text-center py-3 border-t border-gray-700">
+            <a href="/tools" class="inline-block px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded text-white text-sm font-medium mr-2">🛠️ Config Inspector</a>
+            <span class="text-gray-500 text-xs"><span id="status">Ready</span> • <a href="/healthz" class="hover:text-gray-300">Health</a></span>
         </div>
     </div>
 

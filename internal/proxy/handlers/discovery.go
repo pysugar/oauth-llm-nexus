@@ -31,6 +31,16 @@ func DiscoveryScanHandler() http.HandlerFunc {
 	}
 }
 
+// ConfigCheckHandler checks all IDE configs and returns their current state
+func ConfigCheckHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		report := discovery.CheckAllConfigs()
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(report)
+	}
+}
+
 // DiscoveryImportRequest represents a request to import a discovered credential
 type DiscoveryImportRequest struct {
 	Source string `json:"source"`

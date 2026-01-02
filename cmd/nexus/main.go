@@ -41,6 +41,9 @@ func main() {
 	// Dashboard
 	r.Get("/", handlers.DashboardHandler(database))
 
+	// Tools page (Discovery & IDE Config)
+	r.Get("/tools", handlers.ToolsPageHandler())
+
 	// OAuth flow
 	r.Get("/auth/google/login", google.HandleLogin)
 	r.Get("/auth/google/callback", google.HandleCallback(database))
@@ -75,6 +78,7 @@ func main() {
 
 		// Discovery
 		r.Get("/discovery/scan", handlers.DiscoveryScanHandler())
+		r.Get("/discovery/check", handlers.ConfigCheckHandler())
 		r.Post("/discovery/import", handlers.DiscoveryImportHandler(database))
 	})
 
