@@ -202,6 +202,16 @@ const toolsPageHTML = `<!DOCTYPE html>
                                 <div style="color:#64748b;font-size:0.75rem;margin-bottom:0.5rem;">~/.gemini/.env</div>
                                 <pre id="gemini-config" style="background:#020617;padding:0.75rem;border-radius:0.375rem;font-size:0.75rem;color:#a5f3fc;overflow-x:auto;"></pre>
                             </div>
+
+                            <!-- Google GenAI SDK -->
+                            <div style="background:#1e293b;border-radius:0.5rem;padding:1rem;">
+                                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
+                                    <span style="color:#f43f5e;font-weight:600;">🐍 Google GenAI SDK</span>
+                                    <button onclick="copyConfig('genai')" class="btn btn-sm btn-ghost">📋 Copy</button>
+                                </div>
+                                <div style="color:#64748b;font-size:0.75rem;margin-bottom:0.5rem;">Python SDK (v0.2+)</div>
+                                <pre id="genai-config" style="background:#020617;padding:0.75rem;border-radius:0.375rem;font-size:0.75rem;color:#a5f3fc;overflow-x:auto;"></pre>
+                            </div>
                             
                             <!-- Zed -->
                             <div style="background:#1e293b;border-radius:0.5rem;padding:1rem;">
@@ -544,6 +554,15 @@ const toolsPageHTML = `<!DOCTYPE html>
                 '# Or use native Gemini endpoint (requires Gemini API key)\n' +
                 '# GEMINI_API_KEY=your-gemini-api-key';
 
+            // Google GenAI SDK
+            document.getElementById('genai-config').textContent = 
+                'from google import genai\n\n' +
+                'client = genai.Client(\n' +
+                '    api_key="' + apiKey + '",\n' +
+                '    http_options={"base_url": "' + baseUrl + '/genai"}\n' +
+                ')\n\n' +
+                '# response = client.models.generate_content(model="gemini-3-flash", contents="Hello")';
+
             // Zed Editor
             document.getElementById('zed-config').textContent = JSON.stringify({
                 "language_models": {
@@ -600,6 +619,9 @@ const toolsPageHTML = `<!DOCTYPE html>
                     break;
                 case 'gemini':
                     text = 'OPENAI_API_KEY=' + apiKey + '\nOPENAI_BASE_URL=' + baseUrl + '/v1';
+                    break;
+                case 'genai':
+                    text = 'from google import genai\n\nclient = genai.Client(api_key="' + apiKey + '", http_options={"base_url": "' + baseUrl + '/genai"})';
                     break;
                 case 'zed':
                     text = JSON.stringify({"language_models": {"openai": {"api_url": baseUrl + "/v1", "api_key": apiKey}}}, null, 2);

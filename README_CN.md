@@ -127,11 +127,20 @@ export ANTHROPIC_API_KEY=sk-xxxxxxxx...
 # Model: claude-sonnet-4-5, claude-3-5-sonnet, 等
 ```
 
-**GenAI SDK**：
+**Google GenAI SDK (v0.2+)**:
 ```python
-import google.generativeai as genai
-genai.configure(api_key="sk-xxx", transport="rest",
-                client_options={"api_endpoint": "http://localhost:8086/genai"})
+from google import genai
+
+client = genai.Client(
+    api_key="sk-xxx",
+    http_options={"base_url": "http://localhost:8086/genai"}
+)
+
+response = client.models.generate_content(
+    model="gemini-3-flash", 
+    contents="你好，世界"
+)
+print(response.text)
 ```
 
 ## 🗺️ 模型映射
