@@ -79,6 +79,24 @@ export PORT=8086
 # Now accessible from other devices on your network
 ```
 
+### 💡 Deployment Tip: Headless/Cloud Server
+
+Since OAuth-LLM-Nexus requires a browser for the initial Google login (which can be tricky on a headless Linux server), you can:
+
+1.  Run `nexus` on your local PC/Mac first.
+2.  Log in via the Dashboard (`http://localhost:8080`) to generate `nexus.db` with your tokens.
+3.  Copy the `nexus.db` file to your Linux server.
+4.  Run `nexus` on the server - it will pick up the existing valid session!
+
+```bash
+# Local
+scp nexus.db user@your-server:/path/to/nexus/
+
+# Server
+export HOST=0.0.0.0
+./nexus
+```
+
 ## 📖 Usage
 
 ### 1. Open the Dashboard

@@ -79,6 +79,24 @@ export PORT=8086
 # 现在可以从局域网其他设备访问
 ```
 
+### 💡 部署小技巧：无头/云服务器部署
+
+由于 OAuth-LLM-Nexus 首次登录需要浏览器进行 Google 认证（在无头 Linux 服务器上操作较麻烦），你可以：
+
+1.  先在本地 PC/Mac 上运行 `nexus`。
+2.  访问 Dashboard (`http://localhost:8080`) 完成登录，这会生成包含 Token 的 `nexus.db`。
+3.  将 `nexus.db` 文件复制到你的 Linux 服务器。
+4.  在服务器上启动 `nexus` —— 它会自动读取已有的有效会话！
+
+```bash
+# 本地传输
+scp nexus.db user@your-server:/path/to/nexus/
+
+# 服务器端
+export HOST=0.0.0.0
+./nexus
+```
+
 ## 📖 使用方法
 
 ### 1. 打开仪表盘

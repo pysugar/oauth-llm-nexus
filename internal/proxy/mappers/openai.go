@@ -62,12 +62,13 @@ type GeminiRequest struct {
 }
 
 type GeminiRequestPayload struct {
-	Contents         []GeminiContent         `json:"contents"`
-	GenerationConfig *GeminiGenerationConfig `json:"generationConfig,omitempty"`
+	Contents          []GeminiContent         `json:"contents"`
+	SystemInstruction *GeminiContent          `json:"systemInstruction,omitempty"`
+	GenerationConfig  *GeminiGenerationConfig `json:"generationConfig,omitempty"`
 }
 
 type GeminiContent struct {
-	Role  string       `json:"role"`
+	Role  string       `json:"role,omitempty"` // Role is optional for systemInstruction
 	Parts []GeminiPart `json:"parts"`
 }
 
@@ -88,15 +89,20 @@ type GeminiGenerationConfig struct {
 // OpenAIToGemini converts an OpenAI chat request to Gemini format
 func OpenAIToGemini(req OpenAIChatRequest, projectID string) GeminiRequest {
 	contents := make([]GeminiContent, 0, len(req.Messages))
+	var systemParts []GeminiPart
 	
 	for _, msg := range req.Messages {
+		if msg.Role == "system" {
+			systemParts = append(systemParts, GeminiPart{Text: msg.Content})
+			continue
+		}
+
 		role := msg.Role
 		// Map OpenAI roles to Gemini roles
 		if role == "assistant" {
 			role = "model"
-		} else if role == "system" {
-			role = "user" // Gemini doesn't have system role, treat as user
 		}
+		// Note: "system" is now handled separately above
 		
 		contents = append(contents, GeminiContent{
 			Role: role,
@@ -109,13 +115,22 @@ func OpenAIToGemini(req OpenAIChatRequest, projectID string) GeminiRequest {
 	// Resolve model via database (passthrough if not found)
 	model := ResolveModelForGoogle(req.Model)
 	
+	payload := GeminiRequestPayload{
+		Contents: contents,
+	}
+
+	// Add system instruction if present
+	if len(systemParts) > 0 {
+		payload.SystemInstruction = &GeminiContent{
+			Parts: systemParts,
+		}
+	}
+	
 	geminiReq := GeminiRequest{
 		Project:   projectID,
 		RequestID: "req-" + time.Now().Format("20060102150405"),
 		Model:     model,
-		Request: GeminiRequestPayload{
-			Contents: contents,
-		},
+		Request:   payload,
 	}
 	
 	// Map generation config
