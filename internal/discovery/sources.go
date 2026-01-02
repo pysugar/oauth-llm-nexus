@@ -48,6 +48,7 @@ var Sources = []Source{
 		ConfigPaths: []string{
 			"~/.gemini/antigravity/google_ai_credentials.json",
 			"~/.antigravity_tools/credentials.json",
+			"~/.antigravity_tools/accounts/*.json",
 		},
 		Parser: parseAntigravityCredentials,
 	},
@@ -136,8 +137,9 @@ var Sources = []Source{
 		ConfigPaths: []string{
 			"~/.config/gemini-cli/credentials.json",
 			"~/.gemini-cli/credentials.json",
+			"~/.gemini/oauth_creds.json",
 		},
-		Parser: parseGenericCredentials,
+		Parser: parseGeminiOAuth,
 	},
 }
 
@@ -156,20 +158,87 @@ func parseAntigravityCredentials(path string) (*Credential, error) {
 		return nil, err
 	}
 
+	// Try legacy format first
 	var creds AntigravityCredentials
-	if err := json.Unmarshal(data, &creds); err != nil {
+	if err := json.Unmarshal(data, &creds); err == nil && creds.AccessToken != "" {
+		return &Credential{
+			Source:       "antigravity",
+			Email:        creds.Email,
+			AccessToken:  creds.AccessToken,
+			RefreshToken: creds.RefreshToken,
+			ExpiresAt:    time.Unix(creds.ExpiresAt, 0),
+			ProjectID:    creds.ProjectID,
+			ConfigPath:   path,
+		}, nil
+	}
+
+	// Try new account format (~/.antigravity_tools/accounts/*.json)
+	var account struct {
+		ID    string `json:"id"`
+		Email string `json:"email"`
+		Token struct {
+			AccessToken  string `json:"access_token"`
+			RefreshToken string `json:"refresh_token"`
+			ExpiresAt    int64  `json:"expiry_timestamp"`
+			ProjectID    string `json:"project_id"`
+		} `json:"token"`
+	}
+	if err := json.Unmarshal(data, &account); err == nil && account.Token.AccessToken != "" {
+		return &Credential{
+			Source:       "antigravity",
+			Email:        account.Email,
+			AccessToken:  account.Token.AccessToken,
+			RefreshToken: account.Token.RefreshToken,
+			ExpiresAt:    time.Unix(account.Token.ExpiresAt, 0),
+			ProjectID:    account.Token.ProjectID,
+			ConfigPath:   path,
+		}, nil
+	}
+
+	return nil, nil
+}
+
+func parseGeminiOAuth(path string) (*Credential, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
 		return nil, err
 	}
 
-	return &Credential{
-		Source:       "antigravity",
-		Email:        creds.Email,
-		AccessToken:  creds.AccessToken,
-		RefreshToken: creds.RefreshToken,
-		ExpiresAt:    time.Unix(creds.ExpiresAt, 0),
-		ProjectID:    creds.ProjectID,
-		ConfigPath:   path,
-	}, nil
+	// Try specific Gemini oauth_creds.json format FIRST
+	var creds struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		ExpiryDate   int64  `json:"expiry_date"`
+		Scope        string `json:"scope"`
+	}
+	if err := json.Unmarshal(data, &creds); err == nil && creds.AccessToken != "" {
+		// Gemini stores expiry in milliseconds
+		expiry := time.Unix(creds.ExpiryDate/1000, (creds.ExpiryDate%1000)*1000000)
+		
+		// Try to find email from google_accounts.json in same dir
+		email := ""
+		accountsPath := filepath.Join(filepath.Dir(path), "google_accounts.json")
+		if accData, err := os.ReadFile(accountsPath); err == nil {
+			var accs struct {
+				Active string `json:"active"`
+			}
+			if err := json.Unmarshal(accData, &accs); err == nil {
+				email = accs.Active
+			}
+		}
+
+		return &Credential{
+			Source:       "gemini-cli",
+			Email:        email,
+			AccessToken:  creds.AccessToken,
+			RefreshToken: creds.RefreshToken,
+			ExpiresAt:    expiry,
+			ConfigPath:   path,
+		}, nil
+	}
+
+	// Fallback to generic
+	return parseGenericCredentials(path)
 }
 
 // ClaudeSettings represents Claude Code settings.json format

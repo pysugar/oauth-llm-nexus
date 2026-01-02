@@ -1,11 +1,14 @@
 package discovery
 
 import (
+	"database/sql"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	_ "github.com/glebarez/go-sqlite"
 )
 
 // IDEConfig represents the current configuration of an AI IDE
@@ -340,29 +343,67 @@ func checkGeminiCLI() IDEConfig {
 	return config
 }
 
-// checkCCSwitch checks CC-Switch configuration
+// checkCCSwitch checks CC-Switch configuration and content from SQLite DB
 func checkCCSwitch() IDEConfig {
 	config := IDEConfig{
-		IDE:        "CC-Switch",
-		ConfigPath: "~/.cc-switch/settings.json",
-		EnvVars:    make(map[string]string),
-		Extra:      make(map[string]string),
+		IDE:         "CC-Switch",
+		ConfigPath:  "~/.cc-switch/settings.json",
+		EnvVars:     make(map[string]string),
+		Extra:       make(map[string]string),
+		ConfigFiles: []ConfigFile{},
 	}
 
+	// 1. Check settings.json
 	path := expandPath("~/.cc-switch/settings.json")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		config.Exists = false
-		return config
+	if data, err := os.ReadFile(path); err == nil {
+		config.Exists = true
+		config.RawContent = string(data)
+		config.ConfigFiles = append(config.ConfigFiles, ConfigFile{
+			Path:       "~/.cc-switch/settings.json",
+			Exists:     true,
+			RawContent: string(data),
+			Format:     "json",
+		})
+
+		var settings map[string]interface{}
+		if err := json.Unmarshal(data, &settings); err == nil {
+			if lang, ok := settings["language"].(string); ok {
+				config.Extra["language"] = lang
+			}
+		}
 	}
 
-	config.Exists = true
-	config.RawContent = string(data)
+	// 2. Check cc-switch.db
+	dbPath := expandPath("~/.cc-switch/cc-switch.db")
+	if _, err := os.Stat(dbPath); err == nil {
+		config.Exists = true
+		config.Extra["database_path"] = "~/.cc-switch/cc-switch.db"
 
-	var settings map[string]interface{}
-	if err := json.Unmarshal(data, &settings); err == nil {
-		if lang, ok := settings["language"].(string); ok {
-			config.Extra["language"] = lang
+		db, err := sql.Open("sqlite", dbPath)
+		if err == nil {
+			defer db.Close()
+
+			// Count providers
+			var count int
+			if err := db.QueryRow("SELECT COUNT(*) FROM providers").Scan(&count); err == nil {
+				config.Extra["provider_count"] = strconv.Itoa(count)
+			}
+
+			// Get provider names and types
+			rows, err := db.Query("SELECT name, app_type FROM providers")
+			if err == nil {
+				defer rows.Close()
+				var providerList []string
+				for rows.Next() {
+					var name, appType string
+					if err := rows.Scan(&name, &appType); err == nil {
+						providerList = append(providerList, name+" ("+appType+")")
+					}
+				}
+				if len(providerList) > 0 {
+					config.Extra["providers"] = strings.Join(providerList, ", ")
+				}
+			}
 		}
 	}
 

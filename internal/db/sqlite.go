@@ -3,9 +3,12 @@ package db
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/glebarez/sqlite"
 	"github.com/pysugar/oauth-llm-nexus/internal/db/models"
@@ -134,7 +137,25 @@ func ensureModelRoutes(db *gorm.DB) {
 	}
 
 	if data == nil {
-		log.Printf("⚠️ No model_routes.yaml found, using empty mappings (passthrough mode)")
+		remoteURL := "https://raw.githubusercontent.com/pysugar/oauth-llm-nexus/refs/heads/main/config/model_routes.yaml"
+		log.Printf("📥 Fetching default model routes from: %s", remoteURL)
+		
+		client := &http.Client{Timeout: 10 * time.Second}
+		resp, err := client.Get(remoteURL)
+		if err == nil && resp.StatusCode == http.StatusOK {
+			defer resp.Body.Close()
+			data, _ = io.ReadAll(resp.Body)
+		} else {
+			if err != nil {
+				log.Printf("⚠️ Remote fetch failed: %v", err)
+			} else {
+				log.Printf("⚠️ Remote response error: %d", resp.StatusCode)
+			}
+		}
+	}
+
+	if data == nil {
+		log.Printf("⚠️ No model_routes.yaml found (local or remote), using empty mappings")
 		return
 	}
 

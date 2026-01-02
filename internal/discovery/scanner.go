@@ -2,7 +2,7 @@ package discovery
 
 import (
 	"log"
-	"os"
+	"path/filepath"
 )
 
 // ScanResult holds the result of scanning all sources
@@ -41,27 +41,39 @@ func scanSource(source Source) ([]Credential, []ScanError) {
 	var errors []ScanError
 
 	for _, pathPattern := range source.ConfigPaths {
-		path := expandPath(pathPattern)
-
-		// Check if file exists
-		if _, err := os.Stat(path); os.IsNotExist(err) {
-			continue
-		}
-
-		// Parse credentials
-		cred, err := source.Parser(path)
+		expanded := expandPath(pathPattern)
+		
+		// Handle wildcards
+		matches, err := filepath.Glob(expanded)
 		if err != nil {
 			errors = append(errors, ScanError{
 				Source: source.Name,
-				Path:   path,
-				Error:  err.Error(),
+				Path:   expanded,
+				Error:  "Glob error: " + err.Error(),
 			})
 			continue
 		}
 
-		if cred != nil && (cred.AccessToken != "" || cred.RefreshToken != "") {
-			log.Printf("🔍 Found credentials from %s: %s", source.Name, path)
-			credentials = append(credentials, *cred)
+		if len(matches) == 0 {
+			continue
+		}
+
+		for _, path := range matches {
+			// Parse credentials
+			cred, err := source.Parser(path)
+			if err != nil {
+				errors = append(errors, ScanError{
+					Source: source.Name,
+					Path:   path,
+					Error:  err.Error(),
+				})
+				continue
+			}
+
+			if cred != nil && (cred.AccessToken != "" || cred.RefreshToken != "") {
+				log.Printf("🔍 Found credentials from %s: %s", source.Name, path)
+				credentials = append(credentials, *cred)
+			}
 		}
 	}
 

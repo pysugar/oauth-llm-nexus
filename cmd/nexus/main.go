@@ -117,7 +117,11 @@ func main() {
 	}
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8080" // Default for development, set PORT=8086 for production
+		if os.Getenv("NEXUS_MODE") == "release" {
+			port = "8086" // Default for release versions (Homebrew, etc.)
+		} else {
+			port = "8080" // Default for development
+		}
 	}
 	
 	addr := host + ":" + port

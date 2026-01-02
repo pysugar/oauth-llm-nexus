@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"time"
 )
 
@@ -64,14 +65,22 @@ func (c *Client) LoadCodeAssist(accessToken string) (string, error) {
 		} `json:"codeAssistConfig"`
 	}
 
+	defaultID := os.Getenv("GOOGLE_CLOUD_PROJECT")
+	if defaultID == "" {
+		defaultID = os.Getenv("DEFAULT_PROJECT_ID")
+	}
+	if defaultID == "" {
+		defaultID = "bamboo-precept-lgxtn"
+	}
+
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "bamboo-precept-lgxtn", nil
+		return defaultID, nil
 	}
 
 	if result.Config.ProjectID != "" {
 		return result.Config.ProjectID, nil
 	}
-	return "bamboo-precept-lgxtn", nil
+	return defaultID, nil
 }
 
 // doRequest performs an HTTP request with proper headers

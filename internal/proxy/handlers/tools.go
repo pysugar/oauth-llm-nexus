@@ -139,8 +139,15 @@ const toolsPageHTML = `<!DOCTYPE html>
                     <button class="tab active" data-tab="ides">IDEs</button>
                     <button class="tab" data-tab="guide">Config Guide</button>
                     <button class="tab" data-tab="mcp">MCP Servers</button>
+                    <button class="tab" data-tab="discovery">Account Discovery</button>
                     <button class="tab" data-tab="prompts">Prompts</button>
                     <button class="tab" data-tab="skills">Skills</button>
+                </div>
+                
+                <div id="tab-discovery" class="tab-content">
+                    <div id="discovery-container">
+                        <div class="empty-state">Scan for local credentials to import into Nexus.</div>
+                    </div>
                 </div>
                 
                 <div id="tab-ides" class="tab-content active">
@@ -248,7 +255,7 @@ const toolsPageHTML = `<!DOCTYPE html>
             </div>
 
         <div class="footer">
-            <a href="/">← Dashboard</a> • <a href="/healthz">Health Check</a>
+            <a href="/">← Dashboard</a> • <span style="color:#cbd5e1; font-weight:bold;">v0.0.8</span> • <a href="/healthz">Health Check</a>
         </div>
     </div>
 
@@ -334,6 +341,9 @@ const toolsPageHTML = `<!DOCTYPE html>
                 
                 // Render Skills
                 renderSkills(data.skills || []);
+
+                // Also scan for credentials automatically on check
+                scanCredentials();
                 
             } catch (e) {
                 document.getElementById('ide-container').innerHTML = '<div class="empty-state" style="color:#f87171;">Error: ' + e.message + '</div>';
@@ -509,8 +519,80 @@ const toolsPageHTML = `<!DOCTYPE html>
             container.innerHTML = html;
         }
 
-        // Config Guide Functions
-        let apiKey = 'sk-xxx';
+        async function scanCredentials() {
+            const container = document.getElementById('discovery-container');
+            container.innerHTML = '<div class="loading"><span class="spinner"></span>Scanning local sources...</div>';
+            
+            try {
+                const res = await fetch('/api/discovery/scan');
+                const data = await res.json();
+                renderDiscovery(data.credentials || []);
+            } catch (e) {
+                container.innerHTML = '<div class="empty-state" style="color:#f87171;">Error scanning: ' + e.message + '</div>';
+            }
+        }
+
+        function renderDiscovery(creds) {
+            const container = document.getElementById('discovery-container');
+            if (creds.length === 0) {
+                container.innerHTML = '<div class="empty-state">No credentials found in local files.</div>';
+                return;
+            }
+
+            let html = '<div style="margin-bottom:1rem;font-size:0.875rem;color:#94a3b8;">Found ' + creds.length + ' credentials. Click "Import" to add them to Nexus.</div>';
+            creds.forEach((cred, idx) => {
+                const icon = getIDEIcon(cred.source);
+                html += '<div class="mcp-item" style="margin-bottom:0.75rem;background:#0f172a;border:1px solid #334155;">';
+                html += '<div style="display:flex;align-items:center;gap:0.75rem;">';
+                html += '<div class="config-icon ' + icon.class + '" style="width:2.5rem;height:2.5rem;">' + icon.emoji + '</div>';
+                html += '<div>';
+                html += '<div class="mcp-name">' + (cred.email || 'Unknown Account') + '</div>';
+                html += '<div class="mcp-command" style="font-size:0.75rem;">Source: ' + cred.source + ' • Path: ' + cred.config_path + '</div>';
+                if (cred.project_id) {
+                    html += '<div class="mcp-command" style="font-size:0.75rem;color:#60a5fa;">Project: ' + cred.project_id + '</div>';
+                }
+                html += '</div></div>';
+                html += '<button onclick="importCredential(\'' + cred.source + '\', ' + idx + ', \'' + (cred.email || '') + '\')" class="btn btn-sm btn-primary" id="import-btn-' + cred.source + '-' + idx + '">📥 Import</button>';
+                html += '</div>';
+            });
+            container.innerHTML = html;
+        }
+
+        async function importCredential(source, index, email) {
+            const btn = document.getElementById('import-btn-' + source + '-' + index);
+            const originalText = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '⏳...';
+
+            try {
+                const res = await fetch('/api/discovery/import', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ source, index, email })
+                });
+                const result = await res.json();
+                
+                if (result.success) {
+                    btn.innerHTML = '✅ Done';
+                    btn.classList.remove('btn-primary');
+                    btn.classList.add('btn-ghost');
+                    btn.style.color = '#4ade80';
+                } else if (result.success === false && result.skip) {
+                    btn.innerHTML = '⏭️ Skipped';
+                    btn.classList.remove('btn-primary');
+                    btn.classList.add('btn-ghost');
+                    btn.title = result.message;
+                } else {
+                    alert('Error: ' + result.message);
+                    btn.disabled = false;
+                    btn.innerHTML = originalText;
+                }
+            } catch (e) {
+                alert('Import failed: ' + e.message);
+                btn.disabled = false;
+                btn.innerHTML = originalText;
+            }
+        }
         const baseUrl = window.location.origin;
 
         async function loadAPIKey() {
