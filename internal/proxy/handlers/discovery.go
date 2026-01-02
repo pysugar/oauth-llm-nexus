@@ -60,23 +60,12 @@ func DiscoveryImportHandler(database *gorm.DB) http.HandlerFunc {
 		// Re-scan to get the actual tokens (not masked)
 		result := discovery.ScanAll()
 		
-		// Find the credential by source and index
-		var cred *discovery.Credential
-		idx := 0
-		for _, c := range result.Credentials {
-			if c.Source == req.Source {
-				if idx == req.Index {
-					cred = &c
-					break
-				}
-				idx++
-			}
-		}
-
-		if cred == nil {
+		// Find the credential by global index
+		if req.Index < 0 || req.Index >= len(result.Credentials) {
 			http.Error(w, `{"error": "Credential not found"}`, http.StatusNotFound)
 			return
 		}
+		cred := &result.Credentials[req.Index]
 
 		// Use provided email or discovered email
 		email := req.Email
