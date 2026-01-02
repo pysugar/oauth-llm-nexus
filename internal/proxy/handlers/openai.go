@@ -39,9 +39,17 @@ func OpenAIChatHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client)
 		}
 
 		// Parse request
+		bodyBytes, err := io.ReadAll(r.Body)
+		if err != nil {
+			writeOpenAIError(w, "Failed to read request body", http.StatusBadRequest)
+			return
+		}
+		log.Printf("📥 OpenAI raw request: %s", string(bodyBytes))
+
 		var req mappers.OpenAIChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeOpenAIError(w, "Invalid request body", http.StatusBadRequest)
+		if err := json.Unmarshal(bodyBytes, &req); err != nil {
+			log.Printf("⚠️ OpenAI parse error: %v", err)
+			writeOpenAIError(w, "Invalid request body: "+err.Error(), http.StatusBadRequest)
 			return
 		}
 

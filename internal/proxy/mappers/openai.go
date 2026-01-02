@@ -2,6 +2,7 @@ package mappers
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -20,6 +21,48 @@ type OpenAIChatRequest struct {
 type OpenAIMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
+}
+
+// UnmarshalJSON handles both string and array content formats
+func (m *OpenAIMessage) UnmarshalJSON(data []byte) error {
+	// Try simple struct first
+	type Alias struct {
+		Role    string          `json:"role"`
+		Content json.RawMessage `json:"content"`
+	}
+	var alias Alias
+	if err := json.Unmarshal(data, &alias); err != nil {
+		return err
+	}
+	m.Role = alias.Role
+
+	// Try string content first
+	var strContent string
+	if err := json.Unmarshal(alias.Content, &strContent); err == nil {
+		m.Content = strContent
+		return nil
+	}
+
+	// Try array content (multimodal format)
+	var arrayContent []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(alias.Content, &arrayContent); err == nil {
+		// Concatenate all text parts
+		var texts []string
+		for _, part := range arrayContent {
+			if part.Type == "text" && part.Text != "" {
+				texts = append(texts, part.Text)
+			}
+		}
+		m.Content = strings.Join(texts, "\n")
+		return nil
+	}
+
+	// Fallback: use raw string
+	m.Content = string(alias.Content)
+	return nil
 }
 
 type OpenAIChatResponse struct {
