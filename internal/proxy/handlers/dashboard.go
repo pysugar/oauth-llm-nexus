@@ -246,12 +246,14 @@ const dashboardHTML = `<!DOCTYPE html>
             <div class="flex justify-between items-center mb-2">
                 <h3 class="text-sm font-semibold text-gray-400">🔑 API Key</h3>
                 <div class="flex gap-2">
+                    <button onclick="toggleAPIKey()" id="toggle-key-btn" class="text-xs bg-gray-600 hover:bg-gray-500 px-3 py-1 rounded">👁️ Show</button>
                     <button onclick="copyAPIKey()" class="text-xs bg-gray-600 hover:bg-gray-500 px-3 py-1 rounded">📋 Copy</button>
                     <button onclick="regenerateAPIKey()" class="text-xs bg-red-600 hover:bg-red-500 px-3 py-1 rounded">🔄 Regenerate</button>
                 </div>
             </div>
             <div class="bg-gray-700/50 rounded p-2 font-mono text-sm">
                 <span id="api-key-display" class="text-yellow-400">Loading...</span>
+                <span id="api-key-masked" class="text-gray-400" style="display:none;"></span>
             </div>
             <p class="text-xs text-gray-500 mt-2">Use this key with any SDK: <code>api_key="sk-..."</code></p>
         </div>
@@ -531,20 +533,46 @@ const dashboardHTML = `<!DOCTYPE html>
         }
 
         // API Key Functions
+        let fullAPIKey = '';
+        let apiKeyVisible = false;
+
         async function loadAPIKey() {
             try {
                 const res = await fetch('/api/config/apikey');
                 if (res.ok) {
                     const data = await res.json();
-                    document.getElementById('api-key-display').textContent = data.api_key || 'Not generated';
+                    fullAPIKey = data.api_key || '';
+                    if (fullAPIKey) {
+                        const masked = fullAPIKey.slice(0, 7) + '****' + fullAPIKey.slice(-4);
+                        document.getElementById('api-key-display').textContent = masked;
+                        document.getElementById('api-key-display').style.display = 'inline';
+                        document.getElementById('api-key-masked').style.display = 'none';
+                    } else {
+                        document.getElementById('api-key-display').textContent = 'Not generated';
+                    }
                 }
             } catch (e) { console.error(e); }
         }
 
+        function toggleAPIKey() {
+            const display = document.getElementById('api-key-display');
+            const btn = document.getElementById('toggle-key-btn');
+            if (!fullAPIKey) return;
+
+            apiKeyVisible = !apiKeyVisible;
+            if (apiKeyVisible) {
+                display.textContent = fullAPIKey;
+                btn.textContent = '🙈 Hide';
+            } else {
+                const masked = fullAPIKey.slice(0, 7) + '****' + fullAPIKey.slice(-4);
+                display.textContent = masked;
+                btn.textContent = '👁️ Show';
+            }
+        }
+
         async function copyAPIKey() {
-            const key = document.getElementById('api-key-display').textContent;
-            if (key && key !== 'Loading...' && key !== 'Not generated') {
-                navigator.clipboard.writeText(key);
+            if (fullAPIKey && fullAPIKey !== '') {
+                navigator.clipboard.writeText(fullAPIKey);
                 alert('API Key copied to clipboard!');
             }
         }

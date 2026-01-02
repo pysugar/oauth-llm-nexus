@@ -38,18 +38,37 @@ func main() {
 	// Public Routes (No Auth Required)
 	// ============================================
 
-	// Dashboard
-	r.Get("/", handlers.DashboardHandler(database))
+	// Optional admin auth middleware
+	adminPassword := os.Getenv("NEXUS_ADMIN_PASSWORD")
+	optionalAdminAuth := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if adminPassword == "" {
+				next.ServeHTTP(w, r)
+				return
+			}
+			_, pass, ok := r.BasicAuth()
+			if !ok || pass != adminPassword {
+				w.Header().Set("WWW-Authenticate", `Basic realm="Nexus Admin"`)
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 
-	// Tools page (Discovery & IDE Config)
-	r.Get("/tools", handlers.ToolsPageHandler())
+	// Dashboard (protected if NEXUS_ADMIN_PASSWORD is set)
+	r.With(optionalAdminAuth).Get("/", handlers.DashboardHandler(database))
+
+	// Tools page (protected if NEXUS_ADMIN_PASSWORD is set)
+	r.With(optionalAdminAuth).Get("/tools", handlers.ToolsPageHandler())
 
 	// OAuth flow
 	r.Get("/auth/google/login", google.HandleLogin)
 	r.Get("/auth/google/callback", google.HandleCallback(database))
 
-	// API routes (public - dashboard needs these)
+	// API routes (protected if NEXUS_ADMIN_PASSWORD is set)
 	r.Route("/api", func(r chi.Router) {
+		r.Use(optionalAdminAuth)
 		// Account management
 		r.Get("/accounts", handlers.AccountsAPIHandler(database))
 		r.Get("/accounts/{id}/models", handlers.AccountModelsHandler(tokenManager, upstreamClient))
