@@ -2,7 +2,7 @@
 
 [![Release](https://img.shields.io/github/v/release/pysugar/oauth-llm-nexus)](https://github.com/pysugar/oauth-llm-nexus/releases)
 [![Go](https://img.shields.io/badge/Go-1.22+-00ADD8?logo=go)](https://go.dev)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
 **OAuth-LLM-Nexus** 是一个强大的轻量级代理服务器，它能够将标准 LLM 客户端（OpenAI、Anthropic、Google GenAI）与 Google 内部的 "Cloud Code" API (Gemini) 连接起来。让你使用 Google 账号的免费配额来驱动你喜欢的 AI 工具，如 Claude Code、Cursor、通用 OpenAI 客户端等。
 
@@ -18,6 +18,8 @@
 -   **仪表盘**：内置 Web 仪表盘，管理账号、模型路由、查看使用情况和获取 API Key。
 -   **安全性**：API Key 认证保护客户端访问。
 -   **Homebrew 支持**：通过 `brew tap` 轻松安装，支持服务管理。
+
+📚 **快速入门**：[Claude Code 配置指南](docs/CLAUDE_CODE_SETUP.md) | [English](README.md) | [中文](README_CN.md)
 
 ## 🚀 安装
 
@@ -227,4 +229,4 @@ tail -f /opt/homebrew/var/log/oauth-llm-nexus.log
 
 ## 📄 许可证
 
-[MIT](LICENSE)
+[Apache License 2.0](LICENSE)

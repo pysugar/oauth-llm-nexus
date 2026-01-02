@@ -2,7 +2,7 @@
 
 [![Release](https://img.shields.io/github/v/release/pysugar/oauth-llm-nexus)](https://github.com/pysugar/oauth-llm-nexus/releases)
 [![Go](https://img.shields.io/badge/Go-1.22+-00ADD8?logo=go)](https://go.dev)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
 **OAuth-LLM-Nexus** is a powerful, lightweight proxy server that bridges standard LLM clients (OpenAI, Anthropic, Google GenAI) with Google's internal "Cloud Code" API (Gemini). It allows you to use your Google account's free tier quotas to power your favorite AI tools like Claude Code, Cursor, generic OpenAI clients, and more.
 
@@ -18,6 +18,8 @@
 -   **Dashboard**: A built-in web dashboard to manage accounts, model routes, view usage, and get your API key.
 -   **Secure**: API Key authentication for client access.
 -   **Homebrew Support**: Easy installation via `brew tap` with service management.
+
+📚 **Quick Start Guide**: [Claude Code Setup](docs/CLAUDE_CODE_SETUP.md) | [English README](README.md) | [中文文档](README_CN.md)
 
 ## 🚀 Installation
 
@@ -227,4 +229,4 @@ Pull requests are welcome. For major changes, please open an issue first to disc
 
 ## 📄 License
 
-[MIT](LICENSE)
+[Apache License 2.0](LICENSE)
