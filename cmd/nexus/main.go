@@ -109,7 +109,7 @@ func main() {
 	r.Route("/v1", func(r chi.Router) {
 		r.Use(middleware.APIKeyAuth(database))
 		r.Post("/chat/completions", handlers.OpenAIChatHandler(tokenManager, upstreamClient))
-		r.Get("/models", handlers.OpenAIModelsListHandler(tokenManager, upstreamClient))
+		r.Get("/models", handlers.OpenAIModelsListHandler(database))
 	})
 
 	// Anthropic-compatible API
@@ -117,7 +117,7 @@ func main() {
 		r.Use(middleware.APIKeyAuth(database))
 		r.Route("/v1", func(r chi.Router) {
 			r.Post("/messages", handlers.ClaudeMessagesHandler(tokenManager, upstreamClient))
-			r.Get("/models", handlers.ClaudeModelsHandler(tokenManager, upstreamClient))
+			r.Get("/models", handlers.ClaudeModelsHandler(database))
 		})
 	})
 

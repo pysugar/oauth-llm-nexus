@@ -14,6 +14,7 @@ import (
 	"github.com/pysugar/oauth-llm-nexus/internal/db"
 	"github.com/pysugar/oauth-llm-nexus/internal/proxy/mappers"
 	"github.com/pysugar/oauth-llm-nexus/internal/upstream"
+	"gorm.io/gorm"
 )
 
 // OpenAIChatHandler handles /v1/chat/completions
@@ -181,27 +182,39 @@ func writeOpenAIError(w http.ResponseWriter, message string, status int) {
 }
 
 // OpenAIModelsListHandler handles /v1/models
-func OpenAIModelsListHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client) http.HandlerFunc {
+// Returns models declared in config that have active routes
+func OpenAIModelsListHandler(database *gorm.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Return OpenAI-compatible model list
-		models := []map[string]interface{}{
-			{"id": "gpt-4", "object": "model", "owned_by": "nexus"},
-			{"id": "gpt-4-turbo", "object": "model", "owned_by": "nexus"},
-			{"id": "gpt-4o", "object": "model", "owned_by": "nexus"},
-			{"id": "gpt-4o-mini", "object": "model", "owned_by": "nexus"},
-			{"id": "gpt-3.5-turbo", "object": "model", "owned_by": "nexus"},
-			{"id": "o1", "object": "model", "owned_by": "nexus"},
-			{"id": "o1-mini", "object": "model", "owned_by": "nexus"},
-			{"id": "gemini-2.5-pro", "object": "model", "owned_by": "nexus"},
-			{"id": "gemini-2.5-flash", "object": "model", "owned_by": "nexus"},
-			{"id": "gemini-3-pro", "object": "model", "owned_by": "nexus"},
-			{"id": "gemini-3-flash", "object": "model", "owned_by": "nexus"},
+		// 1. Get declared models from config
+		declaredModels, err := db.GetConfigModels(database, "openai_models")
+		if err != nil {
+			log.Printf("⚠️ Failed to load openai_models from config: %v", err)
+			// Fallback to empty list
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"object": "list",
+				"data":   []map[string]interface{}{},
+			})
+			return
 		}
 
+		// 2. Get set of client models that have active routes
+		routedModels := db.GetClientModelsSet(database)
+
+		// 3. Filter: only return models that are both declared AND routed
+		var validModels []map[string]interface{}
+		for _, model := range declaredModels {
+			modelID, ok := model["id"].(string)
+			if ok && routedModels[modelID] {
+				validModels = append(validModels, model)
+			}
+		}
+
+		// 4. Return OpenAI-compatible response
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"object": "list",
-			"data":   models,
+			"data":   validModels,
 		})
 	}
 }

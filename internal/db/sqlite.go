@@ -43,6 +43,9 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 
 	// Ensure model routes are seeded from YAML if empty
 	ensureModelRoutes(db)
+	
+	// Ensure default model configurations (OpenAI/Anthropic)
+	ensureDefaultModels(db)
 
 	return db, nil
 }

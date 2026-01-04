@@ -14,6 +14,7 @@ import (
 	"github.com/pysugar/oauth-llm-nexus/internal/db"
 	"github.com/pysugar/oauth-llm-nexus/internal/proxy/mappers"
 	"github.com/pysugar/oauth-llm-nexus/internal/upstream"
+	"gorm.io/gorm"
 )
 
 // ClaudeMessagesHandler handles /anthropic/v1/messages
@@ -313,58 +314,48 @@ func writeClaudeError(w http.ResponseWriter, message string, status int) {
 }
 
 // ClaudeModelsHandler handles /anthropic/v1/models (GET)
-// Although not part of the official public API, some clients (e.g. Cursor, adapters) 
-// expect this endpoint to return a list of available models similar to OpenAI.
-func ClaudeModelsHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client) http.HandlerFunc {
+// Returns models declared in config that have active routes
+func ClaudeModelsHandler(database *gorm.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Static list of models supported by this proxy (Claude 3 family)
-		// The 'id' field matches the expected client-side model names.
-		// These will be mapped to backend Gemini models via ModelRoutes.
-		models := []map[string]interface{}{
-			{
-				"type":         "model",
-				"id":           "claude-3-5-sonnet-20241022",
-				"display_name": "Claude 3.5 Sonnet (New)",
-				"created_at":   1729555200,
-			},
-			{
-				"type":         "model",
-				"id":           "claude-3-5-sonnet-latest",
-				"display_name": "Claude 3.5 Sonnet (Latest)",
-				"created_at":   1729555200,
-			},
-			{
-				"type":         "model",
-				"id":           "claude-3-5-haiku-latest",
-				"display_name": "Claude 3.5 Haiku",
-				"created_at":   1729555200,
-			},
-			{
-				"type":         "model",
-				"id":           "claude-3-opus-20240229",
-				"display_name": "Claude 3 Opus",
-				"created_at":   1709251200,
-			},
-			{
-				"type":         "model",
-				"id":           "claude-3-sonnet-20240229",
-				"display_name": "Claude 3 Sonnet",
-				"created_at":   1709251200,
-			},
-			{
-				"type":         "model",
-				"id":           "claude-3-haiku-20240307",
-				"display_name": "Claude 3 Haiku",
-				"created_at":   1709856000,
-			},
+		// 1. Get declared models from config
+		declaredModels, err := db.GetConfigModels(database, "anthropic_models")
+		if err != nil {
+			log.Printf("⚠️ Failed to load anthropic_models from config: %v", err)
+			writeClaudeError(w, "Failed to load models", http.StatusInternalServerError)
+			return
+		}
+
+		// 2. Get set of client models that have active routes
+		routedModels := db.GetClientModelsSet(database)
+
+		// 3. Filter and convert to Anthropic format
+		var validModels []map[string]interface{}
+		for _, model := range declaredModels {
+			modelID, ok := model["id"].(string)
+			if ok && routedModels[modelID] {
+				// Convert to Anthropic API format
+				anthropicModel := map[string]interface{}{
+					"type":         "model",
+					"id":           modelID,
+					"display_name": model["display_name"],
+					"created_at":   model["created"],
+				}
+				validModels = append(validModels, anthropicModel)
+			}
+		}
+
+		// 4. Return Anthropic-compatible response
+		response := map[string]interface{}{
+			"data":     validModels,
+			"has_more": false,
+		}
+		
+		if len(validModels) > 0 {
+			response["first_id"] = validModels[0]["id"]
+			response["last_id"] = validModels[len(validModels)-1]["id"]
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"data":    models,
-			"has_more": false,
-			"first_id": models[0]["id"],
-			"last_id":  models[len(models)-1]["id"],
-		})
+		json.NewEncoder(w).Encode(response)
 	}
 }
