@@ -130,7 +130,7 @@ type GeminiGenerationConfig struct {
 // Legacy hardcoded map removed in favor of config/model_routes.yaml
 
 // OpenAIToGemini converts an OpenAI chat request to Gemini format
-func OpenAIToGemini(req OpenAIChatRequest, projectID string) GeminiRequest {
+func OpenAIToGemini(req OpenAIChatRequest, resolvedModel, projectID string) GeminiRequest {
 	contents := make([]GeminiContent, 0, len(req.Messages))
 	var systemParts []GeminiPart
 	
@@ -155,8 +155,8 @@ func OpenAIToGemini(req OpenAIChatRequest, projectID string) GeminiRequest {
 		})
 	}
 	
-	// Resolve model via database (passthrough if not found)
-	model := ResolveModelForGoogle(req.Model)
+	// Use resolved model passed from handler
+	model := resolvedModel
 	
 	payload := GeminiRequestPayload{
 		Contents: contents,

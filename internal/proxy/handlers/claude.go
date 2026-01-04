@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pysugar/oauth-llm-nexus/internal/auth/token"
+	"github.com/pysugar/oauth-llm-nexus/internal/db"
 	"github.com/pysugar/oauth-llm-nexus/internal/proxy/mappers"
 	"github.com/pysugar/oauth-llm-nexus/internal/upstream"
 )
@@ -44,7 +45,8 @@ func ClaudeMessagesHandler(tokenMgr *token.Manager, upstreamClient *upstream.Cli
 		}
 
 		// Extract required fields
-		model, _ := rawReq["model"].(string)
+		rawModel, _ := rawReq["model"].(string)
+		model := db.ResolveModel(rawModel, "google")
 		messages, _ := rawReq["messages"].([]interface{})
 		stream, _ := rawReq["stream"].(bool)
 
@@ -308,4 +310,61 @@ func writeClaudeError(w http.ResponseWriter, message string, status int) {
 			"message": message,
 		},
 	})
+}
+
+// ClaudeModelsHandler handles /anthropic/v1/models (GET)
+// Although not part of the official public API, some clients (e.g. Cursor, adapters) 
+// expect this endpoint to return a list of available models similar to OpenAI.
+func ClaudeModelsHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Static list of models supported by this proxy (Claude 3 family)
+		// The 'id' field matches the expected client-side model names.
+		// These will be mapped to backend Gemini models via ModelRoutes.
+		models := []map[string]interface{}{
+			{
+				"type":         "model",
+				"id":           "claude-3-5-sonnet-20241022",
+				"display_name": "Claude 3.5 Sonnet (New)",
+				"created_at":   1729555200,
+			},
+			{
+				"type":         "model",
+				"id":           "claude-3-5-sonnet-latest",
+				"display_name": "Claude 3.5 Sonnet (Latest)",
+				"created_at":   1729555200,
+			},
+			{
+				"type":         "model",
+				"id":           "claude-3-5-haiku-latest",
+				"display_name": "Claude 3.5 Haiku",
+				"created_at":   1729555200,
+			},
+			{
+				"type":         "model",
+				"id":           "claude-3-opus-20240229",
+				"display_name": "Claude 3 Opus",
+				"created_at":   1709251200,
+			},
+			{
+				"type":         "model",
+				"id":           "claude-3-sonnet-20240229",
+				"display_name": "Claude 3 Sonnet",
+				"created_at":   1709251200,
+			},
+			{
+				"type":         "model",
+				"id":           "claude-3-haiku-20240307",
+				"display_name": "Claude 3 Haiku",
+				"created_at":   1709856000,
+			},
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"data":    models,
+			"has_more": false,
+			"first_id": models[0]["id"],
+			"last_id":  models[len(models)-1]["id"],
+		})
+	}
 }

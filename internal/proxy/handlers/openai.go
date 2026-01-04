@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pysugar/oauth-llm-nexus/internal/auth/token"
+	"github.com/pysugar/oauth-llm-nexus/internal/db"
 	"github.com/pysugar/oauth-llm-nexus/internal/proxy/mappers"
 	"github.com/pysugar/oauth-llm-nexus/internal/upstream"
 )
@@ -50,13 +51,16 @@ func OpenAIChatHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client)
 		if err := json.Unmarshal(bodyBytes, &req); err != nil {
 			log.Printf("⚠️ OpenAI parse error: %v", err)
 			writeOpenAIError(w, "Invalid request body: "+err.Error(), http.StatusBadRequest)
-			return
 		}
+		
+		// Resolve model mapping
+		targetModel := db.ResolveModel(req.Model, "google")
 
-		log.Printf("📨 OpenAI request: model=%s messages=%d stream=%v", req.Model, len(req.Messages), req.Stream)
+		log.Printf("📨 OpenAI request: model=%s (resolved: %s) messages=%d stream=%v", req.Model, targetModel, len(req.Messages), req.Stream)
 
-		// Convert to Gemini format (already wrapped with project/requestId/model/request)
-		geminiPayload := mappers.OpenAIToGemini(req, cachedToken.ProjectID)
+		// Convert to Gemini format
+		// We pass the resolved target model to the mapper
+		geminiPayload := mappers.OpenAIToGemini(req, targetModel, cachedToken.ProjectID)
 
 		// Convert to map and add missing Cloud Code API fields
 		payloadBytes, _ := json.Marshal(geminiPayload)

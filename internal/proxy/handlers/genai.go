@@ -12,13 +12,16 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/pysugar/oauth-llm-nexus/internal/auth/token"
+	"github.com/pysugar/oauth-llm-nexus/internal/db"
 	"github.com/pysugar/oauth-llm-nexus/internal/upstream"
 )
 
 // GenAIHandler handles /genai/v1beta/models/{model}:generateContent
 func GenAIHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		model := chi.URLParam(r, "model")
+		rawModel := chi.URLParam(r, "model")
+		// Resolve model mapping (e.g. gemini-2.0-flash -> gemini-3-flash)
+		model := db.ResolveModel(rawModel, "google")
 
 		// Get token: Check for explicit account header, else use Primary/Default
 		var cachedToken *token.CachedToken
@@ -94,7 +97,9 @@ func GenAIHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client) http
 // GenAIStreamHandler handles /genai/v1beta/models/{model}:streamGenerateContent
 func GenAIStreamHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		model := chi.URLParam(r, "model")
+		rawModel := chi.URLParam(r, "model")
+		// Resolve model mapping
+		model := db.ResolveModel(rawModel, "google")
 
 		// Get token: Check for explicit account header, else use Primary/Default
 		var cachedToken *token.CachedToken
@@ -190,5 +195,107 @@ func writeGenAIError(w http.ResponseWriter, message string, status int) {
 			"message": message,
 			"status":  "ERROR",
 		},
+	})
+}
+
+// GenAIModelsListHandler handles /genai/v1beta/models (GET)
+// GenAIModelsListHandler handles /genai/v1beta/models (GET)
+func GenAIModelsListHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Get valid token to call upstream
+		cachedToken, err := tokenMgr.GetPrimaryOrDefaultToken()
+		if err != nil {
+			writeGenAIError(w, "No valid token available", http.StatusUnauthorized)
+			return
+		}
+
+		// Fetch real models from upstream Google API
+		// We use the internal 'fetchAvailableModels' endpoint exposed by Cloud Code
+		resp, err := upstreamClient.FetchAvailableModels(cachedToken.AccessToken)
+		if err != nil {
+			log.Printf("⚠️ Failed to fetch upstream models: %v", err)
+			// Fallback to static list if upstream fails
+			writeStaticGenAIModels(w)
+			return
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			log.Printf("⚠️ Upstream models fetch returned status: %d", resp.StatusCode)
+			writeStaticGenAIModels(w)
+			return
+		}
+
+		// Pass through upstream response directly
+		// It returns {"models": [...]} which matches standard GenAI format
+		
+		// Parse Cloud Code upstream response
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			log.Printf("⚠️ Failed to read upstream body: %v", err)
+			writeStaticGenAIModels(w)
+			return
+		}
+
+		var cloudCodeResp struct {
+			Models map[string]struct {
+				DisplayName string `json:"displayName"`
+			} `json:"models"`
+		}
+		if err := json.Unmarshal(body, &cloudCodeResp); err != nil {
+			log.Printf("⚠️ Failed to parse Cloud Code models: %v", err)
+			writeStaticGenAIModels(w)
+			return
+		}
+
+		// Transform to standard GenAI format (models array)
+		type GenAIModel struct {
+			Name        string `json:"name"`
+			Version     string `json:"version"`
+			DisplayName string `json:"displayName"`
+			Description string `json:"description"`
+		}
+
+		var genAIModels []GenAIModel
+		for id, details := range cloudCodeResp.Models {
+			genAIModels = append(genAIModels, GenAIModel{
+				Name:        "models/" + id,
+				Version:     id,
+				DisplayName: details.DisplayName,
+				Description: details.DisplayName, // Use display name as description
+			})
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"models": genAIModels,
+		})
+	}
+}
+
+func writeStaticGenAIModels(w http.ResponseWriter) {
+	models := []map[string]interface{}{
+		{
+			"name":        "models/gemini-2.0-flash-exp",
+			"version":     "2.0-flash",
+			"displayName": "Gemini 2.0 Flash",
+			"description": "Fast and versatile multimodal model",
+		},
+		{
+			"name":        "models/gemini-1.5-pro",
+			"version":     "1.5-pro",
+			"displayName": "Gemini 1.5 Pro",
+			"description": "Mid-size multimodal model",
+		},
+		{
+			"name":        "models/gemini-1.5-flash",
+			"version":     "1.5-flash",
+			"displayName": "Gemini 1.5 Flash",
+			"description": "Fast and versatile multimodal model",
+		},
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"models": models,
 	})
 }

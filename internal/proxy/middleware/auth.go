@@ -46,6 +46,14 @@ func APIKeyAuth(database *gorm.DB) func(next http.Handler) http.Handler {
 				return
 			}
 
+			// Check 'key' query parameter (std Google API style)
+			if queryKey := r.URL.Query().Get("key"); queryKey != "" {
+				if queryKey == expectedKey {
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+
 			// Unauthorized
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)

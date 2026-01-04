@@ -266,7 +266,7 @@ const toolsPageHTML = `<!DOCTYPE html>
             </div>
 
         <div class="footer">
-            <a href="/">← Dashboard</a> • <span style="color:#cbd5e1; font-weight:bold;">v0.1.2</span> • <a href="/healthz">Health Check</a>
+            <a href="/">← Dashboard</a> • <span style="color:#cbd5e1; font-weight:bold;">v0.1.3</span> • <a href="/healthz">Health Check</a>
         </div>
 
         <!-- Import Preview Modal -->

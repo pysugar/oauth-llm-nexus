@@ -117,6 +117,7 @@ func main() {
 		r.Use(middleware.APIKeyAuth(database))
 		r.Route("/v1", func(r chi.Router) {
 			r.Post("/messages", handlers.ClaudeMessagesHandler(tokenManager, upstreamClient))
+			r.Get("/models", handlers.ClaudeModelsHandler(tokenManager, upstreamClient))
 		})
 	})
 
@@ -124,6 +125,7 @@ func main() {
 	r.Route("/genai", func(r chi.Router) {
 		r.Use(middleware.APIKeyAuth(database))
 		r.Route("/v1beta/models", func(r chi.Router) {
+			r.Get("/", handlers.GenAIModelsListHandler(tokenManager, upstreamClient))
 			r.Post("/{model}:generateContent", handlers.GenAIHandler(tokenManager, upstreamClient))
 			r.Post("/{model}:streamGenerateContent", handlers.GenAIStreamHandler(tokenManager, upstreamClient))
 		})

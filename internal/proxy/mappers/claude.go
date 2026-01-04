@@ -59,7 +59,7 @@ type ClaudeDelta struct {
 }
 
 // ClaudeToGemini converts a Claude request to Gemini format
-func ClaudeToGemini(req ClaudeRequest, projectID string) GeminiRequest {
+func ClaudeToGemini(req ClaudeRequest, resolvedModel, projectID string) GeminiRequest {
 	contents := make([]GeminiContent, 0, len(req.Messages)+1)
 	
 	// Add system message as first user message if present
@@ -86,8 +86,8 @@ func ClaudeToGemini(req ClaudeRequest, projectID string) GeminiRequest {
 		})
 	}
 	
-	// Resolve model via database (passthrough if not found)
-	model := ResolveModelForGoogle(req.Model)
+	// Use resolved model passed from handler
+	model := resolvedModel
 	
 	geminiReq := GeminiRequest{
 		Project:   projectID,

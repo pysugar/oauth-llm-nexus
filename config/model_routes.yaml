@@ -24,6 +24,12 @@ routes:
   - client: claude-haiku-4-5
     provider: google
     target: gemini-3-flash
+  - client: claude-3-5-haiku-latest
+    provider: google
+    target: gemini-3-flash
+  - client: gemini-2.0-flash
+    provider: google
+    target: gemini-3-flash
   
   # Sonnet Tier (Balanced)
   - client: claude-3-sonnet
@@ -41,6 +47,9 @@ routes:
   - client: claude-sonnet-4-5-20250514
     provider: google
     target: claude-sonnet-4-5
+  - client: claude-3-5-sonnet-latest
+    provider: google
+    target: gemini-3-flash
   
   # Opus Tier (Powerful)
   - client: claude-3-opus
@@ -55,6 +64,9 @@ routes:
   - client: claude-opus-4-5-20250514
     provider: google
     target: claude-opus-4-5-thinking
+  - client: claude-3-5-opus-latest
+    provider: google
+    target: gemini-3-flash
 
   # ============================================
   # OpenAI/Codex Models -> Google Cloud Code

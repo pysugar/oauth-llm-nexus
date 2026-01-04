@@ -196,6 +196,7 @@ func loadModelRouteCache(db *gorm.DB) {
 	for _, r := range routes {
 		key := r.ClientModel + ":" + r.TargetProvider
 		modelRouteCache[key] = r.TargetModel
+		log.Printf("  - %s -> %s (%s)", r.ClientModel, r.TargetModel, r.TargetProvider)
 	}
 	log.Printf("📋 Loaded %d model routes into cache", len(routes))
 }
