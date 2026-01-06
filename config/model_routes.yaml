@@ -78,10 +78,10 @@ routes:
     target: claude-sonnet-4-5-thinking
   - client: gpt-5.1-codex-max
     provider: google
-    target: gemini-3-pro-high
+    target: claude-opus-4-5-thinking
   - client: gpt-5.1-codex-mini
     provider: google
-    target: gemini-3-flash
+    target: claude-sonnet-4-5
   - client: gpt-5.2
     provider: google
     target: gemini-3-pro-high
