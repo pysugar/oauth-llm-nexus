@@ -295,6 +295,16 @@ func OpenAIToGemini(req OpenAIChatRequest, resolvedModel, projectID string) Gemi
 		geminiReq.Request.GenerationConfig.ThinkingConfig = &ThinkingConfig{
 			ThinkingLevel: thinkingLevel,
 		}
+
+		// IMPORTANT: Gemini 3 Pro thinking models use tokenBudget from maxOutputTokens
+		// If maxOutputTokens is too small, all tokens go to thinking with no output
+		// Auto-scale: ensure minimum 8000 tokens for thinking models (4000 thinking + 4000 output)
+		minTokensForThinking := 8000
+		if geminiReq.Request.GenerationConfig.MaxOutputTokens == nil {
+			geminiReq.Request.GenerationConfig.MaxOutputTokens = &minTokensForThinking
+		} else if *geminiReq.Request.GenerationConfig.MaxOutputTokens < minTokensForThinking {
+			geminiReq.Request.GenerationConfig.MaxOutputTokens = &minTokensForThinking
+		}
 	}
 
 	// Convert tools to Gemini format
