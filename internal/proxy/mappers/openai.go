@@ -9,13 +9,28 @@ import (
 // OpenAI Request/Response structures
 
 type OpenAIChatRequest struct {
-	Model       string           `json:"model"`
-	Messages    []OpenAIMessage  `json:"messages"`
-	Stream      bool             `json:"stream,omitempty"`
-	Temperature *float64         `json:"temperature,omitempty"`
-	MaxTokens   *int             `json:"max_tokens,omitempty"`
-	TopP        *float64         `json:"top_p,omitempty"`
-	Stop        []string         `json:"stop,omitempty"`
+	Model            string                 `json:"model"`
+	Messages         []OpenAIMessage        `json:"messages"`
+	Stream           bool                   `json:"stream,omitempty"`
+	Temperature      *float64               `json:"temperature,omitempty"`
+	MaxTokens        *int                   `json:"max_tokens,omitempty"`
+	TopP             *float64               `json:"top_p,omitempty"`
+	Stop             []string               `json:"stop,omitempty"`
+	Tools            []Tool                 `json:"tools,omitempty"`
+	ToolChoice       interface{}            `json:"tool_choice,omitempty"` // Can be string ("auto", "none", "required") or object
+	WebSearchOptions map[string]interface{} `json:"web_search_options,omitempty"`
+}
+
+// Tool represents an OpenAI-compatible tool definition
+type Tool struct {
+	Type     string              `json:"type"` // "function"
+	Function *FunctionDefinition `json:"function,omitempty"`
+}
+
+type FunctionDefinition struct {
+	Name        string                 `json:"name"`
+	Description string                 `json:"description,omitempty"`
+	Parameters  map[string]interface{} `json:"parameters,omitempty"` // JSON Schema
 }
 
 type OpenAIMessage struct {
@@ -75,10 +90,10 @@ type OpenAIChatResponse struct {
 }
 
 type OpenAIChoice struct {
-	Index        int          `json:"index"`
-	Message      OpenAIMessage `json:"message,omitempty"`
+	Index        int            `json:"index"`
+	Message      OpenAIMessage  `json:"message,omitempty"`
 	Delta        *OpenAIMessage `json:"delta,omitempty"`
-	FinishReason *string      `json:"finish_reason,omitempty"`
+	FinishReason *string        `json:"finish_reason,omitempty"`
 }
 
 type OpenAIUsage struct {
@@ -98,16 +113,18 @@ type OpenAIStreamChunk struct {
 
 // Gemini Internal structures
 type GeminiRequest struct {
-	Project   string                 `json:"project"`
-	RequestID string                 `json:"requestId"`
-	Model     string                 `json:"model"`
-	Request   GeminiRequestPayload   `json:"request"`
+	Project   string               `json:"project"`
+	RequestID string               `json:"requestId"`
+	Model     string               `json:"model"`
+	Request   GeminiRequestPayload `json:"request"`
 }
 
 type GeminiRequestPayload struct {
 	Contents          []GeminiContent         `json:"contents"`
 	SystemInstruction *GeminiContent          `json:"systemInstruction,omitempty"`
 	GenerationConfig  *GeminiGenerationConfig `json:"generationConfig,omitempty"`
+	Tools             []GeminiTool            `json:"tools,omitempty"`
+	ToolConfig        *GeminiToolConfig       `json:"toolConfig,omitempty"`
 }
 
 type GeminiContent struct {
@@ -126,6 +143,67 @@ type GeminiGenerationConfig struct {
 	StopSequences   []string `json:"stopSequences,omitempty"`
 }
 
+// Tools and Function Calling structures
+
+type GeminiTool struct {
+	FunctionDeclarations  []GeminiFunctionDeclaration `json:"functionDeclarations,omitempty"`
+	GoogleSearch          *struct{}                   `json:"googleSearch,omitempty"`
+	GoogleSearchRetrieval *struct{}                   `json:"googleSearchRetrieval,omitempty"`
+	CodeExecution         *struct{}                   `json:"codeExecution,omitempty"`
+}
+
+type GeminiFunctionDeclaration struct {
+	Name        string                 `json:"name"`
+	Description string                 `json:"description"`
+	Parameters  map[string]interface{} `json:"parameters"` // OpenAPI Schema
+}
+
+type GeminiToolConfig struct {
+	FunctionCallingConfig *GeminiFunctionCallingConfig `json:"functionCallingConfig,omitempty"`
+}
+
+type GeminiFunctionCallingConfig struct {
+	Mode                 string   `json:"mode"`                           // AUTO, ANY, NONE
+	AllowedFunctionNames []string `json:"allowedFunctionNames,omitempty"` // For specific function selection
+}
+
+// Grounding metadata structures (from Gemini response)
+
+type GeminiGroundingMetadata struct {
+	GroundingSupports []GeminiGroundingSupport `json:"groundingSupports"`
+	GroundingChunks   []GeminiGroundingChunk   `json:"groundingChunks"`
+	WebSearchQueries  []string                 `json:"webSearchQueries,omitempty"`
+}
+
+type GeminiGroundingSupport struct {
+	Segment struct {
+		StartIndex int `json:"startIndex"`
+		EndIndex   int `json:"endIndex"`
+	} `json:"segment"`
+	GroundingChunkIndices []int `json:"groundingChunkIndices"`
+}
+
+type GeminiGroundingChunk struct {
+	Web *struct {
+		URI   string `json:"uri"`
+		Title string `json:"title"`
+	} `json:"web,omitempty"`
+}
+
+// OpenAI Annotations structures (for converting Grounding to OpenAI format)
+
+type OpenAIAnnotation struct {
+	Type        string                       `json:"type"` // "url_citation"
+	URLCitation *OpenAIAnnotationURLCitation `json:"url_citation,omitempty"`
+}
+
+type OpenAIAnnotationURLCitation struct {
+	StartIndex int    `json:"start_index"`
+	EndIndex   int    `json:"end_index"`
+	URL        string `json:"url"`
+	Title      string `json:"title"`
+}
+
 // Model mapping is now handled via database (see db.ResolveModel)
 // Legacy hardcoded map removed in favor of config/model_routes.yaml
 
@@ -133,7 +211,7 @@ type GeminiGenerationConfig struct {
 func OpenAIToGemini(req OpenAIChatRequest, resolvedModel, projectID string) GeminiRequest {
 	contents := make([]GeminiContent, 0, len(req.Messages))
 	var systemParts []GeminiPart
-	
+
 	for _, msg := range req.Messages {
 		if msg.Role == "system" {
 			systemParts = append(systemParts, GeminiPart{Text: msg.Content})
@@ -146,7 +224,7 @@ func OpenAIToGemini(req OpenAIChatRequest, resolvedModel, projectID string) Gemi
 			role = "model"
 		}
 		// Note: "system" is now handled separately above
-		
+
 		contents = append(contents, GeminiContent{
 			Role: role,
 			Parts: []GeminiPart{
@@ -154,10 +232,10 @@ func OpenAIToGemini(req OpenAIChatRequest, resolvedModel, projectID string) Gemi
 			},
 		})
 	}
-	
+
 	// Use resolved model passed from handler
 	model := resolvedModel
-	
+
 	payload := GeminiRequestPayload{
 		Contents: contents,
 	}
@@ -168,14 +246,14 @@ func OpenAIToGemini(req OpenAIChatRequest, resolvedModel, projectID string) Gemi
 			Parts: systemParts,
 		}
 	}
-	
+
 	geminiReq := GeminiRequest{
 		Project:   projectID,
 		RequestID: "req-" + time.Now().Format("20060102150405"),
 		Model:     model,
 		Request:   payload,
 	}
-	
+
 	// Map generation config
 	if req.Temperature != nil || req.MaxTokens != nil || req.TopP != nil || len(req.Stop) > 0 {
 		geminiReq.Request.GenerationConfig = &GeminiGenerationConfig{
@@ -185,7 +263,7 @@ func OpenAIToGemini(req OpenAIChatRequest, resolvedModel, projectID string) Gemi
 			StopSequences:   req.Stop,
 		}
 	}
-	
+
 	return geminiReq
 }
 
@@ -194,7 +272,7 @@ func GeminiToOpenAI(geminiResp map[string]interface{}, model string, isStreaming
 	// Extract text from Gemini response
 	// Handle both direct and nested response structures
 	var candidates []interface{}
-	
+
 	// Check if response is nested (Cloud Code API format)
 	if response, ok := geminiResp["response"].(map[string]interface{}); ok {
 		if cand, ok := response["candidates"].([]interface{}); ok {
@@ -206,7 +284,7 @@ func GeminiToOpenAI(geminiResp map[string]interface{}, model string, isStreaming
 			candidates = cand
 		}
 	}
-	
+
 	text := ""
 	if len(candidates) > 0 {
 		if candidate, ok := candidates[0].(map[string]interface{}); ok {
@@ -221,10 +299,10 @@ func GeminiToOpenAI(geminiResp map[string]interface{}, model string, isStreaming
 			}
 		}
 	}
-	
+
 	// Extract usage metadata from Gemini response
 	var promptTokens, completionTokens, totalTokens int
-	
+
 	// Try nested format first (Cloud Code API)
 	if response, ok := geminiResp["response"].(map[string]interface{}); ok {
 		if usageData, ok := response["usageMetadata"].(map[string]interface{}); ok {
@@ -252,7 +330,7 @@ func GeminiToOpenAI(geminiResp map[string]interface{}, model string, isStreaming
 			}
 		}
 	}
-	
+
 	if isStreaming {
 		chunk := OpenAIStreamChunk{
 			ID:      "chatcmpl-nexus",
@@ -271,7 +349,7 @@ func GeminiToOpenAI(geminiResp map[string]interface{}, model string, isStreaming
 		}
 		return json.Marshal(chunk)
 	}
-	
+
 	resp := OpenAIChatResponse{
 		ID:      "chatcmpl-nexus-" + time.Now().Format("20060102150405"),
 		Object:  "chat.completion",
@@ -293,7 +371,7 @@ func GeminiToOpenAI(geminiResp map[string]interface{}, model string, isStreaming
 			TotalTokens:      totalTokens,
 		},
 	}
-	
+
 	return json.Marshal(resp)
 }
 
