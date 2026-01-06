@@ -138,6 +138,39 @@ When `NEXUS_ADMIN_PASSWORD` is set, the Dashboard and `/api/*` endpoints are pro
 
 If not set, the Dashboard is accessible without authentication (default for local development).
 
+### 💡 Headless/Docker Deployment
+
+> **⚠️ OAuth Limitation**: Google's OAuth for Antigravity only allows `localhost` callbacks. This means OAuth login must be completed on the machine running nexus. This is a security feature of the Antigravity OAuth client, not a bug.
+
+**For remote servers or Docker containers:**
+
+1. **Complete OAuth locally first**:
+   ```bash
+   # On your local machine with a browser
+   ./nexus
+   # Visit http://localhost:8086, complete OAuth login
+   ```
+
+2. **Copy the database to the server**:
+   ```bash
+   # The database contains your authenticated sessions
+   scp nexus.db user@your-server:/path/to/nexus/
+   
+   # Or for Docker
+   scp nexus.db ~/.oauth-llm-nexus/nexus.db
+   ```
+
+3. **Start nexus on the server**:
+   ```bash
+   # Native
+   HOST=0.0.0.0 NEXUS_ADMIN_PASSWORD=yourpassword ./nexus
+   
+   # Docker (database is already in ~/.oauth-llm-nexus/)
+   docker-compose up -d
+   ```
+
+Your authenticated sessions will be picked up automatically. Token refresh happens in the background.
+
 ## 📖 Usage
 
 ### 1. Open the Dashboard
