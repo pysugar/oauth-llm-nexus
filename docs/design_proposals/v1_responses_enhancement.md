@@ -1,4 +1,4 @@
-# v0.2.0 Design Proposal: Enhanced Gemini Integration for /v1/responses
+# v0.1.6+ Design Proposal: Enhanced Gemini Integration for /v1/responses
 
 基于对 `litellm` 和当前 Nexus 代码库的深入分析，本文档提出 `/v1/responses` 和 `/v1/chat/completions` endpoints 的增强方案，全面支持 **System Instructions**、**Thinking Mode (CoT)**、以及 **Tools (Function Calling & Grounding)**。
 
@@ -363,7 +363,7 @@ func ConvertChatCompletionToResponses(
 }
 ```
 
-## 4. 实施计划 (v0.2.0)
+## 4. 实施计划 (v0.1.6 - v0.1.8)
 
 ### Phase 1: 结构体定义 (1-2天)
 1. 在 `mappers/openai.go` 中添加所有新的 Go 结构体。
@@ -400,17 +400,21 @@ func ConvertChatCompletionToResponses(
 - `litellm/llms/vertex_ai/gemini/transformation.py`
   - `_transform_system_message`: System instruction 提取 (Line 678-721)
 
-## 6. 优先级
+## 6. 版本规划
 
-**P0 (v0.2.0 必需)**:
+**v0.1.6 (联网搜索基础)**:
 - Google Search Grounding (联网搜索)
+- Grounding Metadata → Annotations (URL 引用)
+
+**v0.1.7 (工具调用)**:
 - 标准 Function Calling (基础工具支持)
+- Tool Choice 参数支持
 
-**P1 (v0.2.1)**:
+**v0.1.8 (推理模式)**:
 - Thinking Mode (CoT 推理)
-- Grounding Metadata → Annotations
+- Reasoning Effort 参数支持
 
-**P2 (v0.3.0)**:
-- Code Execution Tool
-- Google Search Retrieval (Dynamic Retrieval)
+**未来版本**:
+- Code Execution Tool (v0.1.9)
+- Google Search Retrieval / Dynamic Retrieval (v0.2.0)
 
