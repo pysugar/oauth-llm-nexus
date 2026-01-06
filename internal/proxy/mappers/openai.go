@@ -279,7 +279,89 @@ func OpenAIToGemini(req OpenAIChatRequest, resolvedModel, projectID string) Gemi
 		}
 	}
 
+	// Convert tools to Gemini format
+	if len(req.Tools) > 0 {
+		tools := ConvertToolsToGemini(req.Tools)
+		if len(tools) > 0 {
+			geminiReq.Request.Tools = tools
+		}
+	}
+
 	return geminiReq
+}
+
+// ConvertToolsToGemini converts OpenAI tools to Gemini format
+// Supports: "function", "web_search", "web_search_preview"
+// Based on LiteLLM's _map_function implementation
+func ConvertToolsToGemini(tools []Tool) []GeminiTool {
+	var geminiTools []GeminiTool
+	var functionDeclarations []GeminiFunctionDeclaration
+	hasGoogleSearch := false
+
+	for _, tool := range tools {
+		switch tool.Type {
+		case "web_search", "web_search_preview":
+			// Map to Gemini's googleSearch
+			hasGoogleSearch = true
+
+		case "function":
+			// Map function definition to Gemini format
+			if tool.Function != nil {
+				funcDecl := GeminiFunctionDeclaration{
+					Name:        tool.Function.Name,
+					Description: tool.Function.Description,
+					Parameters:  ConvertJSONSchemaToOpenAPI(tool.Function.Parameters),
+				}
+				functionDeclarations = append(functionDeclarations, funcDecl)
+			}
+
+		default:
+			// Check if this is a special Gemini tool by name pattern
+			// Support direct googleSearch, codeExecution, etc. for advanced users
+			if tool.Type == "googleSearch" || tool.Type == "google_search" {
+				hasGoogleSearch = true
+			}
+		}
+	}
+
+	// Add function declarations as a single tool (Gemini groups all functions together)
+	if len(functionDeclarations) > 0 {
+		geminiTools = append(geminiTools, GeminiTool{
+			FunctionDeclarations: functionDeclarations,
+		})
+	}
+
+	// Add Google Search as a separate tool
+	if hasGoogleSearch {
+		geminiTools = append(geminiTools, GeminiTool{
+			GoogleSearch: &struct{}{},
+		})
+	}
+
+	return geminiTools
+}
+
+// ConvertJSONSchemaToOpenAPI converts OpenAI JSON Schema to Gemini OpenAPI schema
+// Removes unsupported fields like additionalProperties, strict
+func ConvertJSONSchemaToOpenAPI(schema map[string]interface{}) map[string]interface{} {
+	if schema == nil {
+		return nil
+	}
+
+	result := make(map[string]interface{})
+	for k, v := range schema {
+		// Skip unsupported fields
+		if k == "additionalProperties" || k == "strict" || k == "$schema" {
+			continue
+		}
+		// Recursively handle nested objects
+		if nested, ok := v.(map[string]interface{}); ok {
+			result[k] = ConvertJSONSchemaToOpenAPI(nested)
+		} else {
+			result[k] = v
+		}
+	}
+	return result
 }
 
 // GeminiToOpenAI converts a Gemini response to OpenAI format

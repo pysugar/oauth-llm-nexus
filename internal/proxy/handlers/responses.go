@@ -123,13 +123,34 @@ func ConvertResponsesToChatCompletion(req OpenAIResponsesRequest) mappers.OpenAI
 		chatReq.MaxTokens = req.MaxOutputTokens
 	}
 
-	// Log warning if tools are present (not fully supported yet)
+	// Convert tools to mappers.Tool format for Gemini
 	if len(req.Tools) > 0 {
-		var toolTypes []string
+		var mappedTools []mappers.Tool
 		for _, tool := range req.Tools {
-			toolTypes = append(toolTypes, tool.Type)
+			mappedTool := mappers.Tool{
+				Type: tool.Type, // web_search, web_search_preview, function, etc.
+			}
+			// Map user_location if present
+			if tool.UserLocation != nil {
+				mappedTool.UserLocation = &mappers.UserLocation{
+					Type: tool.UserLocation.Type,
+					Approximate: &mappers.ApproximateLocation{
+						Country: tool.UserLocation.Country,
+						City:    tool.UserLocation.City,
+					},
+				}
+			}
+			mappedTools = append(mappedTools, mappedTool)
 		}
-		log.Printf("⚠️ /v1/responses: tools detected (%v) - tools support is limited, Gemini grounding may not process these", toolTypes)
+		chatReq.Tools = mappedTools
+
+		if isVerbose() {
+			var toolTypes []string
+			for _, tool := range req.Tools {
+				toolTypes = append(toolTypes, tool.Type)
+			}
+			log.Printf("🔧 /v1/responses: converting tools (%v) to Gemini format", toolTypes)
+		}
 	}
 
 	// Initialize messages slice
