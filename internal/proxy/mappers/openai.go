@@ -298,13 +298,8 @@ func OpenAIToGemini(req OpenAIChatRequest, resolvedModel, projectID string) Gemi
 	// Based on LiteLLM's handling: Gemini 3 Pro needs thinkingLevel to ensure output is generated
 	// Without this, all tokens may be used for thinking with no actual output
 	if isGemini3ProModel(resolvedModel) {
-		// Default to "low" for Pro models, "minimal" for Flash models
-		thinkingLevel := "low"
-		if strings.Contains(resolvedModel, "flash") {
-			thinkingLevel = "minimal"
-		}
 		geminiReq.Request.ThinkingConfig = &ThinkingConfig{
-			ThinkingLevel: thinkingLevel,
+			ThinkingLevel: "low",
 		}
 	}
 
@@ -314,15 +309,7 @@ func OpenAIToGemini(req OpenAIChatRequest, resolvedModel, projectID string) Gemi
 // isGemini3ProModel checks if the model is a Gemini 3 Pro variant
 // that requires thinkingConfig to function properly
 func isGemini3ProModel(model string) bool {
-	// Check for Gemini 3 models (Pro and Flash variants)
-	if strings.Contains(model, "gemini-3-pro") {
-		return true
-	}
-	// Also check for gemini-3-flash variants that might need it
-	if strings.Contains(model, "gemini-3-flash") {
-		return true
-	}
-	return false
+	return strings.Contains(model, "gemini-3-pro")
 }
 
 // ConvertToolsToGemini converts OpenAI tools to Gemini format
