@@ -48,9 +48,27 @@ type ApproximateLocation struct {
 	Timezone string `json:"timezone,omitempty"`
 }
 
+// OpenAIToolCall represents a tool call in the response (assistant wants to call a function)
+type OpenAIToolCall struct {
+	ID       string             `json:"id"`
+	Type     string             `json:"type"` // "function"
+	Function OpenAIFunctionCall `json:"function"`
+}
+
+// OpenAIFunctionCall contains the function name and arguments
+type OpenAIFunctionCall struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"` // JSON string of arguments
+}
+
+// OpenAIMessage represents a message in OpenAI format
+// Supports: user, assistant, system, tool roles
 type OpenAIMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string           `json:"role"`
+	Content    string           `json:"content,omitempty"`
+	ToolCalls  []OpenAIToolCall `json:"tool_calls,omitempty"`   // For assistant messages with function calls
+	ToolCallID string           `json:"tool_call_id,omitempty"` // For tool role messages (function result)
+	Name       string           `json:"name,omitempty"`         // Function name for tool role messages
 }
 
 // UnmarshalJSON handles both string and array content formats
@@ -154,7 +172,21 @@ type GeminiContent struct {
 }
 
 type GeminiPart struct {
-	Text string `json:"text,omitempty"`
+	Text             string                  `json:"text,omitempty"`
+	FunctionCall     *GeminiFunctionCall     `json:"functionCall,omitempty"`     // For model's tool call request
+	FunctionResponse *GeminiFunctionResponse `json:"functionResponse,omitempty"` // For user's tool result
+}
+
+// GeminiFunctionCall represents a function call from the model
+type GeminiFunctionCall struct {
+	Name string                 `json:"name"`
+	Args map[string]interface{} `json:"args"`
+}
+
+// GeminiFunctionResponse represents a function response from the user
+type GeminiFunctionResponse struct {
+	Name     string                 `json:"name"`
+	Response map[string]interface{} `json:"response"`
 }
 
 type GeminiGenerationConfig struct {
@@ -240,12 +272,68 @@ func OpenAIToGemini(req OpenAIChatRequest, resolvedModel, projectID string) Gemi
 			continue
 		}
 
+		// Handle tool role (function result)
+		if msg.Role == "tool" {
+			// Convert tool result to Gemini functionResponse
+			// Parse content as JSON if possible, otherwise wrap in result key
+			var responseData map[string]interface{}
+			if err := json.Unmarshal([]byte(msg.Content), &responseData); err != nil {
+				// Not JSON, wrap in result key
+				responseData = map[string]interface{}{"result": msg.Content}
+			}
+
+			// Get function name from Name field or ToolCallID
+			funcName := msg.Name
+			if funcName == "" {
+				funcName = msg.ToolCallID // Fallback to ToolCallID if Name not provided
+			}
+
+			contents = append(contents, GeminiContent{
+				Role: "user", // Gemini expects function responses as user role
+				Parts: []GeminiPart{
+					{
+						FunctionResponse: &GeminiFunctionResponse{
+							Name:     funcName,
+							Response: responseData,
+						},
+					},
+				},
+			})
+			continue
+		}
+
+		// Handle assistant role with tool_calls
+		if msg.Role == "assistant" && len(msg.ToolCalls) > 0 {
+			var parts []GeminiPart
+			// If there's also text content, include it
+			if msg.Content != "" {
+				parts = append(parts, GeminiPart{Text: msg.Content})
+			}
+			// Add function calls
+			for _, tc := range msg.ToolCalls {
+				// Parse arguments JSON string to map
+				var args map[string]interface{}
+				json.Unmarshal([]byte(tc.Function.Arguments), &args)
+				parts = append(parts, GeminiPart{
+					FunctionCall: &GeminiFunctionCall{
+						Name: tc.Function.Name,
+						Args: args,
+					},
+				})
+			}
+			contents = append(contents, GeminiContent{
+				Role:  "model",
+				Parts: parts,
+			})
+			continue
+		}
+
+		// Regular message handling
 		role := msg.Role
 		// Map OpenAI roles to Gemini roles
 		if role == "assistant" {
 			role = "model"
 		}
-		// Note: "system" is now handled separately above
 
 		contents = append(contents, GeminiContent{
 			Role: role,
@@ -430,17 +518,37 @@ func GeminiToOpenAI(geminiResp map[string]interface{}, model string, isStreaming
 	}
 
 	text := ""
+	var toolCalls []OpenAIToolCall
+	toolCallCounter := 0
+
 	if len(candidates) > 0 {
 		if candidate, ok := candidates[0].(map[string]interface{}); ok {
 			if content, ok := candidate["content"].(map[string]interface{}); ok {
 				if parts, ok := content["parts"].([]interface{}); ok && len(parts) > 0 {
-					// Iterate through all parts to find text content
+					// Iterate through all parts to find text and functionCall content
 					// Gemini 3 Pro models may have parts with only thoughtSignature
 					var textParts []string
 					for _, p := range parts {
 						if part, ok := p.(map[string]interface{}); ok {
+							// Extract text
 							if t, ok := part["text"].(string); ok && t != "" {
 								textParts = append(textParts, t)
+							}
+							// Extract functionCall
+							if fc, ok := part["functionCall"].(map[string]interface{}); ok {
+								name, _ := fc["name"].(string)
+								args, _ := fc["args"].(map[string]interface{})
+								argsJSON, _ := json.Marshal(args)
+
+								toolCallCounter++
+								toolCalls = append(toolCalls, OpenAIToolCall{
+									ID:   "call_" + time.Now().Format("20060102150405") + "_" + string(rune('0'+toolCallCounter)),
+									Type: "function",
+									Function: OpenAIFunctionCall{
+										Name:      name,
+										Arguments: string(argsJSON),
+									},
+								})
 							}
 						}
 					}
@@ -502,6 +610,12 @@ func GeminiToOpenAI(geminiResp map[string]interface{}, model string, isStreaming
 		return json.Marshal(chunk)
 	}
 
+	// Determine finish_reason based on whether model made tool calls
+	finishReason := "stop"
+	if len(toolCalls) > 0 {
+		finishReason = "tool_calls"
+	}
+
 	resp := OpenAIChatResponse{
 		ID:      "chatcmpl-nexus-" + time.Now().Format("20060102150405"),
 		Object:  "chat.completion",
@@ -511,10 +625,11 @@ func GeminiToOpenAI(geminiResp map[string]interface{}, model string, isStreaming
 			{
 				Index: 0,
 				Message: OpenAIMessage{
-					Role:    "assistant",
-					Content: text,
+					Role:      "assistant",
+					Content:   text,
+					ToolCalls: toolCalls, // Will be nil/empty if no function calls
 				},
-				FinishReason: stringPtr("stop"),
+				FinishReason: stringPtr(finishReason),
 			},
 		},
 		Usage: &OpenAIUsage{
