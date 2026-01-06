@@ -1,7 +1,7 @@
 # OAuth-LLM-Nexus
 
 [![Release](https://img.shields.io/github/v/release/pysugar/oauth-llm-nexus)](https://github.com/pysugar/oauth-llm-nexus/releases)
-[![Go](https://img.shields.io/badge/Go-1.22+-00ADD8?logo=go)](https://go.dev)
+[![Go](https://img.shields.io/badge/Go-1.24+-00ADD8?logo=go)](https://go.dev)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
 **OAuth-LLM-Nexus** is a powerful, lightweight proxy server that bridges standard LLM clients (OpenAI, Anthropic, Google GenAI) with Google's internal "Cloud Code" API (Gemini). It allows you to use your Google account's free tier quotas to power your favorite AI tools like Claude Code, Cursor, generic OpenAI clients, and more.
@@ -67,11 +67,12 @@ chmod +x nexus-darwin-arm64
 # Pull from GitHub Container Registry
 docker pull ghcr.io/pysugar/oauth-llm-nexus:latest
 
-# Run with Docker
+# Run with Docker (create directory first for proper permissions)
+mkdir -p ~/.oauth-llm-nexus
 docker run -d \
   --name oauth-llm-nexus \
   -p 8086:8080 \
-  -v nexus-data:/app/data \
+  -v ~/.oauth-llm-nexus:/home/nexus \
   ghcr.io/pysugar/oauth-llm-nexus:latest
 
 # Or use Docker Compose
@@ -102,7 +103,7 @@ Just run the binary - no configuration needed for most users:
 ./nexus
 ```
 
-The server will start on `127.0.0.1:8080` by default. Visit `http://localhost:8080` to access the dashboard.
+The server will start on `127.0.0.1:8080` by default (or `:8086` in release mode). Visit `http://localhost:8080` (or `http://localhost:8086`) to access the dashboard.
 
 ### Environment Variables
 
@@ -260,7 +261,16 @@ brew services stop oauth-llm-nexus
 tail -f /opt/homebrew/var/log/oauth-llm-nexus.log
 ```
 
-**Note**: You need to configure OAuth credentials in the service environment. Edit the plist file or set environment variables in your shell profile.
+**Customize environment variables**: Edit `$(brew --prefix)/etc/oauth-llm-nexus.env`:
+
+```bash
+# Create/edit the environment file
+echo 'export NEXUS_VERBOSE="true"' >> $(brew --prefix)/etc/oauth-llm-nexus.env
+echo 'export NEXUS_ADMIN_PASSWORD="yourpassword"' >> $(brew --prefix)/etc/oauth-llm-nexus.env
+
+# Restart service to apply
+brew services restart oauth-llm-nexus
+```
 
 ## 🌐 Offline / Restricted Environment
 

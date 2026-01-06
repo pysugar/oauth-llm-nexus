@@ -1,7 +1,7 @@
 # OAuth-LLM-Nexus
 
 [![Release](https://img.shields.io/github/v/release/pysugar/oauth-llm-nexus)](https://github.com/pysugar/oauth-llm-nexus/releases)
-[![Go](https://img.shields.io/badge/Go-1.22+-00ADD8?logo=go)](https://go.dev)
+[![Go](https://img.shields.io/badge/Go-1.24+-00ADD8?logo=go)](https://go.dev)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
 **OAuth-LLM-Nexus** 是一个强大的轻量级代理服务器，它能够将标准 LLM 客户端（OpenAI、Anthropic、Google GenAI）与 Google 内部的 "Cloud Code" API (Gemini) 连接起来。让你使用 Google 账号的免费配额来驱动你喜欢的 AI 工具，如 Claude Code、Cursor、通用 OpenAI 客户端等。
@@ -76,6 +76,25 @@ make build
 ./nexus
 ```
 
+### 方式四：Docker
+
+```bash
+# 从 GitHub Container Registry 拉取
+docker pull ghcr.io/pysugar/oauth-llm-nexus:latest
+
+# 运行（先创建目录以确保权限正确）
+mkdir -p ~/.oauth-llm-nexus
+docker run -d \
+  --name oauth-llm-nexus \
+  -p 8086:8080 \
+  -v ~/.oauth-llm-nexus:/home/nexus \
+  ghcr.io/pysugar/oauth-llm-nexus:latest
+
+# 或使用 Docker Compose
+curl -O https://raw.githubusercontent.com/pysugar/oauth-llm-nexus/main/docker-compose.yml
+docker-compose up -d
+```
+
 ## ⚙️ 快速开始
 
 直接运行二进制文件即可，大多数用户无需任何配置：
@@ -120,24 +139,41 @@ NEXUS_VERBOSE=1 ./nexus
 
 如果未设置，Dashboard 可以无需认证直接访问（本地开发默认行为）。
 
-### 💡 部署小技巧：无头/云服务器部署
+### 💡 无头服务器/Docker 部署
 
-由于 OAuth-LLM-Nexus 首次登录需要浏览器进行 Google 认证（在无头 Linux 服务器上操作较麻烦），你可以：
+> **⚠️ OAuth 限制**：Google 的 Antigravity OAuth 客户端只允许 `localhost` 回调。这意味着 OAuth 登录必须在运行 nexus 的机器上完成。这是 Antigravity OAuth 客户端的安全特性，而非 Bug。
 
-1.  先在本地 PC/Mac 上运行 `nexus`。
-2.  访问 Dashboard (`http://localhost:8080`) 完成登录，这会生成包含 Token 的 `nexus.db`。
-3.  将 `nexus.db` 文件复制到你的 Linux 服务器。
-4.  在服务器上启动 `nexus` —— 它会自动读取已有的有效会话！
+**远程服务器或 Docker 容器部署步骤：**
 
-```bash
-# 本地传输
-scp nexus.db user@your-server:/path/to/nexus/
+1. **先在本地完成 OAuth**：
+   ```bash
+   # 在有浏览器的本地机器上
+   ./nexus
+   # 访问 http://localhost:8086，完成 OAuth 登录
+   ```
 
-# 服务器端
-export HOST=0.0.0.0
-export NEXUS_ADMIN_PASSWORD=yourpassword
-./nexus
-```
+2. **将数据库复制到服务器**：
+   ```bash
+   # 数据库包含你的认证会话
+   scp nexus.db user@your-server:/path/to/nexus/
+   
+   # Docker 部署：先创建目录并设置正确权限
+   mkdir -p ~/.oauth-llm-nexus
+   cp nexus.db ~/.oauth-llm-nexus/
+   # 如果目录被 root 创建，修复权限：
+   # sudo chown -R $(id -u):$(id -g) ~/.oauth-llm-nexus/
+   ```
+
+3. **在服务器上启动 nexus**：
+   ```bash
+   # 原生方式
+   HOST=0.0.0.0 NEXUS_ADMIN_PASSWORD=yourpassword ./nexus
+   
+   # Docker（数据库已在 ~/.oauth-llm-nexus/）
+   docker-compose up -d
+   ```
+
+你的认证会话会被自动读取。Token 刷新在后台自动进行。
 
 ## 📖 使用方法
 
@@ -225,7 +261,16 @@ brew services stop oauth-llm-nexus
 tail -f /opt/homebrew/var/log/oauth-llm-nexus.log
 ```
 
-**注意**：你需要在服务环境中配置 OAuth 凭据。编辑 plist 文件或在 shell profile 中设置环境变量。
+**自定义环境变量**：编辑 `$(brew --prefix)/etc/oauth-llm-nexus.env`：
+
+```bash
+# 创建/编辑环境文件
+echo 'export NEXUS_VERBOSE="true"' >> $(brew --prefix)/etc/oauth-llm-nexus.env
+echo 'export NEXUS_ADMIN_PASSWORD="yourpassword"' >> $(brew --prefix)/etc/oauth-llm-nexus.env
+
+# 重启服务以应用
+brew services restart oauth-llm-nexus
+```
 
 ## 🌐 离线 / 受限环境
 
