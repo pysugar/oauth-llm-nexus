@@ -156,8 +156,11 @@ If not set, the Dashboard is accessible without authentication (default for loca
    # The database contains your authenticated sessions
    scp nexus.db user@your-server:/path/to/nexus/
    
-   # Or for Docker
-   scp nexus.db ~/.oauth-llm-nexus/nexus.db
+   # For Docker: create directory first with correct permissions
+   mkdir -p ~/.oauth-llm-nexus
+   cp nexus.db ~/.oauth-llm-nexus/
+   # If using sudo/docker created it as root, fix permissions:
+   # sudo chown -R $(id -u):$(id -g) ~/.oauth-llm-nexus/
    ```
 
 3. **Start nexus on the server**:

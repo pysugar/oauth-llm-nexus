@@ -19,6 +19,8 @@ services:
       - "8086:8080"
     volumes:
       # Persist database to host directory
+      # IMPORTANT: Create this directory BEFORE first run with: mkdir -p ~/.oauth-llm-nexus
+      # If container creates it as root, fix with: sudo chown -R $(id -u):$(id -g) ~/.oauth-llm-nexus
       - ~/.oauth-llm-nexus:/home/nexus
       
       # Optional: Map entire home directory for Config Inspector support
