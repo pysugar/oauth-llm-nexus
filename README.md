@@ -61,7 +61,25 @@ chmod +x nexus-darwin-arm64
 ./nexus-darwin-arm64
 ```
 
-### Option 3: Build from Source
+### Option 3: Docker
+
+```bash
+# Pull from GitHub Container Registry
+docker pull ghcr.io/pysugar/oauth-llm-nexus:latest
+
+# Run with Docker
+docker run -d \
+  --name oauth-llm-nexus \
+  -p 8086:8080 \
+  -v nexus-data:/app/data \
+  ghcr.io/pysugar/oauth-llm-nexus:latest
+
+# Or use Docker Compose
+curl -O https://raw.githubusercontent.com/pysugar/oauth-llm-nexus/main/docker-compose.yml
+docker-compose up -d
+```
+
+### Option 4: Build from Source
 
 ```bash
 git clone https://github.com/pysugar/oauth-llm-nexus.git
