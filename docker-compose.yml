@@ -18,10 +18,16 @@ services:
     ports:
       - "8086:8080"
     volumes:
-      # Persist database and config to host home directory
-      - ~/.oauth-llm-nexus:/app/data
+      # Persist database to host directory
+      - ~/.oauth-llm-nexus:/home/nexus
+      
+      # Optional: Map entire home directory for Config Inspector support
+      # This allows the container to access your local IDE configs (.cursor/, .zed/, etc.)
+      # Uncomment the line below and comment out the line above to enable:
+      # - ~/:/home/nexus
+      
       # Optional: Custom model routes
-      # - ./config/model_routes.yaml:/app/config/model_routes.yaml:ro
+      # - ./config/model_routes.yaml:/etc/nexus/model_routes.yaml:ro
     environment:
       # Server Configuration
       - PORT=8080

@@ -1,7 +1,7 @@
 # Build stage
 FROM golang:1.24-alpine AS builder
 
-WORKDIR /app
+WORKDIR /build
 
 # Install build dependencies
 RUN apk add --no-cache git ca-certificates
@@ -28,23 +28,25 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
 # Runtime stage
 FROM alpine:3.19
 
-WORKDIR /app
-
 # Install runtime dependencies
 RUN apk add --no-cache ca-certificates tzdata
 
-# Create non-root user and data directory with proper ownership
-RUN adduser -D -u 1000 nexus && \
-    mkdir -p /app/data /app/config && \
-    chown -R nexus:nexus /app
+# Create non-root user with proper home directory
+RUN adduser -D -u 1000 -h /home/nexus nexus
+
+# Copy binary to standard location (won't be overwritten by volume mounts)
+COPY --from=builder /build/nexus /usr/local/bin/nexus
+
+# Copy default config to /etc (can be overridden)
+COPY --from=builder /build/config/model_routes.yaml /etc/nexus/model_routes.yaml
+
+# Set working directory to user home
+WORKDIR /home/nexus
+
+# Set ownership of home directory
+RUN chown -R nexus:nexus /home/nexus
 
 USER nexus
-
-# Copy binary from builder
-COPY --from=builder --chown=nexus:nexus /app/nexus /app/nexus
-
-# Copy default config (will be overridden by volume mount if provided)
-COPY --from=builder --chown=nexus:nexus /app/config/model_routes.yaml /app/config/model_routes.yaml
 
 # Environment variables
 ENV PORT=8080 \
@@ -59,4 +61,4 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:${PORT}/ || exit 1
 
 # Run the application
-ENTRYPOINT ["/app/nexus"]
+ENTRYPOINT ["nexus"]
