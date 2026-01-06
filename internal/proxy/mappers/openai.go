@@ -294,32 +294,15 @@ func OpenAIToGemini(req OpenAIChatRequest, resolvedModel, projectID string) Gemi
 		}
 	}
 
-	// Add default thinkingConfig for Gemini 3 Pro models
-	// Based on LiteLLM's handling: Gemini 3 Pro needs thinkingLevel to ensure output is generated
-	// Without this, all tokens may be used for thinking with no actual output
-	if thinkingLevel := getThinkingLevelForModel(resolvedModel); thinkingLevel != "" {
-		geminiReq.Request.ThinkingConfig = &ThinkingConfig{
-			ThinkingLevel: thinkingLevel,
-		}
-	}
+	// Note: thinkingConfig is NOT supported by Cloud Code API
+	// The API returns: "Unknown name thinkingConfig at 'request': Cannot find field"
+	// Gemini 3 Pro models work without explicit thinkingConfig when using Cloud Code API
+	// Left here for reference if switching to standard Vertex AI API in the future:
+	// if thinkingLevel := getThinkingLevelForModel(resolvedModel); thinkingLevel != "" {
+	//     geminiReq.Request.ThinkingConfig = &ThinkingConfig{ThinkingLevel: thinkingLevel}
+	// }
 
 	return geminiReq
-}
-
-// getThinkingLevelForModel returns the appropriate thinkingLevel for Gemini 3 Pro models
-// Returns empty string if thinkingConfig is not needed
-func getThinkingLevelForModel(model string) string {
-	if strings.Contains(model, "gemini-3-pro-low") {
-		return "low"
-	}
-	if strings.Contains(model, "gemini-3-pro-high") {
-		return "high"
-	}
-	if strings.Contains(model, "gemini-3-pro-medium") {
-		return "medium"
-	}
-	// gemini-3-pro-image doesn't need thinkingConfig
-	return ""
 }
 
 // ConvertToolsToGemini converts OpenAI tools to Gemini format
