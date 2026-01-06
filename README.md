@@ -138,25 +138,6 @@ When `NEXUS_ADMIN_PASSWORD` is set, the Dashboard and `/api/*` endpoints are pro
 
 If not set, the Dashboard is accessible without authentication (default for local development).
 
-### 💡 Deployment Tip: Headless/Cloud Server
-
-Since OAuth-LLM-Nexus requires a browser for the initial Google login (which can be tricky on a headless Linux server), you can:
-
-1.  Run `nexus` on your local PC/Mac first.
-2.  Log in via the Dashboard (`http://localhost:8080`) to generate `nexus.db` with your tokens.
-3.  Copy the `nexus.db` file to your Linux server.
-4.  Run `nexus` on the server - it will pick up the existing valid session!
-
-```bash
-# Local
-scp nexus.db user@your-server:/path/to/nexus/
-
-# Server
-export HOST=0.0.0.0
-export NEXUS_ADMIN_PASSWORD=yourpassword
-./nexus
-```
-
 ## 📖 Usage
 
 ### 1. Open the Dashboard

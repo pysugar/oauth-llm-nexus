@@ -18,8 +18,8 @@ services:
     ports:
       - "8086:8080"
     volumes:
-      # Persist database
-      - nexus-data:/app/data
+      # Persist database and config to host home directory
+      - ~/.oauth-llm-nexus:/app/data
       # Optional: Custom model routes
       # - ./config/model_routes.yaml:/app/config/model_routes.yaml:ro
     environment:
@@ -36,7 +36,3 @@ services:
       timeout: 3s
       retries: 3
       start_period: 5s
-
-volumes:
-  nexus-data:
-    driver: local
