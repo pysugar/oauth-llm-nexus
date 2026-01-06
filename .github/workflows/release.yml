@@ -44,7 +44,8 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
         run: |
-          go build -ldflags="-s -w -X main.Version=${{ github.ref_name }}" -o nexus-${{ matrix.suffix }} ./cmd/nexus
+          LDFLAGS="-s -w -X github.com/pysugar/oauth-llm-nexus/internal/version.Version=${{ github.ref_name }} -X github.com/pysugar/oauth-llm-nexus/internal/version.Commit=${{ github.sha }} -X github.com/pysugar/oauth-llm-nexus/internal/version.BuildTime=$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          go build -ldflags="$LDFLAGS" -o nexus-${{ matrix.suffix }} ./cmd/nexus
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
