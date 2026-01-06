@@ -33,18 +33,18 @@ WORKDIR /app
 # Install runtime dependencies
 RUN apk add --no-cache ca-certificates tzdata
 
-# Create non-root user
-RUN adduser -D -u 1000 nexus
+# Create non-root user and data directory with proper ownership
+RUN adduser -D -u 1000 nexus && \
+    mkdir -p /app/data /app/config && \
+    chown -R nexus:nexus /app
+
 USER nexus
 
 # Copy binary from builder
-COPY --from=builder /app/nexus /app/nexus
+COPY --from=builder --chown=nexus:nexus /app/nexus /app/nexus
 
 # Copy default config (will be overridden by volume mount if provided)
-COPY --from=builder /app/config/model_routes.yaml /app/config/model_routes.yaml
-
-# Create data directory
-RUN mkdir -p /app/data
+COPY --from=builder --chown=nexus:nexus /app/config/model_routes.yaml /app/config/model_routes.yaml
 
 # Environment variables
 ENV PORT=8080 \
