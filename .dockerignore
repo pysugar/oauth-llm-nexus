@@ -1,0 +1,42 @@
+# Docker ignore file - exclude unnecessary files from build context
+
+# Git
+.git
+.gitignore
+.github
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# Build artifacts
+*.exe
+nexus
+nexus-*
+
+# Documentation
+*.md
+!README.md
+docs/
+
+# Test files
+*_test.go
+tests/
+coverage.out
+
+# Development files
+.env
+.env.*
+*.log
+
+# Homebrew tap (separate repo)
+homebrew-tap/
+
+# Brain artifacts
+.gemini/
+
+# Temporary files
+tmp/
+temp/

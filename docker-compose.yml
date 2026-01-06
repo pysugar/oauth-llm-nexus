@@ -1,0 +1,42 @@
+# OAuth-LLM-Nexus Docker Compose Configuration
+# 
+# Quick Start:
+#   docker-compose up -d
+#
+# With custom config:
+#   docker-compose -f docker-compose.yml -f docker-compose.override.yml up -d
+
+services:
+  nexus:
+    image: ghcr.io/pysugar/oauth-llm-nexus:latest
+    # Or build locally:
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
+    container_name: oauth-llm-nexus
+    restart: unless-stopped
+    ports:
+      - "8086:8080"
+    volumes:
+      # Persist database
+      - nexus-data:/app/data
+      # Optional: Custom model routes
+      # - ./config/model_routes.yaml:/app/config/model_routes.yaml:ro
+    environment:
+      # Server Configuration
+      - PORT=8080
+      - HOST=0.0.0.0
+      # Optional: Enable verbose logging
+      # - NEXUS_VERBOSE=true
+      # Optional: Set admin password for dashboard
+      # - NEXUS_ADMIN_PASSWORD=your-secure-password
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  nexus-data:
+    driver: local
