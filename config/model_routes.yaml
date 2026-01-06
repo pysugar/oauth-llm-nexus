@@ -75,7 +75,7 @@ routes:
   # Codex Series (2026)
   - client: gpt-5.2-codex
     provider: google
-    target: claude-sonnet-4-5-thinking
+    target: cclaude-opus-4-5-thinking
   - client: gpt-5.1-codex-max
     provider: google
     target: claude-opus-4-5-thinking
