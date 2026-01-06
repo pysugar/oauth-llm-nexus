@@ -9,28 +9,43 @@ import (
 // OpenAI Request/Response structures
 
 type OpenAIChatRequest struct {
-	Model            string                 `json:"model"`
-	Messages         []OpenAIMessage        `json:"messages"`
-	Stream           bool                   `json:"stream,omitempty"`
-	Temperature      *float64               `json:"temperature,omitempty"`
-	MaxTokens        *int                   `json:"max_tokens,omitempty"`
-	TopP             *float64               `json:"top_p,omitempty"`
-	Stop             []string               `json:"stop,omitempty"`
-	Tools            []Tool                 `json:"tools,omitempty"`
-	ToolChoice       interface{}            `json:"tool_choice,omitempty"` // Can be string ("auto", "none", "required") or object
-	WebSearchOptions map[string]interface{} `json:"web_search_options,omitempty"`
+	Model       string          `json:"model"`
+	Messages    []OpenAIMessage `json:"messages"`
+	Stream      bool            `json:"stream,omitempty"`
+	Temperature *float64        `json:"temperature,omitempty"`
+	MaxTokens   *int            `json:"max_tokens,omitempty"`
+	TopP        *float64        `json:"top_p,omitempty"`
+	Stop        []string        `json:"stop,omitempty"`
+	Tools       []Tool          `json:"tools,omitempty"`
+	ToolChoice  interface{}     `json:"tool_choice,omitempty"` // Can be string ("auto", "none", "required") or object
 }
 
 // Tool represents an OpenAI-compatible tool definition
+// Supports: "function", "web_search", "web_search_preview"
 type Tool struct {
-	Type     string              `json:"type"` // "function"
-	Function *FunctionDefinition `json:"function,omitempty"`
+	Type              string              `json:"type"` // "function", "web_search", "web_search_preview"
+	Function          *FunctionDefinition `json:"function,omitempty"`
+	SearchContextSize string              `json:"search_context_size,omitempty"` // "low", "medium", "high" for web_search
+	UserLocation      *UserLocation       `json:"user_location,omitempty"`       // Location info for web_search
 }
 
 type FunctionDefinition struct {
 	Name        string                 `json:"name"`
 	Description string                 `json:"description,omitempty"`
 	Parameters  map[string]interface{} `json:"parameters,omitempty"` // JSON Schema
+}
+
+// UserLocation for web_search tool localization
+type UserLocation struct {
+	Type        string               `json:"type"` // "approximate"
+	Approximate *ApproximateLocation `json:"approximate,omitempty"`
+}
+
+type ApproximateLocation struct {
+	Country  string `json:"country,omitempty"`
+	City     string `json:"city,omitempty"`
+	Region   string `json:"region,omitempty"`
+	Timezone string `json:"timezone,omitempty"`
 }
 
 type OpenAIMessage struct {
