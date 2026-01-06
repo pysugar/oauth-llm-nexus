@@ -192,8 +192,23 @@ func OpenAIToGemini(req OpenAIChatRequest, resolvedModel, projectID string) Gemi
 // GeminiToOpenAI converts a Gemini response to OpenAI format
 func GeminiToOpenAI(geminiResp map[string]interface{}, model string, isStreaming bool) ([]byte, error) {
 	// Extract text from Gemini response
+	// Handle both direct and nested response structures
+	var candidates []interface{}
+	
+	// Check if response is nested (Cloud Code API format)
+	if response, ok := geminiResp["response"].(map[string]interface{}); ok {
+		if cand, ok := response["candidates"].([]interface{}); ok {
+			candidates = cand
+		}
+	} else {
+		// Direct format
+		if cand, ok := geminiResp["candidates"].([]interface{}); ok {
+			candidates = cand
+		}
+	}
+	
 	text := ""
-	if candidates, ok := geminiResp["candidates"].([]interface{}); ok && len(candidates) > 0 {
+	if len(candidates) > 0 {
 		if candidate, ok := candidates[0].(map[string]interface{}); ok {
 			if content, ok := candidate["content"].(map[string]interface{}); ok {
 				if parts, ok := content["parts"].([]interface{}); ok && len(parts) > 0 {
@@ -203,6 +218,37 @@ func GeminiToOpenAI(geminiResp map[string]interface{}, model string, isStreaming
 						}
 					}
 				}
+			}
+		}
+	}
+	
+	// Extract usage metadata from Gemini response
+	var promptTokens, completionTokens, totalTokens int
+	
+	// Try nested format first (Cloud Code API)
+	if response, ok := geminiResp["response"].(map[string]interface{}); ok {
+		if usageData, ok := response["usageMetadata"].(map[string]interface{}); ok {
+			if pt, ok := usageData["promptTokenCount"].(float64); ok {
+				promptTokens = int(pt)
+			}
+			if ct, ok := usageData["candidatesTokenCount"].(float64); ok {
+				completionTokens = int(ct)
+			}
+			if tt, ok := usageData["totalTokenCount"].(float64); ok {
+				totalTokens = int(tt)
+			}
+		}
+	} else {
+		// Direct format
+		if usageData, ok := geminiResp["usageMetadata"].(map[string]interface{}); ok {
+			if pt, ok := usageData["promptTokenCount"].(float64); ok {
+				promptTokens = int(pt)
+			}
+			if ct, ok := usageData["candidatesTokenCount"].(float64); ok {
+				completionTokens = int(ct)
+			}
+			if tt, ok := usageData["totalTokenCount"].(float64); ok {
+				totalTokens = int(tt)
 			}
 		}
 	}
@@ -240,6 +286,11 @@ func GeminiToOpenAI(geminiResp map[string]interface{}, model string, isStreaming
 				},
 				FinishReason: stringPtr("stop"),
 			},
+		},
+		Usage: &OpenAIUsage{
+			PromptTokens:     promptTokens,
+			CompletionTokens: completionTokens,
+			TotalTokens:      totalTokens,
 		},
 	}
 	

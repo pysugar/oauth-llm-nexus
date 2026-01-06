@@ -12,7 +12,7 @@ func ToolsPageHandler() http.HandlerFunc {
 	}
 }
 
-const toolsPageHTML = `<!DOCTYPE html>
+var toolsPageHTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -266,7 +266,7 @@ const toolsPageHTML = `<!DOCTYPE html>
             </div>
 
         <div class="footer">
-            <a href="/">← Dashboard</a> • <span style="color:#cbd5e1; font-weight:bold;">v0.1.4</span> • <a href="/healthz">Health Check</a>
+            <a href="/">← Dashboard</a> • <span style="color:#cbd5e1; font-weight:bold;">{{VERSION}}</span> • <a href="/healthz">Health Check</a>
         </div>
 
         <!-- Import Preview Modal -->

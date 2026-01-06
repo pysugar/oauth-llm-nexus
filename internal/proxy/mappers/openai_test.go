@@ -15,7 +15,7 @@ func TestOpenAIToGemini_SystemRole(t *testing.T) {
 		},
 	}
 
-	geminiReq := OpenAIToGemini(req, "test-project")
+	geminiReq := OpenAIToGemini(req, "gemini-test-model", "test-project")
 
 	// 1. Verify System Instruction
 	if geminiReq.Request.SystemInstruction == nil {
@@ -69,7 +69,7 @@ func TestOpenAIToGemini_NoSystemRole(t *testing.T) {
 		},
 	}
 
-	geminiReq := OpenAIToGemini(req, "test-project")
+	geminiReq := OpenAIToGemini(req, "gemini-test-model", "test-project")
 
 	// Verify System Instruction is nil
 	if geminiReq.Request.SystemInstruction != nil {

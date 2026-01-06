@@ -89,7 +89,7 @@ routes:
   # GPT-4o Series
   - client: gpt-4o
     provider: google
-    target: gemini-3-pro-high
+    target: gemini-3-flash
   - client: gpt-4o-mini
     provider: google
     target: gemini-2.5-flash-lite
@@ -100,7 +100,7 @@ routes:
     target: gemini-3-pro-high
   - client: gpt-4-turbo
     provider: google
-    target: gemini-3-pro-high
+    target: gemini-3-flash
   - client: gpt-3.5-turbo
     provider: google
     target: gpt-oss-120b-medium

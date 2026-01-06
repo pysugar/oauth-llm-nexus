@@ -162,7 +162,7 @@ func GetAPIKeyHandler(db *gorm.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var config models.Config
 		db.Where("key = ?", "api_key").First(&config)
-		
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{
 			"api_key": config.Value,
@@ -176,10 +176,10 @@ func RegenerateAPIKeyHandler(db *gorm.DB) http.HandlerFunc {
 		keyBytes := make([]byte, 16)
 		rand.Read(keyBytes)
 		apiKey := "sk-" + hex.EncodeToString(keyBytes)
-		
+
 		db.Model(&models.Config{}).Where("key = ?", "api_key").Update("value", apiKey)
 		log.Printf("🔑 Regenerated API key: %s", apiKey)
-		
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{
 			"api_key": apiKey,
@@ -187,7 +187,7 @@ func RegenerateAPIKeyHandler(db *gorm.DB) http.HandlerFunc {
 	}
 }
 
-const dashboardHTML = `<!DOCTYPE html>
+var dashboardHTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -343,7 +343,7 @@ const dashboardHTML = `<!DOCTYPE html>
 
         <div class="mt-6 text-center py-3 border-t border-gray-700">
             <a href="/tools" class="inline-block px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded text-white text-sm font-medium mr-2">🛠️ Config Inspector</a>
-            <span class="text-gray-500 text-xs"><span id="status">Ready</span> • <span class="text-gray-300 font-bold">v0.1.4</span> • <a href="/healthz" class="hover:text-gray-300">Health</a></span>
+            <span class="text-gray-500 text-xs"><span id="status">Ready</span> • <span class="text-gray-300 font-bold">{{VERSION}}</span> • <a href="/healthz" class="hover:text-gray-300">Health</a></span>
         </div>
     </div>
 

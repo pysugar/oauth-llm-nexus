@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/google/uuid"
@@ -46,18 +47,22 @@ func OpenAIChatHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client)
 			writeOpenAIError(w, "Failed to read request body", http.StatusBadRequest)
 			return
 		}
-		log.Printf("📥 OpenAI raw request: %s", string(bodyBytes))
+		// Verbose logging controlled by NEXUS_VERBOSE
+		verbose := os.Getenv("NEXUS_VERBOSE") == "1" || os.Getenv("NEXUS_VERBOSE") == "true"
+		if verbose {
+			log.Printf("📥 [VERBOSE] OpenAI raw request:\n%s", string(bodyBytes))
+		}
 
 		var req mappers.OpenAIChatRequest
 		if err := json.Unmarshal(bodyBytes, &req); err != nil {
 			log.Printf("⚠️ OpenAI parse error: %v", err)
 			writeOpenAIError(w, "Invalid request body: "+err.Error(), http.StatusBadRequest)
+			return
 		}
-		
+
 		// Resolve model mapping
 		targetModel := db.ResolveModel(req.Model, "google")
-
-		log.Printf("📨 OpenAI request: model=%s (resolved: %s) messages=%d stream=%v", req.Model, targetModel, len(req.Messages), req.Stream)
+		log.Printf("🗺️ OpenAI model routing: %s -> %s", req.Model, targetModel)
 
 		// Convert to Gemini format
 		// We pass the resolved target model to the mapper
@@ -101,7 +106,7 @@ func handleOpenAINonStreaming(w http.ResponseWriter, client *upstream.Client, to
 	// Unwrap Cloud Code API response
 	var wrapped map[string]interface{}
 	json.Unmarshal(body, &wrapped)
-	
+
 	geminiResp, ok := wrapped["response"].(map[string]interface{})
 	if !ok {
 		// Fallback: try using body directly

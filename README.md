@@ -66,7 +66,13 @@ chmod +x nexus-darwin-arm64
 ```bash
 git clone https://github.com/pysugar/oauth-llm-nexus.git
 cd oauth-llm-nexus
-go build -o nexus ./cmd/nexus
+
+# Build with Make (automatically injects version)
+make build
+
+# Or manual build
+# go build -ldflags "-X github.com/pysugar/oauth-llm-nexus/internal/version.Version=dev" -o nexus ./cmd/nexus
+
 ./nexus
 ```
 
@@ -88,6 +94,7 @@ The server will start on `127.0.0.1:8080` by default. Visit `http://localhost:80
 | `HOST` | `127.0.0.1` | Bind address. Set to `0.0.0.0` for LAN access |
 | `NEXUS_MODE` | - | Set to `release` for production (changes default port to 8086) |
 | `NEXUS_ADMIN_PASSWORD` | - | Optional password to protect Dashboard and API endpoints |
+| `NEXUS_VERBOSE` | - | Set to `1` or `true` to enable detailed request/response logging |
 
 **Example: LAN Access with Password Protection**
 ```bash
@@ -96,6 +103,12 @@ export PORT=8086
 export NEXUS_ADMIN_PASSWORD=mysecret
 ./nexus
 # Now accessible from other devices with password protection
+```
+
+**Example: Enable Verbose Logging for Debugging**
+```bash
+NEXUS_VERBOSE=1 ./nexus
+# Logs will include full request bodies and API responses
 ```
 
 ### 🔐 Dashboard Security

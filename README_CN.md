@@ -66,7 +66,13 @@ chmod +x nexus-darwin-arm64
 ```bash
 git clone https://github.com/pysugar/oauth-llm-nexus.git
 cd oauth-llm-nexus
-go build -o nexus ./cmd/nexus
+
+# 使用 Make 构建 (自动注入版本号)
+make build
+
+# 或者手动构建
+# go build -ldflags "-X github.com/pysugar/oauth-llm-nexus/internal/version.Version=dev" -o nexus ./cmd/nexus
+
 ./nexus
 ```
 
@@ -88,6 +94,7 @@ go build -o nexus ./cmd/nexus
 | `HOST` | `127.0.0.1` | 绑定地址。设置为 `0.0.0.0` 可供局域网访问 |
 | `NEXUS_MODE` | - | 设置为 `release` 启用生产模式（默认端口改为 8086） |
 | `NEXUS_ADMIN_PASSWORD` | - | 可选密码，用于保护 Dashboard 和 API 端点 |
+| `NEXUS_VERBOSE` | - | 设置为 `1` 或 `true` 启用详细的请求/响应日志 |
 
 **示例：带密码保护的局域网共享**
 ```bash
@@ -96,6 +103,12 @@ export PORT=8086
 export NEXUS_ADMIN_PASSWORD=mysecret
 ./nexus
 # 现在可以从局域网其他设备访问，需要密码验证
+```
+
+**示例：启用详细日志进行调试**
+```bash
+NEXUS_VERBOSE=1 ./nexus
+# 日志将包含完整的请求体和 API 响应内容
 ```
 
 ### 🔐 仪表盘安全

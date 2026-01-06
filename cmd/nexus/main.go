@@ -99,6 +99,9 @@ func main() {
 		r.Get("/discovery/scan", handlers.DiscoveryScanHandler())
 		r.Get("/discovery/check", handlers.ConfigCheckHandler())
 		r.Post("/discovery/import", handlers.DiscoveryImportHandler(database))
+
+		// Version info
+		r.Get("/version", handlers.VersionHandler())
 	})
 
 	// ============================================
@@ -110,6 +113,7 @@ func main() {
 		r.Use(middleware.APIKeyAuth(database))
 		r.Post("/chat/completions", handlers.OpenAIChatHandler(tokenManager, upstreamClient))
 		r.Get("/models", handlers.OpenAIModelsListHandler(database))
+		r.Post("/responses", handlers.OpenAIResponsesHandler(database, tokenManager, upstreamClient))
 	})
 
 	// Anthropic-compatible API
@@ -144,7 +148,7 @@ func main() {
 			port = "8080" // Default for development
 		}
 	}
-	
+
 	addr := host + ":" + port
 	displayURL := "localhost:" + port
 	if host == "0.0.0.0" {
