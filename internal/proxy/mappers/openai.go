@@ -387,10 +387,18 @@ func GeminiToOpenAI(geminiResp map[string]interface{}, model string, isStreaming
 		if candidate, ok := candidates[0].(map[string]interface{}); ok {
 			if content, ok := candidate["content"].(map[string]interface{}); ok {
 				if parts, ok := content["parts"].([]interface{}); ok && len(parts) > 0 {
-					if part, ok := parts[0].(map[string]interface{}); ok {
-						if t, ok := part["text"].(string); ok {
-							text = t
+					// Iterate through all parts to find text content
+					// Gemini 3 Pro models may have parts with only thoughtSignature
+					var textParts []string
+					for _, p := range parts {
+						if part, ok := p.(map[string]interface{}); ok {
+							if t, ok := part["text"].(string); ok && t != "" {
+								textParts = append(textParts, t)
+							}
 						}
+					}
+					if len(textParts) > 0 {
+						text = strings.Join(textParts, "")
 					}
 				}
 			}

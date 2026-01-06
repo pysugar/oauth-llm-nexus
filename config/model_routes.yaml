@@ -92,7 +92,7 @@ routes:
     target: gemini-3-flash
   - client: gpt-4o-mini
     provider: google
-    target: gemini-2.5-flash-lite
+    target: gemini-2.5-flash
   
   # Legacy GPT
   - client: gpt-4
@@ -108,10 +108,10 @@ routes:
   # Reasoning Models
   - client: o1
     provider: google
-    target: gemini-2.5-flash
+    target: gemini-3-pro-low
   - client: o1-preview
     provider: google
-    target: gemini-2.5-flash
+    target: gemini-3-pro-low
   - client: o3
     provider: google
     target: gemini-3-pro-high
