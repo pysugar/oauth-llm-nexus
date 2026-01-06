@@ -475,3 +475,151 @@ func GeminiToOpenAI(geminiResp map[string]interface{}, model string, isStreaming
 func stringPtr(s string) *string {
 	return &s
 }
+
+// ExtractGroundingMetadata extracts grounding metadata from Gemini response
+// Returns the metadata if found, nil otherwise
+func ExtractGroundingMetadata(geminiResp map[string]interface{}) *GeminiGroundingMetadata {
+	// Get candidates
+	var candidates []interface{}
+
+	// Check nested format first
+	if response, ok := geminiResp["response"].(map[string]interface{}); ok {
+		if cand, ok := response["candidates"].([]interface{}); ok {
+			candidates = cand
+		}
+	} else {
+		if cand, ok := geminiResp["candidates"].([]interface{}); ok {
+			candidates = cand
+		}
+	}
+
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	// Extract from first candidate
+	candidate, ok := candidates[0].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+
+	groundingData, ok := candidate["groundingMetadata"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+
+	metadata := &GeminiGroundingMetadata{}
+
+	// Extract groundingSupports
+	if supports, ok := groundingData["groundingSupports"].([]interface{}); ok {
+		for _, s := range supports {
+			if supportMap, ok := s.(map[string]interface{}); ok {
+				support := GeminiGroundingSupport{}
+
+				// Extract segment
+				if segment, ok := supportMap["segment"].(map[string]interface{}); ok {
+					if startIdx, ok := segment["startIndex"].(float64); ok {
+						support.Segment.StartIndex = int(startIdx)
+					}
+					if endIdx, ok := segment["endIndex"].(float64); ok {
+						support.Segment.EndIndex = int(endIdx)
+					}
+				}
+
+				// Extract groundingChunkIndices
+				if indices, ok := supportMap["groundingChunkIndices"].([]interface{}); ok {
+					for _, idx := range indices {
+						if i, ok := idx.(float64); ok {
+							support.GroundingChunkIndices = append(support.GroundingChunkIndices, int(i))
+						}
+					}
+				}
+
+				metadata.GroundingSupports = append(metadata.GroundingSupports, support)
+			}
+		}
+	}
+
+	// Extract groundingChunks
+	if chunks, ok := groundingData["groundingChunks"].([]interface{}); ok {
+		for _, c := range chunks {
+			if chunkMap, ok := c.(map[string]interface{}); ok {
+				chunk := GeminiGroundingChunk{}
+
+				if webData, ok := chunkMap["web"].(map[string]interface{}); ok {
+					chunk.Web = &struct {
+						URI   string `json:"uri"`
+						Title string `json:"title"`
+					}{}
+					if uri, ok := webData["uri"].(string); ok {
+						chunk.Web.URI = uri
+					}
+					if title, ok := webData["title"].(string); ok {
+						chunk.Web.Title = title
+					}
+				}
+
+				metadata.GroundingChunks = append(metadata.GroundingChunks, chunk)
+			}
+		}
+	}
+
+	// Extract webSearchQueries
+	if queries, ok := groundingData["webSearchQueries"].([]interface{}); ok {
+		for _, q := range queries {
+			if query, ok := q.(string); ok {
+				metadata.WebSearchQueries = append(metadata.WebSearchQueries, query)
+			}
+		}
+	}
+
+	return metadata
+}
+
+// ConvertGroundingMetadataToAnnotations converts Gemini grounding metadata to OpenAI annotations
+// Based on LiteLLM's _convert_grounding_metadata_to_annotations
+func ConvertGroundingMetadataToAnnotations(metadata *GeminiGroundingMetadata) []OpenAIAnnotation {
+	if metadata == nil {
+		return nil
+	}
+
+	var annotations []OpenAIAnnotation
+
+	// Build chunk index to URI map
+	chunkToURI := make(map[int]string)
+	chunkToTitle := make(map[int]string)
+
+	for idx, chunk := range metadata.GroundingChunks {
+		if chunk.Web != nil {
+			chunkToURI[idx] = chunk.Web.URI
+			chunkToTitle[idx] = chunk.Web.Title
+		}
+	}
+
+	// Process each grounding support to create annotations
+	for _, support := range metadata.GroundingSupports {
+		if len(support.GroundingChunkIndices) == 0 {
+			continue
+		}
+
+		startIndex := support.Segment.StartIndex
+		endIndex := support.Segment.EndIndex
+
+		// Use the first chunk's URL for the annotation
+		firstChunkIdx := support.GroundingChunkIndices[0]
+		if url, ok := chunkToURI[firstChunkIdx]; ok && url != "" {
+			annotation := OpenAIAnnotation{
+				Type: "url_citation",
+				URLCitation: &OpenAIAnnotationURLCitation{
+					StartIndex: startIndex,
+					EndIndex:   endIndex,
+					URL:        url,
+					Title:      chunkToTitle[firstChunkIdx],
+				},
+			}
+			annotations = append(annotations, annotation)
+		}
+	}
+
+	return annotations
+}

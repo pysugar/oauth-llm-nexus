@@ -38,18 +38,38 @@ type OpenAIResponsesRequest struct {
 	Modalities         []string        `json:"modalities,omitempty"`
 }
 
-// ResponsesTool represents a tool configuration
+// ResponsesTool represents a tool configuration (OpenAI Responses API)
+// Supports: web_search, file_search, function, code_interpreter, mcp
 type ResponsesTool struct {
-	Type         string            `json:"type"` // "web_search", "file_search", "code_exec"
-	UserLocation *ToolUserLocation `json:"user_location,omitempty"`
-	Files        []string          `json:"files,omitempty"`
+	Type string `json:"type"` // "web_search", "file_search", "function", "code_interpreter", "mcp"
+
+	// web_search specific fields
+	UserLocation      *ToolUserLocation `json:"user_location,omitempty"`
+	Filters           *ToolFilters      `json:"filters,omitempty"`
+	ExternalWebAccess *bool             `json:"external_web_access,omitempty"`
+
+	// function specific fields (when type="function")
+	Name        string                 `json:"name,omitempty"`
+	Description string                 `json:"description,omitempty"`
+	Parameters  map[string]interface{} `json:"parameters,omitempty"`
+	Strict      *bool                  `json:"strict,omitempty"`
+
+	// file_search specific fields
+	VectorStoreIDs []string `json:"vector_store_ids,omitempty"`
+	Files          []string `json:"files,omitempty"`
 }
 
-// ToolUserLocation for web_search tool
+// ToolFilters for web_search domain filtering
+type ToolFilters struct {
+	AllowedDomains []string `json:"allowed_domains,omitempty"`
+}
+
+// ToolUserLocation for web_search tool localization
 type ToolUserLocation struct {
 	Type    string `json:"type,omitempty"` // "approximate"
 	Country string `json:"country,omitempty"`
 	City    string `json:"city,omitempty"`
+	Region  string `json:"region,omitempty"`
 }
 
 // ResponsesInputMessage represents a message in the input array
@@ -60,10 +80,11 @@ type ResponsesInputMessage struct {
 
 // ResponsesContent represents content item (input or output)
 type ResponsesContent struct {
-	Type     string `json:"type"` // input_text, input_image, input_file, output_text, text
-	Text     string `json:"text,omitempty"`
-	ImageURL string `json:"image_url,omitempty"`
-	FileID   string `json:"file_id,omitempty"`
+	Type        string                     `json:"type"` // input_text, input_image, input_file, output_text, text
+	Text        string                     `json:"text,omitempty"`
+	ImageURL    string                     `json:"image_url,omitempty"`
+	FileID      string                     `json:"file_id,omitempty"`
+	Annotations []mappers.OpenAIAnnotation `json:"annotations,omitempty"` // URL citations from grounding
 }
 
 // OpenAIResponsesResponse represents /v1/responses response (OpenAI spec)
@@ -130,13 +151,24 @@ func ConvertResponsesToChatCompletion(req OpenAIResponsesRequest) mappers.OpenAI
 			mappedTool := mappers.Tool{
 				Type: tool.Type, // web_search, web_search_preview, function, etc.
 			}
-			// Map user_location if present
+
+			// Handle function type (Responses API has name/parameters on tool object directly)
+			if tool.Type == "function" && tool.Name != "" {
+				mappedTool.Function = &mappers.FunctionDefinition{
+					Name:        tool.Name,
+					Description: tool.Description,
+					Parameters:  tool.Parameters,
+				}
+			}
+
+			// Map user_location if present (for web_search)
 			if tool.UserLocation != nil {
 				mappedTool.UserLocation = &mappers.UserLocation{
 					Type: tool.UserLocation.Type,
 					Approximate: &mappers.ApproximateLocation{
 						Country: tool.UserLocation.Country,
 						City:    tool.UserLocation.City,
+						Region:  tool.UserLocation.Region,
 					},
 				}
 			}
@@ -318,7 +350,92 @@ func ConvertChatCompletionToResponses(chatResp map[string]interface{}) OpenAIRes
 	return resp
 }
 
-// ===== Handler =====
+// ConvertChatCompletionToResponsesWithAnnotations converts Chat Completions response to Responses format
+// with URL citation annotations from grounding metadata
+func ConvertChatCompletionToResponsesWithAnnotations(chatResp map[string]interface{}, annotations []mappers.OpenAIAnnotation) OpenAIResponsesResponse {
+	// Generate proper response ID (resp_xxx format)
+	respID := "resp_" + uuid.New().String()[:12]
+
+	// Get created timestamp
+	var createdAt int64
+	if created, ok := chatResp["created"].(float64); ok {
+		createdAt = int64(created)
+	}
+
+	resp := OpenAIResponsesResponse{
+		ID:        respID,
+		Object:    "response",
+		Status:    "completed",
+		CreatedAt: createdAt,
+		Model:     chatResp["model"].(string),
+	}
+
+	// Convert choices to output items
+	chatChoices, ok := chatResp["choices"].([]interface{})
+	if !ok || len(chatChoices) == 0 {
+		return resp
+	}
+
+	resp.Output = make([]ResponsesOutputItem, len(chatChoices))
+
+	for i, choice := range chatChoices {
+		chatChoice, ok := choice.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		message, ok := chatChoice["message"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		// Handle content safely
+		contentText := ""
+		if content, ok := message["content"].(string); ok {
+			contentText = content
+		}
+
+		// Generate item ID
+		itemID := "item_" + uuid.New().String()[:8]
+
+		// Get role
+		role := "assistant"
+		if r, ok := message["role"].(string); ok {
+			role = r
+		}
+
+		// Create message output item with annotations
+		outputContent := ResponsesContent{
+			Type:        "output_text",
+			Text:        contentText,
+			Annotations: annotations, // Include URL citations from grounding
+		}
+
+		resp.Output[i] = ResponsesOutputItem{
+			ID:      itemID,
+			Type:    "message",
+			Role:    role,
+			Status:  "completed",
+			Content: []ResponsesContent{outputContent},
+		}
+	}
+
+	// Convert usage (with nil check)
+	if usageData, ok := chatResp["usage"].(map[string]interface{}); ok && usageData != nil {
+		usage := &ResponsesUsage{}
+		if pt, ok := usageData["prompt_tokens"].(float64); ok {
+			usage.PromptTokens = int(pt)
+		}
+		if ct, ok := usageData["completion_tokens"].(float64); ok {
+			usage.CompletionTokens = int(ct)
+		}
+		if tt, ok := usageData["total_tokens"].(float64); ok {
+			usage.TotalTokens = int(tt)
+		}
+		resp.Usage = usage
+	}
+
+	return resp
+}
 
 // OpenAIResponsesHandler handles /v1/responses (OpenAI Responses API)
 // Set NEXUS_VERBOSE=1 for detailed request/response logging
@@ -416,6 +533,16 @@ func OpenAIResponsesHandler(database *gorm.DB, tokenMgr *token.Manager, upstream
 				return
 			}
 
+			// Extract grounding metadata for annotations (v0.1.6 Google Search feature)
+			var annotations []mappers.OpenAIAnnotation
+			groundingMetadata := mappers.ExtractGroundingMetadata(geminiResp)
+			if groundingMetadata != nil {
+				annotations = mappers.ConvertGroundingMetadataToAnnotations(groundingMetadata)
+				if verbose && len(annotations) > 0 {
+					log.Printf("🔗 [VERBOSE] Extracted %d URL citations from grounding metadata", len(annotations))
+				}
+			}
+
 			// Parse as map for conversion to Responses format
 			var chatCompletionResp map[string]interface{}
 			if err := json.Unmarshal(chatBytes, &chatCompletionResp); err != nil {
@@ -424,7 +551,7 @@ func OpenAIResponsesHandler(database *gorm.DB, tokenMgr *token.Manager, upstream
 			}
 
 			// Convert Chat Completions to Responses API format
-			responsesResp := ConvertChatCompletionToResponses(chatCompletionResp)
+			responsesResp := ConvertChatCompletionToResponsesWithAnnotations(chatCompletionResp, annotations)
 
 			// Verbose: Log final Responses API response
 			if verbose {
