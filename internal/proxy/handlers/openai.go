@@ -87,6 +87,8 @@ func OpenAIChatHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client)
 }
 
 func handleOpenAINonStreaming(w http.ResponseWriter, client *upstream.Client, token string, payload map[string]interface{}, model string) {
+	verbose := os.Getenv("NEXUS_VERBOSE") == "1" || os.Getenv("NEXUS_VERBOSE") == "true"
+
 	resp, err := client.GenerateContent(token, payload)
 	if err != nil {
 		writeOpenAIError(w, "Upstream error: "+err.Error(), http.StatusBadGateway)
@@ -97,10 +99,21 @@ func handleOpenAINonStreaming(w http.ResponseWriter, client *upstream.Client, to
 	body, _ := io.ReadAll(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
+		if verbose {
+			log.Printf("❌ [VERBOSE] /v1/chat/completions Gemini API error (status %d):\n%s", resp.StatusCode, string(body))
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(resp.StatusCode)
 		w.Write(body)
 		return
+	}
+
+	// Verbose: Log raw Gemini response
+	if verbose {
+		var prettyBody map[string]interface{}
+		json.Unmarshal(body, &prettyBody)
+		prettyBytes, _ := json.MarshalIndent(prettyBody, "", "  ")
+		log.Printf("📥 [VERBOSE] /v1/chat/completions Gemini API Response:\n%s", string(prettyBytes))
 	}
 
 	// Unwrap Cloud Code API response
@@ -117,6 +130,14 @@ func handleOpenAINonStreaming(w http.ResponseWriter, client *upstream.Client, to
 	if err != nil {
 		writeOpenAIError(w, "Response conversion error", http.StatusInternalServerError)
 		return
+	}
+
+	// Verbose: Log final OpenAI response
+	if verbose {
+		var prettyResp map[string]interface{}
+		json.Unmarshal(openaiResp, &prettyResp)
+		prettyBytes, _ := json.MarshalIndent(prettyResp, "", "  ")
+		log.Printf("📤 [VERBOSE] /v1/chat/completions Final Response:\n%s", string(prettyBytes))
 	}
 
 	w.Header().Set("Content-Type", "application/json")
