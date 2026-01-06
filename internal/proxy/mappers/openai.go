@@ -140,7 +140,6 @@ type GeminiRequestPayload struct {
 	GenerationConfig  *GeminiGenerationConfig `json:"generationConfig,omitempty"`
 	Tools             []GeminiTool            `json:"tools,omitempty"`
 	ToolConfig        *GeminiToolConfig       `json:"toolConfig,omitempty"`
-	ThinkingConfig    *ThinkingConfig         `json:"thinkingConfig,omitempty"`
 }
 
 // ThinkingConfig for Gemini 3 Pro models (thinking/reasoning models)
@@ -159,10 +158,11 @@ type GeminiPart struct {
 }
 
 type GeminiGenerationConfig struct {
-	Temperature     *float64 `json:"temperature,omitempty"`
-	MaxOutputTokens *int     `json:"maxOutputTokens,omitempty"`
-	TopP            *float64 `json:"topP,omitempty"`
-	StopSequences   []string `json:"stopSequences,omitempty"`
+	Temperature     *float64        `json:"temperature,omitempty"`
+	MaxOutputTokens *int            `json:"maxOutputTokens,omitempty"`
+	TopP            *float64        `json:"topP,omitempty"`
+	StopSequences   []string        `json:"stopSequences,omitempty"`
+	ThinkingConfig  *ThinkingConfig `json:"thinkingConfig,omitempty"` // For Gemini 3 Pro models
 }
 
 // Tools and Function Calling structures
@@ -286,6 +286,17 @@ func OpenAIToGemini(req OpenAIChatRequest, resolvedModel, projectID string) Gemi
 		}
 	}
 
+	// Add thinkingConfig for Gemini 3 Pro models (inside GenerationConfig per official API)
+	// Example: generationConfig: { thinkingConfig: { thinkingLevel: "low" } }
+	if thinkingLevel := getThinkingLevelForModel(resolvedModel); thinkingLevel != "" {
+		if geminiReq.Request.GenerationConfig == nil {
+			geminiReq.Request.GenerationConfig = &GeminiGenerationConfig{}
+		}
+		geminiReq.Request.GenerationConfig.ThinkingConfig = &ThinkingConfig{
+			ThinkingLevel: thinkingLevel,
+		}
+	}
+
 	// Convert tools to Gemini format
 	if len(req.Tools) > 0 {
 		tools := ConvertToolsToGemini(req.Tools)
@@ -294,15 +305,26 @@ func OpenAIToGemini(req OpenAIChatRequest, resolvedModel, projectID string) Gemi
 		}
 	}
 
-	// Note: thinkingConfig is NOT supported by Cloud Code API
-	// The API returns: "Unknown name thinkingConfig at 'request': Cannot find field"
-	// Gemini 3 Pro models work without explicit thinkingConfig when using Cloud Code API
-	// Left here for reference if switching to standard Vertex AI API in the future:
-	// if thinkingLevel := getThinkingLevelForModel(resolvedModel); thinkingLevel != "" {
-	//     geminiReq.Request.ThinkingConfig = &ThinkingConfig{ThinkingLevel: thinkingLevel}
-	// }
-
 	return geminiReq
+}
+
+// getThinkingLevelForModel returns the appropriate thinkingLevel for Gemini 3 Pro models
+// Based on official API docs: low, medium, high, minimal (for Flash)
+func getThinkingLevelForModel(model string) string {
+	if strings.Contains(model, "gemini-3-pro-low") {
+		return "low"
+	}
+	if strings.Contains(model, "gemini-3-pro-high") {
+		return "high"
+	}
+	if strings.Contains(model, "gemini-3-pro-medium") {
+		return "medium"
+	}
+	// gemini-3-pro without suffix defaults to "low"
+	if strings.Contains(model, "gemini-3-pro") && !strings.Contains(model, "image") {
+		return "low"
+	}
+	return ""
 }
 
 // ConvertToolsToGemini converts OpenAI tools to Gemini format
