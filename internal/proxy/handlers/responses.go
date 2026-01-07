@@ -365,7 +365,12 @@ func ConvertChatCompletionToResponsesWithAnnotations(chatResp map[string]interfa
 		Object:    "response",
 		Status:    "completed",
 		CreatedAt: createdAt,
-		Model:     chatResp["model"].(string),
+	}
+	// Safe type assertion with fallback (panic guard)
+	if model, ok := chatResp["model"].(string); ok {
+		resp.Model = model
+	} else {
+		resp.Model = "unknown"
 	}
 
 	// Convert choices to output items
