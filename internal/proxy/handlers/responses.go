@@ -493,26 +493,27 @@ func OpenAIResponsesHandler(database *gorm.DB, tokenMgr *token.Manager, upstream
 		json.Unmarshal(payloadBytes, &payload)
 
 		// Add Cloud Code API required fields
+		requestId := "agent-" + uuid.New().String()
 		payload["userAgent"] = "antigravity"
 		payload["requestType"] = "gemini"
-		payload["requestId"] = "agent-" + uuid.New().String()
+		payload["requestId"] = requestId
 
 		// Verbose: Log Gemini payload
 		if verbose {
 			geminiPayloadBytes, _ := json.MarshalIndent(payload, "", "  ")
-			log.Printf("📤 [VERBOSE] Gemini API Request Payload:\n%s", string(geminiPayloadBytes))
+			log.Printf("📤 [VERBOSE] [%s] Gemini API Request Payload:\n%s", requestId, string(geminiPayloadBytes))
 		}
 
 		// 7. Handle streaming vs non-streaming
 		if req.Stream {
 			// TODO: Implement streaming for Responses API
-			handleOpenAIStreaming(w, upstreamClient, cachedToken.AccessToken, payload, targetModel)
+			handleOpenAIStreaming(w, upstreamClient, cachedToken.AccessToken, payload, targetModel, requestId)
 		} else {
 			// Non-streaming: Get response from upstream
 			resp, err := upstreamClient.GenerateContent(cachedToken.AccessToken, payload)
 			if err != nil {
 				if verbose {
-					log.Printf("❌ [VERBOSE] /v1/responses Upstream error: %v", err)
+					log.Printf("❌ [VERBOSE] [%s] /v1/responses Upstream error: %v", requestId, err)
 				}
 				writeOpenAIError(w, "Upstream error: "+err.Error(), http.StatusBadGateway)
 				return
@@ -528,7 +529,7 @@ func OpenAIResponsesHandler(database *gorm.DB, tokenMgr *token.Manager, upstream
 					var prettyErr map[string]interface{}
 					json.Unmarshal(respBodyBytes, &prettyErr)
 					prettyErrBytes, _ := json.MarshalIndent(prettyErr, "", "  ")
-					log.Printf("❌ [VERBOSE] /v1/responses Gemini API error (status %d):\n%s", resp.StatusCode, string(prettyErrBytes))
+					log.Printf("❌ [VERBOSE] [%s] /v1/responses Gemini API error (status %d):\n%s", requestId, resp.StatusCode, string(prettyErrBytes))
 				}
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(resp.StatusCode)
@@ -539,7 +540,7 @@ func OpenAIResponsesHandler(database *gorm.DB, tokenMgr *token.Manager, upstream
 			var geminiResp map[string]interface{}
 			if err := json.Unmarshal(respBodyBytes, &geminiResp); err != nil {
 				if verbose {
-					log.Printf("❌ [VERBOSE] /v1/responses Failed to parse Gemini response: %v\nRaw: %s", err, string(respBodyBytes))
+					log.Printf("❌ [VERBOSE] [%s] /v1/responses Failed to parse Gemini response: %v\nRaw: %s", requestId, err, string(respBodyBytes))
 				}
 				writeOpenAIError(w, "Failed to parse upstream response", http.StatusInternalServerError)
 				return
@@ -548,14 +549,14 @@ func OpenAIResponsesHandler(database *gorm.DB, tokenMgr *token.Manager, upstream
 			// Verbose: Log Gemini response
 			if verbose {
 				geminiRespBytes, _ := json.MarshalIndent(geminiResp, "", "  ")
-				log.Printf("📥 [VERBOSE] Gemini API Response:\n%s", string(geminiRespBytes))
+				log.Printf("📥 [VERBOSE] [%s] Gemini API Response:\n%s", requestId, string(geminiRespBytes))
 			}
 
 			// Convert Gemini response to Chat Completions format
 			chatBytes, err := mappers.GeminiToOpenAI(geminiResp, chatReq.Model, false)
 			if err != nil {
 				if verbose {
-					log.Printf("❌ [VERBOSE] /v1/responses Conversion error: %v", err)
+					log.Printf("❌ [VERBOSE] [%s] /v1/responses Conversion error: %v", requestId, err)
 				}
 				writeOpenAIError(w, err.Error(), http.StatusInternalServerError)
 				return

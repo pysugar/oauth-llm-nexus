@@ -154,9 +154,10 @@ func ClaudeMessagesHandler(tokenMgr *token.Manager, upstreamClient *upstream.Cli
 		}
 
 		// Build wrapped Gemini payload
+		requestId := "agent-" + uuid.New().String()
 		payload := map[string]interface{}{
 			"project":     cachedToken.ProjectID,
-			"requestId":   "agent-" + uuid.New().String(),
+			"requestId":   requestId,
 			"model":       model,
 			"userAgent":   "antigravity",
 			"requestType": "gemini",
@@ -169,18 +170,18 @@ func ClaudeMessagesHandler(tokenMgr *token.Manager, upstreamClient *upstream.Cli
 		}
 
 		if stream {
-			handleClaudeStreaming(w, upstreamClient, cachedToken.AccessToken, payload, model)
+			handleClaudeStreaming(w, upstreamClient, cachedToken.AccessToken, payload, model, requestId)
 		} else {
-			handleClaudeNonStreaming(w, upstreamClient, cachedToken.AccessToken, payload, model)
+			handleClaudeNonStreaming(w, upstreamClient, cachedToken.AccessToken, payload, model, requestId)
 		}
 	}
 }
 
-func handleClaudeNonStreaming(w http.ResponseWriter, client *upstream.Client, token string, payload map[string]interface{}, model string) {
+func handleClaudeNonStreaming(w http.ResponseWriter, client *upstream.Client, token string, payload map[string]interface{}, model string, requestId string) {
 	resp, err := client.GenerateContent(token, payload)
 	if err != nil {
 		if IsVerbose() {
-			log.Printf("❌ [VERBOSE] /anthropic/v1/messages Upstream error: %v", err)
+			log.Printf("❌ [VERBOSE] [%s] /anthropic/v1/messages Upstream error: %v", requestId, err)
 		}
 		writeClaudeError(w, "Upstream error: "+err.Error(), http.StatusBadGateway)
 		return
@@ -194,7 +195,7 @@ func handleClaudeNonStreaming(w http.ResponseWriter, client *upstream.Client, to
 			var prettyErr map[string]interface{}
 			json.Unmarshal(body, &prettyErr)
 			prettyBytes, _ := json.MarshalIndent(prettyErr, "", "  ")
-			log.Printf("❌ [VERBOSE] /anthropic/v1/messages Gemini API error (status %d):\n%s", resp.StatusCode, string(prettyBytes))
+			log.Printf("❌ [VERBOSE] [%s] /anthropic/v1/messages Gemini API error (status %d):\n%s", requestId, resp.StatusCode, string(prettyBytes))
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(resp.StatusCode)
@@ -214,13 +215,13 @@ func handleClaudeNonStreaming(w http.ResponseWriter, client *upstream.Client, to
 	// Stage 3: Verbose logging for Gemini response
 	if IsVerbose() {
 		prettyBytes, _ := json.MarshalIndent(wrapped, "", "  ")
-		log.Printf("📥 [VERBOSE] Gemini API Response:\n%s", string(prettyBytes))
+		log.Printf("📥 [VERBOSE] [%s] Gemini API Response:\n%s", requestId, string(prettyBytes))
 	}
 
 	claudeResp, err := mappers.GeminiToClaude(geminiResp, model)
 	if err != nil {
 		if IsVerbose() {
-			log.Printf("❌ [VERBOSE] /anthropic/v1/messages Conversion error: %v", err)
+			log.Printf("❌ [VERBOSE] [%s] /anthropic/v1/messages Conversion error: %v", requestId, err)
 		}
 		writeClaudeError(w, "Response conversion error", http.StatusInternalServerError)
 		return
@@ -228,14 +229,14 @@ func handleClaudeNonStreaming(w http.ResponseWriter, client *upstream.Client, to
 
 	// Stage 4: Verbose logging for final Claude response
 	if IsVerbose() {
-		log.Printf("📤 [VERBOSE] /anthropic/v1/messages Final Response:\n%s", string(claudeResp))
+		log.Printf("📤 [VERBOSE] [%s] /anthropic/v1/messages Final Response:\n%s", requestId, string(claudeResp))
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(claudeResp)
 }
 
-func handleClaudeStreaming(w http.ResponseWriter, client *upstream.Client, token string, payload map[string]interface{}, model string) {
+func handleClaudeStreaming(w http.ResponseWriter, client *upstream.Client, token string, payload map[string]interface{}, model string, requestId string) {
 	resp, err := client.StreamGenerateContent(token, payload)
 	if err != nil {
 		writeClaudeError(w, "Upstream error: "+err.Error(), http.StatusBadGateway)

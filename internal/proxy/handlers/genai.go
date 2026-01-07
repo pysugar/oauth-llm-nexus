@@ -51,15 +51,16 @@ func GenAIHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client) http
 		log.Printf("📨 GenAI request: model=%s", model)
 
 		// Stage 1: Verbose logging for raw GenAI request
+		requestId := "agent-" + uuid.New().String()
 		if IsVerbose() {
 			reqBytes, _ := json.MarshalIndent(reqBody, "", "  ")
-			log.Printf("📥 [VERBOSE] GenAI raw request:\n%s", string(reqBytes))
+			log.Printf("📥 [VERBOSE] [%s] GenAI raw request:\n%s", requestId, string(reqBytes))
 		}
 
 		// Build Cloud Code API payload (wrapped format)
 		payload := map[string]interface{}{
 			"project":     cachedToken.ProjectID,
-			"requestId":   "agent-" + uuid.New().String(),
+			"requestId":   requestId,
 			"request":     reqBody,
 			"model":       model,
 			"userAgent":   "antigravity",
@@ -69,7 +70,7 @@ func GenAIHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client) http
 		resp, err := upstreamClient.GenerateContent(cachedToken.AccessToken, payload)
 		if err != nil {
 			if IsVerbose() {
-				log.Printf("❌ [VERBOSE] /genai/v1beta Upstream error: %v", err)
+				log.Printf("❌ [VERBOSE] [%s] /genai/v1beta Upstream error: %v", requestId, err)
 			}
 			writeGenAIError(w, "Upstream error: "+err.Error(), http.StatusBadGateway)
 			return

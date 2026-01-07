@@ -73,25 +73,26 @@ func OpenAIChatHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client)
 		json.Unmarshal(payloadBytes, &payload)
 
 		// Add Cloud Code API required fields
+		requestId := "agent-" + uuid.New().String()
 		payload["userAgent"] = "antigravity"
 		payload["requestType"] = "gemini"
-		payload["requestId"] = "agent-" + uuid.New().String() // Override with proper format
+		payload["requestId"] = requestId
 
 		if req.Stream {
-			handleOpenAIStreaming(w, upstreamClient, cachedToken.AccessToken, payload, req.Model)
+			handleOpenAIStreaming(w, upstreamClient, cachedToken.AccessToken, payload, req.Model, requestId)
 		} else {
-			handleOpenAINonStreaming(w, upstreamClient, cachedToken.AccessToken, payload, req.Model)
+			handleOpenAINonStreaming(w, upstreamClient, cachedToken.AccessToken, payload, req.Model, requestId)
 		}
 	}
 }
 
-func handleOpenAINonStreaming(w http.ResponseWriter, client *upstream.Client, token string, payload map[string]interface{}, model string) {
+func handleOpenAINonStreaming(w http.ResponseWriter, client *upstream.Client, token string, payload map[string]interface{}, model string, requestId string) {
 	verbose := IsVerbose()
 
 	resp, err := client.GenerateContent(token, payload)
 	if err != nil {
 		if verbose {
-			log.Printf("❌ [VERBOSE] /v1/chat/completions Upstream error: %v", err)
+			log.Printf("❌ [VERBOSE] [%s] /v1/chat/completions Upstream error: %v", requestId, err)
 		}
 		writeOpenAIError(w, "Upstream error: "+err.Error(), http.StatusBadGateway)
 		return
@@ -102,7 +103,7 @@ func handleOpenAINonStreaming(w http.ResponseWriter, client *upstream.Client, to
 
 	if resp.StatusCode != http.StatusOK {
 		if verbose {
-			log.Printf("❌ [VERBOSE] /v1/chat/completions Gemini API error (status %d):\n%s", resp.StatusCode, string(body))
+			log.Printf("❌ [VERBOSE] [%s] /v1/chat/completions Gemini API error (status %d):\n%s", requestId, resp.StatusCode, string(body))
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(resp.StatusCode)
@@ -149,7 +150,7 @@ func handleOpenAINonStreaming(w http.ResponseWriter, client *upstream.Client, to
 	w.Write(openaiResp)
 }
 
-func handleOpenAIStreaming(w http.ResponseWriter, client *upstream.Client, token string, payload map[string]interface{}, model string) {
+func handleOpenAIStreaming(w http.ResponseWriter, client *upstream.Client, token string, payload map[string]interface{}, model string, requestId string) {
 	resp, err := client.StreamGenerateContent(token, payload)
 	if err != nil {
 		writeOpenAIError(w, "Upstream error: "+err.Error(), http.StatusBadGateway)
@@ -161,7 +162,7 @@ func handleOpenAIStreaming(w http.ResponseWriter, client *upstream.Client, token
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		if IsVerbose() {
-			log.Printf("❌ [VERBOSE] /v1/chat/completions Streaming upstream error (status %d):\n%s", resp.StatusCode, string(body))
+			log.Printf("❌ [VERBOSE] [%s] /v1/chat/completions Streaming upstream error (status %d):\n%s", requestId, resp.StatusCode, string(body))
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(resp.StatusCode)
