@@ -294,9 +294,17 @@ func handleClaudeStreaming(w http.ResponseWriter, client *upstream.Client, token
 				break
 			}
 
+			// Verbose: log raw streaming chunk
+			if IsVerbose() {
+				log.Printf("📦 [VERBOSE] /anthropic/v1/messages Stream chunk: %s", data)
+			}
+
 			// Parse and unwrap response field
 			var wrapped map[string]interface{}
 			if err := json.Unmarshal([]byte(data), &wrapped); err != nil {
+				if IsVerbose() {
+					log.Printf("⚠️ [VERBOSE] /anthropic/v1/messages Stream parse error: %v", err)
+				}
 				continue
 			}
 

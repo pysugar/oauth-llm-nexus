@@ -193,9 +193,17 @@ func handleOpenAIStreaming(w http.ResponseWriter, client *upstream.Client, token
 				break
 			}
 
+			// Verbose: log raw streaming chunk
+			if IsVerbose() {
+				log.Printf("📦 [VERBOSE] /v1/chat/completions Stream chunk: %s", data)
+			}
+
 			// Parse and unwrap response field
 			var wrapped map[string]interface{}
 			if err := json.Unmarshal([]byte(data), &wrapped); err != nil {
+				if IsVerbose() {
+					log.Printf("⚠️ [VERBOSE] /v1/chat/completions Stream parse error: %v", err)
+				}
 				continue
 			}
 
@@ -206,6 +214,9 @@ func handleOpenAIStreaming(w http.ResponseWriter, client *upstream.Client, token
 
 			openaiChunk, err := mappers.GeminiToOpenAI(geminiResp, model, true)
 			if err != nil {
+				if IsVerbose() {
+					log.Printf("⚠️ [VERBOSE] /v1/chat/completions Stream convert error: %v", err)
+				}
 				continue
 			}
 

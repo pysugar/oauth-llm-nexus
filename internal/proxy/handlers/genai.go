@@ -214,9 +214,17 @@ func GenAIStreamHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client
 					break
 				}
 
+				// Verbose: log raw streaming chunk
+				if IsVerbose() {
+					log.Printf("📦 [VERBOSE] /genai/v1beta Stream chunk: %s", data)
+				}
+
 				// Parse and unwrap response field
 				var wrapped map[string]interface{}
 				if err := json.Unmarshal([]byte(data), &wrapped); err != nil {
+					if IsVerbose() {
+						log.Printf("⚠️ [VERBOSE] /genai/v1beta Stream parse error: %v", err)
+					}
 					// Pass through if can't parse
 					fmt.Fprintf(w, "data: %s\n\n", data)
 					flusher.Flush()
