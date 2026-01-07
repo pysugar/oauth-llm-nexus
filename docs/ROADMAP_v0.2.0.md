@@ -1,47 +1,39 @@
-# OAuth-LLM-Nexus v0.2.0 Roadmap: API Compliance & Standardization
+# OAuth-LLM-Nexus Roadmap
 
-## 1. Context & Motivation
+## Current Status: v0.1.20
 
-Current users (using tools like Zed AI, Cursor, etc.) are encountering issues where:
-1.  **Unsupported Endpoints**: 
-    - `/anthropic/v1/models` returns 404 (Used by some Claude clients).
-    - `/v1/responses` returns 404 (Used by Zed AI for agentic flows).
-2.  **Auth Issues**: GenAI SDK uses `?key=...` query param which we don't currently support (only headers).
-3.  **Static Models**: `/v1/models` returns a hardcoded list, ignoring custom `model_routes`.
+### ✅ Completed Features (v0.1.x)
 
-## 2. Development Phase 1: v0.1.3 Immediate Fixes (Hotfix)
+#### Multi-Protocol API Compatibility
+- [x] **OpenAI Compatible**: `/v1/chat/completions`, `/v1/models`, `/v1/responses`
+- [x] **Anthropic Compatible**: `/anthropic/v1/messages`, `/anthropic/v1/models`
+- [x] **Google GenAI Compatible**: `/genai/v1beta/models`
+- [x] **Auth**: Support both Header (`Authorization: Bearer`) and Query Param (`?key=`)
 
-Target: Resolve current 404/401 errors.
+#### Model Management
+- [x] **Dynamic Model Routes**: `/v1/models` returns models from `model_routes` config
+- [x] **Default Mappings**: Claude 3.5 → Gemini, GPT-4 → Gemini
 
--   **GenAI Auth Compatibility**:
-    *   Fix: Middleware must support `?key=` query parameter (standard Google API style).
--   **Anthropic Models Endpoint**:
-    *   Fix: Implement `GET /anthropic/v1/models`. Although not in official public docs, clients assume it exists. Return a simple list of supported Claude models.
--   **Default Model Routes**:
-    *   Update `model_routes.yaml` with requested mappings:
-        *   `claude-3-5-haiku-latest` -> `gemini-3-flash`
-        *   `claude-3-5-sonnet-latest` -> `gemini-3-flash`
-        *   `claude-3-5-opus-latest` -> `gemini-3-flash`
+#### Tool Calling (v0.1.19)
+- [x] **Claude on Vertex AI**: Full tool calling compatibility
+- [x] **AnyOf → Enum Flattening**: JSON Schema conversion for Gemini
+- [x] **FunctionCall/Response ID Injection**: Stateless thought signature
 
-## 3. Development Phase 2: v0.2.0 Core Architecture (Feature)
+#### Reliability (v0.1.19 - v0.1.20)
+- [x] **Streaming Reliability**: Status code checks + scanner error handling
+- [x] **Panic Guards**: Defensive type assertions in `responses.go`
+- [x] **Refresh Token Rotation**: RFC-compliant token persistence
 
-Target: Full API compliance and dynamic configuration.
+### 🔨 Remaining / Future Work
 
--   **Dynamic Models API (`/v1/models`)**:
-    *   **Goal**: `/models` should return the exact list of "Client Model Names" configured in `Model Routes`.
-    *   **Logic**: Query `model_routes` table -> Return keys.
-    *   **Client Awareness**: If accessed via `/anthropic/v1/...`, return Anthropic-compatible format.
--   **Standardize `/v1/responses`**:
-    *   Implement as a compatibility proxy.
-    *   Goal: Solve Zed AI Agent mode issues.
+#### P4: Verbose Logging Improvements
+- [ ] Correlation IDs across request chain
+- [ ] Raw bytes logging (instead of re-marshaled)
+- [ ] Unified `NEXUS_VERBOSE` detection across all packages
 
-## 4. Task List
+#### v0.2.0+ Ideas
+- [ ] WebSocket streaming support
+- [ ] Multi-region failover
+- [ ] Usage analytics dashboard
+- [ ] Plugin system for custom transformations
 
-### v0.1.3 (Hotfix)
-- [ ] **Auth**: Update `middleware/auth.go` to check `key` query param.
-- [ ] **Feat**: Add `ClaudeModelsHandler` for `GET /anthropic/v1/models`.
-- [ ] **Config**: Add new Claude 3.5 mappings to `model_routes.yaml` defaults.
-- [ ] **Core**: Inject Database into Model Handlers.
-- [ ] **Feat**: Implement `DynamicModelListHandler` reading from `model_routes`.
-- [ ] **Feat**: Create `OpenAIResponsesHandler` for `/v1/responses`.
-- [ ] **Docs**: Update API documentation.
