@@ -54,7 +54,7 @@ func ClaudeMessagesHandler(tokenMgr *token.Manager, upstreamClient *upstream.Cli
 		log.Printf("📨 Claude request: model=%s messages=%d stream=%v", model, len(messages), stream)
 
 		// Stage 1: Verbose logging for raw Claude request
-		if isVerbose() {
+		if IsVerbose() {
 			reqBytes, _ := json.MarshalIndent(rawReq, "", "  ")
 			log.Printf("📥 [VERBOSE] Claude raw request:\n%s", string(reqBytes))
 		}
@@ -179,7 +179,7 @@ func ClaudeMessagesHandler(tokenMgr *token.Manager, upstreamClient *upstream.Cli
 func handleClaudeNonStreaming(w http.ResponseWriter, client *upstream.Client, token string, payload map[string]interface{}, model string) {
 	resp, err := client.GenerateContent(token, payload)
 	if err != nil {
-		if isVerbose() {
+		if IsVerbose() {
 			log.Printf("❌ [VERBOSE] /anthropic/v1/messages Upstream error: %v", err)
 		}
 		writeClaudeError(w, "Upstream error: "+err.Error(), http.StatusBadGateway)
@@ -190,7 +190,7 @@ func handleClaudeNonStreaming(w http.ResponseWriter, client *upstream.Client, to
 	body, _ := io.ReadAll(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
-		if isVerbose() {
+		if IsVerbose() {
 			var prettyErr map[string]interface{}
 			json.Unmarshal(body, &prettyErr)
 			prettyBytes, _ := json.MarshalIndent(prettyErr, "", "  ")
@@ -212,14 +212,14 @@ func handleClaudeNonStreaming(w http.ResponseWriter, client *upstream.Client, to
 	}
 
 	// Stage 3: Verbose logging for Gemini response
-	if isVerbose() {
+	if IsVerbose() {
 		prettyBytes, _ := json.MarshalIndent(wrapped, "", "  ")
 		log.Printf("📥 [VERBOSE] Gemini API Response:\n%s", string(prettyBytes))
 	}
 
 	claudeResp, err := mappers.GeminiToClaude(geminiResp, model)
 	if err != nil {
-		if isVerbose() {
+		if IsVerbose() {
 			log.Printf("❌ [VERBOSE] /anthropic/v1/messages Conversion error: %v", err)
 		}
 		writeClaudeError(w, "Response conversion error", http.StatusInternalServerError)
@@ -227,7 +227,7 @@ func handleClaudeNonStreaming(w http.ResponseWriter, client *upstream.Client, to
 	}
 
 	// Stage 4: Verbose logging for final Claude response
-	if isVerbose() {
+	if IsVerbose() {
 		log.Printf("📤 [VERBOSE] /anthropic/v1/messages Final Response:\n%s", string(claudeResp))
 	}
 
@@ -242,6 +242,18 @@ func handleClaudeStreaming(w http.ResponseWriter, client *upstream.Client, token
 		return
 	}
 	defer resp.Body.Close()
+
+	// Check upstream status before switching to SSE (streaming reliability fix)
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		if IsVerbose() {
+			log.Printf("❌ [VERBOSE] /anthropic/v1/messages Streaming upstream error (status %d):\n%s", resp.StatusCode, string(body))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(resp.StatusCode)
+		w.Write(body)
+		return
+	}
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -270,7 +282,10 @@ func handleClaudeStreaming(w http.ResponseWriter, client *upstream.Client, token
 	fmt.Fprintf(w, "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n")
 	flusher.Flush()
 
+	// Increase scanner buffer to handle large SSE frames (1MB limit)
 	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.HasPrefix(line, "data: ") {
@@ -299,6 +314,10 @@ func handleClaudeStreaming(w http.ResponseWriter, client *upstream.Client, token
 				flusher.Flush()
 			}
 		}
+	}
+	// Check scanner error after loop (streaming reliability fix)
+	if err := scanner.Err(); err != nil && IsVerbose() {
+		log.Printf("❌ [VERBOSE] /anthropic/v1/messages Scanner error: %v", err)
 	}
 
 	// Send stop events

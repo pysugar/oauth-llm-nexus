@@ -51,7 +51,7 @@ func GenAIHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client) http
 		log.Printf("📨 GenAI request: model=%s", model)
 
 		// Stage 1: Verbose logging for raw GenAI request
-		if isVerbose() {
+		if IsVerbose() {
 			reqBytes, _ := json.MarshalIndent(reqBody, "", "  ")
 			log.Printf("📥 [VERBOSE] GenAI raw request:\n%s", string(reqBytes))
 		}
@@ -68,7 +68,7 @@ func GenAIHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client) http
 
 		resp, err := upstreamClient.GenerateContent(cachedToken.AccessToken, payload)
 		if err != nil {
-			if isVerbose() {
+			if IsVerbose() {
 				log.Printf("❌ [VERBOSE] /genai/v1beta Upstream error: %v", err)
 			}
 			writeGenAIError(w, "Upstream error: "+err.Error(), http.StatusBadGateway)
@@ -79,7 +79,7 @@ func GenAIHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client) http
 		body, _ := io.ReadAll(resp.Body)
 
 		if resp.StatusCode != http.StatusOK {
-			if isVerbose() {
+			if IsVerbose() {
 				var prettyErr map[string]interface{}
 				json.Unmarshal(body, &prettyErr)
 				prettyBytes, _ := json.MarshalIndent(prettyErr, "", "  ")
@@ -94,7 +94,7 @@ func GenAIHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client) http
 		// Unwrap response: Cloud Code API returns {"response": {...}}
 		var wrapped map[string]interface{}
 		if err := json.Unmarshal(body, &wrapped); err != nil {
-			if isVerbose() {
+			if IsVerbose() {
 				log.Printf("❌ [VERBOSE] /genai/v1beta Failed to parse response: %v\nRaw: %s", err, string(body))
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -103,14 +103,14 @@ func GenAIHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client) http
 		}
 
 		// Stage 3: Verbose logging for Gemini response
-		if isVerbose() {
+		if IsVerbose() {
 			prettyBytes, _ := json.MarshalIndent(wrapped, "", "  ")
 			log.Printf("📥 [VERBOSE] Gemini API Response:\n%s", string(prettyBytes))
 		}
 
 		if inner, ok := wrapped["response"]; ok {
 			// Stage 4: Verbose logging for final GenAI response
-			if isVerbose() {
+			if IsVerbose() {
 				innerBytes, _ := json.MarshalIndent(inner, "", "  ")
 				log.Printf("📤 [VERBOSE] /genai/v1beta Final Response:\n%s", string(innerBytes))
 			}
@@ -157,7 +157,7 @@ func GenAIStreamHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client
 		log.Printf("📨 GenAI stream request: model=%s", model)
 
 		// Stage 1: Verbose logging for raw GenAI stream request
-		if isVerbose() {
+		if IsVerbose() {
 			reqBytes, _ := json.MarshalIndent(reqBody, "", "  ")
 			log.Printf("📥 [VERBOSE] GenAI stream raw request:\n%s", string(reqBytes))
 		}
@@ -178,6 +178,18 @@ func GenAIStreamHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client
 		}
 		defer resp.Body.Close()
 
+		// Check upstream status before switching to SSE (streaming reliability fix)
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			if IsVerbose() {
+				log.Printf("❌ [VERBOSE] /genai/v1beta Streaming upstream error (status %d):\n%s", resp.StatusCode, string(body))
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(resp.StatusCode)
+			w.Write(body)
+			return
+		}
+
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
@@ -188,8 +200,10 @@ func GenAIStreamHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client
 			return
 		}
 
-		// Stream with response unwrapping
+		// Increase scanner buffer to handle large SSE frames (1MB limit)
 		scanner := bufio.NewScanner(resp.Body)
+		scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+
 		for scanner.Scan() {
 			line := scanner.Text()
 			if strings.HasPrefix(line, "data: ") {
@@ -217,6 +231,10 @@ func GenAIStreamHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client
 				}
 				flusher.Flush()
 			}
+		}
+		// Check scanner error after loop (streaming reliability fix)
+		if err := scanner.Err(); err != nil && IsVerbose() {
+			log.Printf("❌ [VERBOSE] /genai/v1beta Scanner error: %v", err)
 		}
 	}
 }

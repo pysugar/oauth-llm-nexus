@@ -75,7 +75,7 @@ func (m *Manager) GetToken(provider string) (*CachedToken, error) {
 			return token, nil
 		}
 	}
-	
+
 	// Fall back to first valid token in cache
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -104,7 +104,7 @@ func (m *Manager) GetTokenByAccountID(accountID string) (*CachedToken, error) {
 		if err := m.db.Where("id = ? AND is_active = ?", accountID, true).First(&account).Error; err != nil {
 			return nil, fmt.Errorf("account not found or inactive: %s", accountID)
 		}
-		
+
 		// Add to cache
 		token = &CachedToken{
 			AccessToken: account.AccessToken,
@@ -139,12 +139,12 @@ func (m *Manager) GetTokenByAccountID(accountID string) (*CachedToken, error) {
 // RefreshAccountToken forces a refresh for a specific account
 func (m *Manager) RefreshAccountToken(accountID string) error {
 	m.refreshToken(accountID)
-	
+
 	// Verify refresh success
 	m.mu.RLock()
 	token, exists := m.cache[accountID]
 	m.mu.RUnlock()
-	
+
 	if !exists {
 		return fmt.Errorf("account not found in cache")
 	}
@@ -252,16 +252,16 @@ func (m *Manager) refreshToken(accountID string) {
 	newToken, err := tokenSource.Token()
 	if err != nil {
 		log.Printf("❌ Refresh token failed for %s: %v", account.Email, err)
-		
+
 		// Mark account as inactive - refresh token is likely revoked
 		account.IsActive = false
 		m.db.Save(&account)
-		
+
 		// Remove from cache
 		m.mu.Lock()
 		delete(m.cache, accountID)
 		m.mu.Unlock()
-		
+
 		log.Printf("🔒 Account %s marked as inactive. Please re-login.", account.Email)
 		return
 	}
@@ -271,6 +271,11 @@ func (m *Manager) refreshToken(accountID string) {
 	account.ExpiresAt = newToken.Expiry
 	account.LastUsedAt = time.Now()
 	account.IsActive = true
+	// Persist rotated refresh token if provided (RFC 6749 compliance)
+	if newToken.RefreshToken != "" && newToken.RefreshToken != account.RefreshToken {
+		log.Printf("🔄 Rotating refresh token for: %s", account.Email)
+		account.RefreshToken = newToken.RefreshToken
+	}
 	if err := m.db.Save(&account).Error; err != nil {
 		log.Printf("⚠️ Failed to save refreshed token: %v", err)
 		return

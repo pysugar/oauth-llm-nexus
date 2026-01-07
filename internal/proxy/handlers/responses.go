@@ -5,7 +5,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"strings"
 
 	"github.com/google/uuid"
@@ -15,12 +14,6 @@ import (
 	"github.com/pysugar/oauth-llm-nexus/internal/upstream"
 	"gorm.io/gorm"
 )
-
-// isVerbose checks if NEXUS_VERBOSE environment variable is set
-func isVerbose() bool {
-	verbose := os.Getenv("NEXUS_VERBOSE")
-	return verbose == "1" || verbose == "true" || verbose == "yes"
-}
 
 // ===== Responses API Data Structures (OpenAI Spec Compliant) =====
 
@@ -176,7 +169,7 @@ func ConvertResponsesToChatCompletion(req OpenAIResponsesRequest) mappers.OpenAI
 		}
 		chatReq.Tools = mappedTools
 
-		if isVerbose() {
+		if IsVerbose() {
 			var toolTypes []string
 			for _, tool := range req.Tools {
 				toolTypes = append(toolTypes, tool.Type)
@@ -281,7 +274,12 @@ func ConvertChatCompletionToResponses(chatResp map[string]interface{}) OpenAIRes
 		Object:    "response",
 		Status:    "completed",
 		CreatedAt: createdAt,
-		Model:     chatResp["model"].(string),
+	}
+	// Safe type assertion with fallback (panic guard)
+	if model, ok := chatResp["model"].(string); ok {
+		resp.Model = model
+	} else {
+		resp.Model = "unknown"
 	}
 
 	// Convert choices to output items
@@ -441,7 +439,7 @@ func ConvertChatCompletionToResponsesWithAnnotations(chatResp map[string]interfa
 // Set NEXUS_VERBOSE=1 for detailed request/response logging
 func OpenAIResponsesHandler(database *gorm.DB, tokenMgr *token.Manager, upstreamClient *upstream.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		verbose := isVerbose()
+		verbose := IsVerbose()
 
 		// 1. Read and parse request body
 		bodyBytes, err := io.ReadAll(r.Body)

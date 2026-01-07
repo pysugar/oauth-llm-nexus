@@ -7,7 +7,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"strings"
 
 	"github.com/google/uuid"
@@ -48,7 +47,7 @@ func OpenAIChatHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client)
 			return
 		}
 		// Verbose logging controlled by NEXUS_VERBOSE
-		verbose := os.Getenv("NEXUS_VERBOSE") == "1" || os.Getenv("NEXUS_VERBOSE") == "true"
+		verbose := IsVerbose()
 		if verbose {
 			log.Printf("📥 [VERBOSE] OpenAI raw request:\n%s", string(bodyBytes))
 		}
@@ -87,7 +86,7 @@ func OpenAIChatHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client)
 }
 
 func handleOpenAINonStreaming(w http.ResponseWriter, client *upstream.Client, token string, payload map[string]interface{}, model string) {
-	verbose := os.Getenv("NEXUS_VERBOSE") == "1" || os.Getenv("NEXUS_VERBOSE") == "true"
+	verbose := IsVerbose()
 
 	resp, err := client.GenerateContent(token, payload)
 	if err != nil {
@@ -158,6 +157,18 @@ func handleOpenAIStreaming(w http.ResponseWriter, client *upstream.Client, token
 	}
 	defer resp.Body.Close()
 
+	// Check upstream status before switching to SSE (streaming reliability fix)
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		if IsVerbose() {
+			log.Printf("❌ [VERBOSE] /v1/chat/completions Streaming upstream error (status %d):\n%s", resp.StatusCode, string(body))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(resp.StatusCode)
+		w.Write(body)
+		return
+	}
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -168,7 +179,10 @@ func handleOpenAIStreaming(w http.ResponseWriter, client *upstream.Client, token
 		return
 	}
 
+	// Increase scanner buffer to handle large SSE frames (1MB limit)
 	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.HasPrefix(line, "data: ") {
@@ -198,6 +212,10 @@ func handleOpenAIStreaming(w http.ResponseWriter, client *upstream.Client, token
 			fmt.Fprintf(w, "data: %s\n\n", openaiChunk)
 			flusher.Flush()
 		}
+	}
+	// Check scanner error after loop (streaming reliability fix)
+	if err := scanner.Err(); err != nil && IsVerbose() {
+		log.Printf("❌ [VERBOSE] /v1/chat/completions Scanner error: %v", err)
 	}
 }
 
