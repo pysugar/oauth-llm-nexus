@@ -548,12 +548,20 @@ func GeminiToOpenAI(geminiResp map[string]interface{}, model string, isStreaming
 	}
 
 	text := ""
+	role := ""
 	var toolCalls []OpenAIToolCall
 	toolCallCounter := 0
 
 	if len(candidates) > 0 {
 		if candidate, ok := candidates[0].(map[string]interface{}); ok {
 			if content, ok := candidate["content"].(map[string]interface{}); ok {
+				if r, ok := content["role"].(string); ok {
+					if r == "model" {
+						role = "assistant"
+					} else {
+						role = r
+					}
+				}
 				if parts, ok := content["parts"].([]interface{}); ok && len(parts) > 0 {
 					// Iterate through all parts to find text and functionCall content
 					// Gemini 3 Pro models may have parts with only thoughtSignature
@@ -654,6 +662,11 @@ func GeminiToOpenAI(geminiResp map[string]interface{}, model string, isStreaming
 			fr = stringPtr("tool_calls")
 		}
 
+		// Skip empty chunks that have nothing to offer
+		if text == "" && len(toolCalls) == 0 && fr == nil && role == "" {
+			return nil, nil
+		}
+
 		chunk := OpenAIStreamChunk{
 			ID:      "chatcmpl-nexus",
 			Object:  "chat.completion.chunk",
@@ -663,7 +676,7 @@ func GeminiToOpenAI(geminiResp map[string]interface{}, model string, isStreaming
 				{
 					Index: 0,
 					Delta: &OpenAIMessage{
-						Role:      "assistant",
+						Role:      role,
 						Content:   text,
 						ToolCalls: toolCalls,
 					},

@@ -239,6 +239,15 @@ func handleOpenAIStreaming(w http.ResponseWriter, client *upstream.Client, token
 				continue
 			}
 
+			if openaiChunk == nil {
+				continue
+			}
+
+			// Verbose: log converted chunk
+			if IsVerbose() {
+				log.Printf("📤 [VERBOSE] [%s] /v1/chat/completions Converted chunk: %s", requestId, string(openaiChunk))
+			}
+
 			fmt.Fprintf(w, "data: %s\n\n", openaiChunk)
 			flusher.Flush()
 			chunkCount++
