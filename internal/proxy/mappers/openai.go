@@ -50,22 +50,23 @@ type ApproximateLocation struct {
 
 // OpenAIToolCall represents a tool call in the response (assistant wants to call a function)
 type OpenAIToolCall struct {
-	ID           string                       `json:"id"`
-	Type         string                       `json:"type"` // "function"
-	Function     OpenAIFunctionCall           `json:"function"`
+	Index        *int                         `json:"index,omitempty"`
+	ID           string                       `json:"id,omitempty"`
+	Type         string                       `json:"type,omitempty"` // "function"
+	Function     *OpenAIFunctionCall          `json:"function,omitempty"`
 	ExtraContent map[string]map[string]string `json:"extra_content,omitempty"` // For thought_signature: {"google": {"thought_signature": "..."}}
 }
 
 // OpenAIFunctionCall contains the function name and arguments
 type OpenAIFunctionCall struct {
-	Name      string `json:"name"`
-	Arguments string `json:"arguments"` // JSON string of arguments
+	Name      string `json:"name,omitempty"`
+	Arguments string `json:"arguments,omitempty"` // JSON string of arguments
 }
 
 // OpenAIMessage represents a message in OpenAI format
 // Supports: user, assistant, system, tool roles
 type OpenAIMessage struct {
-	Role       string           `json:"role"`
+	Role       string           `json:"role,omitempty"`
 	Content    string           `json:"content,omitempty"`
 	ToolCalls  []OpenAIToolCall `json:"tool_calls,omitempty"`   // For assistant messages with function calls
 	ToolCallID string           `json:"tool_call_id,omitempty"` // For tool role messages (function result)
@@ -579,10 +580,12 @@ func GeminiToOpenAI(geminiResp map[string]interface{}, model string, isStreaming
 								}
 
 								toolCallCounter++
+								currIdx := toolCallCounter - 1
 								toolCalls = append(toolCalls, OpenAIToolCall{
-									ID:   "call_" + time.Now().Format("20060102150405") + "_" + string(rune('0'+toolCallCounter)),
-									Type: "function",
-									Function: OpenAIFunctionCall{
+									Index: &currIdx,
+									ID:    "call_" + time.Now().Format("20060102150405") + "_" + string(rune('0'+toolCallCounter)),
+									Type:  "function",
+									Function: &OpenAIFunctionCall{
 										Name:      name,
 										Arguments: string(argsJSON),
 									},
@@ -631,6 +634,26 @@ func GeminiToOpenAI(geminiResp map[string]interface{}, model string, isStreaming
 	}
 
 	if isStreaming {
+		// Extract finish_reason from the first candidate if available
+		var fr *string
+		if len(candidates) > 0 {
+			if candidate, ok := candidates[0].(map[string]interface{}); ok {
+				if frStr, ok := candidate["finishReason"].(string); ok && frStr != "" {
+					normalized := strings.ToLower(frStr)
+					if normalized == "stop" {
+						fr = stringPtr("stop")
+					} else {
+						fr = stringPtr(normalized)
+					}
+				}
+			}
+		}
+
+		// If tool calls were made, OpenAI uses "tool_calls" reason
+		if len(toolCalls) > 0 {
+			fr = stringPtr("tool_calls")
+		}
+
 		chunk := OpenAIStreamChunk{
 			ID:      "chatcmpl-nexus",
 			Object:  "chat.completion.chunk",
@@ -640,9 +663,11 @@ func GeminiToOpenAI(geminiResp map[string]interface{}, model string, isStreaming
 				{
 					Index: 0,
 					Delta: &OpenAIMessage{
-						Role:    "assistant",
-						Content: text,
+						Role:      "assistant",
+						Content:   text,
+						ToolCalls: toolCalls,
 					},
+					FinishReason: fr,
 				},
 			},
 		}
