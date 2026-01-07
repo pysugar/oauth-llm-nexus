@@ -63,10 +63,18 @@ jobs:
         with:
           path: artifacts
 
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          find . -type f -name "nexus-*" -exec sha256sum {} \; | sed 's|./nexus-[^/]*/||' > ../checksums.txt
+          cat ../checksums.txt
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: artifacts/*/nexus-*
+          files: |
+            artifacts/*/nexus-*
+            checksums.txt
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
