@@ -474,8 +474,21 @@ func OpenAIResponsesHandler(database *gorm.DB, tokenMgr *token.Manager, upstream
 		targetModel := db.ResolveModel(chatReq.Model, "google")
 		log.Printf("🗺️ /v1/responses Model routing: %s -> %s", chatReq.Model, targetModel)
 
-		// 4. Get token and project ID
-		cachedToken, err := tokenMgr.GetPrimaryOrDefaultToken()
+		// 4. Get token and project ID (support X-Nexus-Account header for account selection)
+		var cachedToken *token.CachedToken
+		accountEmail := r.Header.Get("X-Nexus-Account")
+		if accountEmail != "" {
+			cachedToken, err = tokenMgr.GetTokenByIdentifier(accountEmail)
+			if err != nil {
+				if verbose {
+					log.Printf("❌ [VERBOSE] /v1/responses Account not found: %s, error: %v", accountEmail, err)
+				}
+				writeOpenAIError(w, "Account not found: "+accountEmail, http.StatusUnauthorized)
+				return
+			}
+		} else {
+			cachedToken, err = tokenMgr.GetPrimaryOrDefaultToken()
+		}
 		if err != nil {
 			if verbose {
 				log.Printf("❌ [VERBOSE] /v1/responses No valid accounts: %v", err)

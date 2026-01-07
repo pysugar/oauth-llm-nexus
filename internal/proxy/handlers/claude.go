@@ -173,6 +173,12 @@ func ClaudeMessagesHandler(tokenMgr *token.Manager, upstreamClient *upstream.Cli
 			},
 		}
 
+		// Verbose: Log Gemini payload before sending
+		if IsVerbose() {
+			geminiPayloadBytes, _ := json.MarshalIndent(payload, "", "  ")
+			log.Printf("📤 [VERBOSE] [%s] /anthropic/v1/messages Gemini Request Payload:\n%s", requestId, string(geminiPayloadBytes))
+		}
+
 		if stream {
 			handleClaudeStreaming(w, upstreamClient, cachedToken.AccessToken, payload, model, requestId)
 		} else {
@@ -287,10 +293,11 @@ func handleClaudeStreaming(w http.ResponseWriter, client *upstream.Client, token
 	fmt.Fprintf(w, "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n")
 	flusher.Flush()
 
-	// Increase scanner buffer to handle large SSE frames (1MB limit)
+	// Increase scanner buffer to handle large SSE frames (8MB limit)
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
 
+	chunkCount := 0
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.HasPrefix(line, "data: ") {
@@ -301,14 +308,14 @@ func handleClaudeStreaming(w http.ResponseWriter, client *upstream.Client, token
 
 			// Verbose: log raw streaming chunk
 			if IsVerbose() {
-				log.Printf("📦 [VERBOSE] /anthropic/v1/messages Stream chunk: %s", data)
+				log.Printf("📦 [VERBOSE] [%s] /anthropic/v1/messages Stream chunk #%d: %s", requestId, chunkCount+1, data)
 			}
 
 			// Parse and unwrap response field
 			var wrapped map[string]interface{}
 			if err := json.Unmarshal([]byte(data), &wrapped); err != nil {
 				if IsVerbose() {
-					log.Printf("⚠️ [VERBOSE] /anthropic/v1/messages Stream parse error: %v", err)
+					log.Printf("⚠️ [VERBOSE] [%s] /anthropic/v1/messages Stream parse error: %v", requestId, err)
 				}
 				continue
 			}
@@ -325,12 +332,21 @@ func handleClaudeStreaming(w http.ResponseWriter, client *upstream.Client, token
 				deltaEvent, _ := mappers.CreateClaudeStreamEvent("content_block_delta", delta)
 				fmt.Fprintf(w, "event: content_block_delta\ndata: %s\n\n", deltaEvent)
 				flusher.Flush()
+				chunkCount++
 			}
 		}
 	}
 	// Check scanner error after loop (streaming reliability fix)
 	if err := scanner.Err(); err != nil && IsVerbose() {
-		log.Printf("❌ [VERBOSE] /anthropic/v1/messages Scanner error: %v", err)
+		log.Printf("❌ [VERBOSE] [%s] /anthropic/v1/messages Scanner error: %v", requestId, err)
+	}
+	// Summary log for diagnosing empty responses
+	if IsVerbose() {
+		if chunkCount == 0 {
+			log.Printf("⚠️ [VERBOSE] [%s] /anthropic/v1/messages Streaming completed with 0 chunks - client received empty response!", requestId)
+		} else {
+			log.Printf("✅ [VERBOSE] [%s] /anthropic/v1/messages Streaming completed: %d chunks sent", requestId, chunkCount)
+		}
 	}
 
 	// Send stop events

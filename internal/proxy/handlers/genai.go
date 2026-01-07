@@ -71,6 +71,12 @@ func GenAIHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client) http
 			"requestType": "gemini",
 		}
 
+		// Verbose: Log Gemini payload before sending
+		if IsVerbose() {
+			geminiPayloadBytes, _ := json.MarshalIndent(payload, "", "  ")
+			log.Printf("📤 [VERBOSE] [%s] /genai/v1beta Gemini Request Payload:\n%s", requestId, string(geminiPayloadBytes))
+		}
+
 		resp, err := upstreamClient.GenerateContent(cachedToken.AccessToken, payload)
 		if err != nil {
 			if IsVerbose() {
@@ -162,18 +168,29 @@ func GenAIStreamHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client
 		log.Printf("📨 GenAI stream request: model=%s", model)
 
 		// Stage 1: Verbose logging for raw GenAI stream request
+		// Use client-provided X-Request-ID if present, otherwise generate new one
+		requestId := r.Header.Get("X-Request-ID")
+		if requestId == "" {
+			requestId = "agent-" + uuid.New().String()
+		}
 		if IsVerbose() {
 			reqBytes, _ := json.MarshalIndent(reqBody, "", "  ")
-			log.Printf("📥 [VERBOSE] GenAI stream raw request:\n%s", string(reqBytes))
+			log.Printf("📥 [VERBOSE] [%s] GenAI stream raw request:\n%s", requestId, string(reqBytes))
 		}
 
 		payload := map[string]interface{}{
 			"project":     cachedToken.ProjectID,
-			"requestId":   "agent-" + uuid.New().String(),
+			"requestId":   requestId,
 			"request":     reqBody,
 			"model":       model,
 			"userAgent":   "antigravity",
 			"requestType": "gemini",
+		}
+
+		// Verbose: Log Gemini payload before sending
+		if IsVerbose() {
+			geminiPayloadBytes, _ := json.MarshalIndent(payload, "", "  ")
+			log.Printf("📤 [VERBOSE] [%s] /genai/v1beta Gemini Stream Request Payload:\n%s", requestId, string(geminiPayloadBytes))
 		}
 
 		resp, err := upstreamClient.StreamGenerateContent(cachedToken.AccessToken, payload)
@@ -187,7 +204,7 @@ func GenAIStreamHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)
 			if IsVerbose() {
-				log.Printf("❌ [VERBOSE] /genai/v1beta Streaming upstream error (status %d):\n%s", resp.StatusCode, string(body))
+				log.Printf("❌ [VERBOSE] [%s] /genai/v1beta Streaming upstream error (status %d):\n%s", requestId, resp.StatusCode, string(body))
 			}
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(resp.StatusCode)
@@ -205,10 +222,11 @@ func GenAIStreamHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client
 			return
 		}
 
-		// Increase scanner buffer to handle large SSE frames (1MB limit)
+		// Increase scanner buffer to handle large SSE frames (8MB limit)
 		scanner := bufio.NewScanner(resp.Body)
 		scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
 
+		chunkCount := 0
 		for scanner.Scan() {
 			line := scanner.Text()
 			if strings.HasPrefix(line, "data: ") {
@@ -221,14 +239,14 @@ func GenAIStreamHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client
 
 				// Verbose: log raw streaming chunk
 				if IsVerbose() {
-					log.Printf("📦 [VERBOSE] /genai/v1beta Stream chunk: %s", data)
+					log.Printf("📦 [VERBOSE] [%s] /genai/v1beta Stream chunk #%d: %s", requestId, chunkCount+1, data)
 				}
 
 				// Parse and unwrap response field
 				var wrapped map[string]interface{}
 				if err := json.Unmarshal([]byte(data), &wrapped); err != nil {
 					if IsVerbose() {
-						log.Printf("⚠️ [VERBOSE] /genai/v1beta Stream parse error: %v", err)
+						log.Printf("⚠️ [VERBOSE] [%s] /genai/v1beta Stream parse error: %v", requestId, err)
 					}
 					// Pass through if can't parse
 					fmt.Fprintf(w, "data: %s\n\n", data)
@@ -243,11 +261,20 @@ func GenAIStreamHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client
 					fmt.Fprintf(w, "data: %s\n\n", data)
 				}
 				flusher.Flush()
+				chunkCount++
 			}
 		}
 		// Check scanner error after loop (streaming reliability fix)
 		if err := scanner.Err(); err != nil && IsVerbose() {
-			log.Printf("❌ [VERBOSE] /genai/v1beta Scanner error: %v", err)
+			log.Printf("❌ [VERBOSE] [%s] /genai/v1beta Scanner error: %v", requestId, err)
+		}
+		// Summary log for diagnosing empty responses
+		if IsVerbose() {
+			if chunkCount == 0 {
+				log.Printf("⚠️ [VERBOSE] [%s] /genai/v1beta Streaming completed with 0 chunks - client received empty response!", requestId)
+			} else {
+				log.Printf("✅ [VERBOSE] [%s] /genai/v1beta Streaming completed: %d chunks sent", requestId, chunkCount)
+			}
 		}
 	}
 }
