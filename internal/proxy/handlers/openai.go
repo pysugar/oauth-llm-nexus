@@ -46,10 +46,18 @@ func OpenAIChatHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client)
 			writeOpenAIError(w, "Failed to read request body", http.StatusBadRequest)
 			return
 		}
+
+		// Generate requestId early so all logs can use it
+		// Use client-provided X-Request-ID if present, otherwise generate new one
+		requestId := r.Header.Get("X-Request-ID")
+		if requestId == "" {
+			requestId = "agent-" + uuid.New().String()
+		}
+
 		// Verbose logging controlled by NEXUS_VERBOSE
 		verbose := IsVerbose()
 		if verbose {
-			log.Printf("📥 [VERBOSE] OpenAI raw request:\n%s", string(bodyBytes))
+			log.Printf("📥 [VERBOSE] [%s] /v1/chat/completions Raw request:\n%s", requestId, string(bodyBytes))
 		}
 
 		var req mappers.OpenAIChatRequest
@@ -73,11 +81,6 @@ func OpenAIChatHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client)
 		json.Unmarshal(payloadBytes, &payload)
 
 		// Add Cloud Code API required fields
-		// Use client-provided X-Request-ID if present, otherwise generate new one
-		requestId := r.Header.Get("X-Request-ID")
-		if requestId == "" {
-			requestId = "agent-" + uuid.New().String()
-		}
 		payload["userAgent"] = "antigravity"
 		payload["requestType"] = "gemini"
 		payload["requestId"] = requestId

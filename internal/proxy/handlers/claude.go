@@ -53,10 +53,16 @@ func ClaudeMessagesHandler(tokenMgr *token.Manager, upstreamClient *upstream.Cli
 
 		log.Printf("📨 Claude request: model=%s messages=%d stream=%v", model, len(messages), stream)
 
+		// Generate requestId early so all logs can use it
+		requestId := r.Header.Get("X-Request-ID")
+		if requestId == "" {
+			requestId = "agent-" + uuid.New().String()
+		}
+
 		// Stage 1: Verbose logging for raw Claude request
 		if IsVerbose() {
 			reqBytes, _ := json.MarshalIndent(rawReq, "", "  ")
-			log.Printf("📥 [VERBOSE] Claude raw request:\n%s", string(reqBytes))
+			log.Printf("📥 [VERBOSE] [%s] /anthropic/v1/messages Raw request:\n%s", requestId, string(reqBytes))
 		}
 
 		// Build Gemini request directly (flexible approach)
@@ -153,12 +159,6 @@ func ClaudeMessagesHandler(tokenMgr *token.Manager, upstreamClient *upstream.Cli
 			}
 		}
 
-		// Build wrapped Gemini payload
-		// Use client-provided X-Request-ID if present, otherwise generate new one
-		requestId := r.Header.Get("X-Request-ID")
-		if requestId == "" {
-			requestId = "agent-" + uuid.New().String()
-		}
 		payload := map[string]interface{}{
 			"project":     cachedToken.ProjectID,
 			"requestId":   requestId,
