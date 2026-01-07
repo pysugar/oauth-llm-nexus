@@ -68,6 +68,9 @@ func GenAIHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client) http
 
 		resp, err := upstreamClient.GenerateContent(cachedToken.AccessToken, payload)
 		if err != nil {
+			if isVerbose() {
+				log.Printf("❌ [VERBOSE] /genai/v1beta Upstream error: %v", err)
+			}
 			writeGenAIError(w, "Upstream error: "+err.Error(), http.StatusBadGateway)
 			return
 		}
@@ -76,6 +79,12 @@ func GenAIHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client) http
 		body, _ := io.ReadAll(resp.Body)
 
 		if resp.StatusCode != http.StatusOK {
+			if isVerbose() {
+				var prettyErr map[string]interface{}
+				json.Unmarshal(body, &prettyErr)
+				prettyBytes, _ := json.MarshalIndent(prettyErr, "", "  ")
+				log.Printf("❌ [VERBOSE] /genai/v1beta Gemini API error (status %d):\n%s", resp.StatusCode, string(prettyBytes))
+			}
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(resp.StatusCode)
 			w.Write(body)
@@ -85,6 +94,9 @@ func GenAIHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client) http
 		// Unwrap response: Cloud Code API returns {"response": {...}}
 		var wrapped map[string]interface{}
 		if err := json.Unmarshal(body, &wrapped); err != nil {
+			if isVerbose() {
+				log.Printf("❌ [VERBOSE] /genai/v1beta Failed to parse response: %v\nRaw: %s", err, string(body))
+			}
 			w.Header().Set("Content-Type", "application/json")
 			w.Write(body)
 			return

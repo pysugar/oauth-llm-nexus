@@ -50,9 +50,10 @@ type ApproximateLocation struct {
 
 // OpenAIToolCall represents a tool call in the response (assistant wants to call a function)
 type OpenAIToolCall struct {
-	ID       string             `json:"id"`
-	Type     string             `json:"type"` // "function"
-	Function OpenAIFunctionCall `json:"function"`
+	ID           string                       `json:"id"`
+	Type         string                       `json:"type"` // "function"
+	Function     OpenAIFunctionCall           `json:"function"`
+	ExtraContent map[string]map[string]string `json:"extra_content,omitempty"` // For thought_signature: {"google": {"thought_signature": "..."}}
 }
 
 // OpenAIFunctionCall contains the function name and arguments
@@ -187,6 +188,7 @@ type GeminiPart struct {
 	Text             string                  `json:"text,omitempty"`
 	FunctionCall     *GeminiFunctionCall     `json:"functionCall,omitempty"`     // For model's tool call request
 	FunctionResponse *GeminiFunctionResponse `json:"functionResponse,omitempty"` // For user's tool result
+	ThoughtSignature string                  `json:"thoughtSignature,omitempty"` // Required for Gemini 3 models (at part level)
 }
 
 // GeminiFunctionCall represents a function call from the model
@@ -326,11 +328,21 @@ func OpenAIToGemini(req OpenAIChatRequest, resolvedModel, projectID string) Gemi
 				// Parse arguments JSON string to map
 				var args map[string]interface{}
 				json.Unmarshal([]byte(tc.Function.Arguments), &args)
+
+				// Extract thought_signature from extra_content if present
+				var thoughtSignature string
+				if tc.ExtraContent != nil {
+					if google, ok := tc.ExtraContent["google"]; ok {
+						thoughtSignature = google["thought_signature"]
+					}
+				}
+
 				parts = append(parts, GeminiPart{
 					FunctionCall: &GeminiFunctionCall{
 						Name: tc.Function.Name,
 						Args: args,
 					},
+					ThoughtSignature: thoughtSignature, // At part level, not inside functionCall
 				})
 			}
 			contents = append(contents, GeminiContent{
@@ -557,6 +569,15 @@ func GeminiToOpenAI(geminiResp map[string]interface{}, model string, isStreaming
 								args, _ := fc["args"].(map[string]interface{})
 								argsJSON, _ := json.Marshal(args)
 
+								// Extract thought_signature for Gemini 3 models
+								// Note: thoughtSignature is at part level, sibling of functionCall
+								var extraContent map[string]map[string]string
+								if sig, ok := part["thoughtSignature"].(string); ok && sig != "" {
+									extraContent = map[string]map[string]string{
+										"google": {"thought_signature": sig},
+									}
+								}
+
 								toolCallCounter++
 								toolCalls = append(toolCalls, OpenAIToolCall{
 									ID:   "call_" + time.Now().Format("20060102150405") + "_" + string(rune('0'+toolCallCounter)),
@@ -565,6 +586,7 @@ func GeminiToOpenAI(geminiResp map[string]interface{}, model string, isStreaming
 										Name:      name,
 										Arguments: string(argsJSON),
 									},
+									ExtraContent: extraContent,
 								})
 							}
 						}

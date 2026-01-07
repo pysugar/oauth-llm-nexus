@@ -179,6 +179,9 @@ func ClaudeMessagesHandler(tokenMgr *token.Manager, upstreamClient *upstream.Cli
 func handleClaudeNonStreaming(w http.ResponseWriter, client *upstream.Client, token string, payload map[string]interface{}, model string) {
 	resp, err := client.GenerateContent(token, payload)
 	if err != nil {
+		if isVerbose() {
+			log.Printf("❌ [VERBOSE] /anthropic/v1/messages Upstream error: %v", err)
+		}
 		writeClaudeError(w, "Upstream error: "+err.Error(), http.StatusBadGateway)
 		return
 	}
@@ -187,6 +190,12 @@ func handleClaudeNonStreaming(w http.ResponseWriter, client *upstream.Client, to
 	body, _ := io.ReadAll(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
+		if isVerbose() {
+			var prettyErr map[string]interface{}
+			json.Unmarshal(body, &prettyErr)
+			prettyBytes, _ := json.MarshalIndent(prettyErr, "", "  ")
+			log.Printf("❌ [VERBOSE] /anthropic/v1/messages Gemini API error (status %d):\n%s", resp.StatusCode, string(prettyBytes))
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(resp.StatusCode)
 		w.Write(body)
@@ -210,6 +219,9 @@ func handleClaudeNonStreaming(w http.ResponseWriter, client *upstream.Client, to
 
 	claudeResp, err := mappers.GeminiToClaude(geminiResp, model)
 	if err != nil {
+		if isVerbose() {
+			log.Printf("❌ [VERBOSE] /anthropic/v1/messages Conversion error: %v", err)
+		}
 		writeClaudeError(w, "Response conversion error", http.StatusInternalServerError)
 		return
 	}

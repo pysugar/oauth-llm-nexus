@@ -91,6 +91,9 @@ func handleOpenAINonStreaming(w http.ResponseWriter, client *upstream.Client, to
 
 	resp, err := client.GenerateContent(token, payload)
 	if err != nil {
+		if verbose {
+			log.Printf("❌ [VERBOSE] /v1/chat/completions Upstream error: %v", err)
+		}
 		writeOpenAIError(w, "Upstream error: "+err.Error(), http.StatusBadGateway)
 		return
 	}
@@ -128,6 +131,9 @@ func handleOpenAINonStreaming(w http.ResponseWriter, client *upstream.Client, to
 
 	openaiResp, err := mappers.GeminiToOpenAI(geminiResp, model, false)
 	if err != nil {
+		if verbose {
+			log.Printf("❌ [VERBOSE] /v1/chat/completions Conversion error: %v", err)
+		}
 		writeOpenAIError(w, "Response conversion error", http.StatusInternalServerError)
 		return
 	}
