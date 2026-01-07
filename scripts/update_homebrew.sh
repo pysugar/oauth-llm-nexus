@@ -6,6 +6,7 @@ TAP_FILE="${REPO_DIR}/../homebrew-tap/oauth-llm-nexus.rb"
 
 # 1. Get current version
 RAW_VERSION=$(git describe --tags --always)
+# RAW_VERSION=$(git describe --tags --always --abbrev=0)
 VERSION=$(echo $RAW_VERSION | sed 's/^v//')
 
 echo "🚀 Preparing Homebrew update for version: ${VERSION}"
