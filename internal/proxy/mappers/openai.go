@@ -454,6 +454,11 @@ func ConvertToolsToGemini(tools []Tool) []GeminiTool {
 		case "function":
 			// Map function definition to Gemini format
 			if tool.Function != nil {
+				// Special case: google_search function should use Gemini's built-in GoogleSearch grounding
+				if tool.Function.Name == "google_search" || tool.Function.Name == "googleSearch" {
+					hasGoogleSearch = true
+					continue
+				}
 				funcDecl := GeminiFunctionDeclaration{
 					Name:        tool.Function.Name,
 					Description: tool.Function.Description,
