@@ -51,7 +51,11 @@ func GenAIHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client) http
 		log.Printf("📨 GenAI request: model=%s", model)
 
 		// Stage 1: Verbose logging for raw GenAI request
-		requestId := "agent-" + uuid.New().String()
+		// Use client-provided X-Request-ID if present, otherwise generate new one
+		requestId := r.Header.Get("X-Request-ID")
+		if requestId == "" {
+			requestId = "agent-" + uuid.New().String()
+		}
 		if IsVerbose() {
 			reqBytes, _ := json.MarshalIndent(reqBody, "", "  ")
 			log.Printf("📥 [VERBOSE] [%s] GenAI raw request:\n%s", requestId, string(reqBytes))

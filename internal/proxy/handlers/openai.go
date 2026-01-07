@@ -73,10 +73,20 @@ func OpenAIChatHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client)
 		json.Unmarshal(payloadBytes, &payload)
 
 		// Add Cloud Code API required fields
-		requestId := "agent-" + uuid.New().String()
+		// Use client-provided X-Request-ID if present, otherwise generate new one
+		requestId := r.Header.Get("X-Request-ID")
+		if requestId == "" {
+			requestId = "agent-" + uuid.New().String()
+		}
 		payload["userAgent"] = "antigravity"
 		payload["requestType"] = "gemini"
 		payload["requestId"] = requestId
+
+		// Verbose: Log Gemini payload before sending
+		if verbose {
+			geminiPayloadBytes, _ := json.MarshalIndent(payload, "", "  ")
+			log.Printf("📤 [VERBOSE] [%s] /v1/chat/completions Gemini Request Payload:\n%s", requestId, string(geminiPayloadBytes))
+		}
 
 		if req.Stream {
 			handleOpenAIStreaming(w, upstreamClient, cachedToken.AccessToken, payload, req.Model, requestId)
@@ -132,18 +142,22 @@ func handleOpenAINonStreaming(w http.ResponseWriter, client *upstream.Client, to
 	openaiResp, err := mappers.GeminiToOpenAI(geminiResp, model, false)
 	if err != nil {
 		if verbose {
-			log.Printf("❌ [VERBOSE] /v1/chat/completions Conversion error: %v", err)
+			log.Printf("❌ [VERBOSE] [%s] /v1/chat/completions Conversion error: %v", requestId, err)
 		}
 		writeOpenAIError(w, "Response conversion error", http.StatusInternalServerError)
 		return
 	}
 
-	// Verbose: Log final OpenAI response
+	// Verbose: Log final OpenAI response with empty content detection
 	if verbose {
 		var prettyResp map[string]interface{}
 		json.Unmarshal(openaiResp, &prettyResp)
 		prettyBytes, _ := json.MarshalIndent(prettyResp, "", "  ")
-		log.Printf("📤 [VERBOSE] /v1/chat/completions Final Response:\n%s", string(prettyBytes))
+		log.Printf("📤 [VERBOSE] [%s] /v1/chat/completions Final Response:\n%s", requestId, string(prettyBytes))
+		// Warn if response appears empty
+		if len(openaiResp) < 100 {
+			log.Printf("⚠️ [VERBOSE] [%s] Response is suspiciously short (%d bytes) - possible empty content", requestId, len(openaiResp))
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -180,10 +194,11 @@ func handleOpenAIStreaming(w http.ResponseWriter, client *upstream.Client, token
 		return
 	}
 
-	// Increase scanner buffer to handle large SSE frames (1MB limit)
+	// Increase scanner buffer to handle large SSE frames (8MB limit)
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
 
+	chunkCount := 0
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.HasPrefix(line, "data: ") {
@@ -196,14 +211,14 @@ func handleOpenAIStreaming(w http.ResponseWriter, client *upstream.Client, token
 
 			// Verbose: log raw streaming chunk
 			if IsVerbose() {
-				log.Printf("📦 [VERBOSE] /v1/chat/completions Stream chunk: %s", data)
+				log.Printf("📦 [VERBOSE] [%s] /v1/chat/completions Stream chunk #%d: %s", requestId, chunkCount+1, data)
 			}
 
 			// Parse and unwrap response field
 			var wrapped map[string]interface{}
 			if err := json.Unmarshal([]byte(data), &wrapped); err != nil {
 				if IsVerbose() {
-					log.Printf("⚠️ [VERBOSE] /v1/chat/completions Stream parse error: %v", err)
+					log.Printf("⚠️ [VERBOSE] [%s] /v1/chat/completions Stream parse error: %v", requestId, err)
 				}
 				continue
 			}
@@ -216,18 +231,27 @@ func handleOpenAIStreaming(w http.ResponseWriter, client *upstream.Client, token
 			openaiChunk, err := mappers.GeminiToOpenAI(geminiResp, model, true)
 			if err != nil {
 				if IsVerbose() {
-					log.Printf("⚠️ [VERBOSE] /v1/chat/completions Stream convert error: %v", err)
+					log.Printf("⚠️ [VERBOSE] [%s] /v1/chat/completions Stream convert error: %v", requestId, err)
 				}
 				continue
 			}
 
 			fmt.Fprintf(w, "data: %s\n\n", openaiChunk)
 			flusher.Flush()
+			chunkCount++
 		}
 	}
 	// Check scanner error after loop (streaming reliability fix)
 	if err := scanner.Err(); err != nil && IsVerbose() {
-		log.Printf("❌ [VERBOSE] /v1/chat/completions Scanner error: %v", err)
+		log.Printf("❌ [VERBOSE] [%s] /v1/chat/completions Scanner error: %v", requestId, err)
+	}
+	// Summary log for diagnosing empty responses
+	if IsVerbose() {
+		if chunkCount == 0 {
+			log.Printf("⚠️ [VERBOSE] [%s] /v1/chat/completions Streaming completed with 0 chunks - client received empty response!", requestId)
+		} else {
+			log.Printf("✅ [VERBOSE] [%s] /v1/chat/completions Streaming completed: %d chunks sent", requestId, chunkCount)
+		}
 	}
 }
 

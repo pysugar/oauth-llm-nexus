@@ -493,7 +493,11 @@ func OpenAIResponsesHandler(database *gorm.DB, tokenMgr *token.Manager, upstream
 		json.Unmarshal(payloadBytes, &payload)
 
 		// Add Cloud Code API required fields
-		requestId := "agent-" + uuid.New().String()
+		// Use client-provided X-Request-ID if present, otherwise generate new one
+		requestId := r.Header.Get("X-Request-ID")
+		if requestId == "" {
+			requestId = "agent-" + uuid.New().String()
+		}
 		payload["userAgent"] = "antigravity"
 		payload["requestType"] = "gemini"
 		payload["requestId"] = requestId

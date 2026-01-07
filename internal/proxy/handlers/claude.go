@@ -154,7 +154,11 @@ func ClaudeMessagesHandler(tokenMgr *token.Manager, upstreamClient *upstream.Cli
 		}
 
 		// Build wrapped Gemini payload
-		requestId := "agent-" + uuid.New().String()
+		// Use client-provided X-Request-ID if present, otherwise generate new one
+		requestId := r.Header.Get("X-Request-ID")
+		if requestId == "" {
+			requestId = "agent-" + uuid.New().String()
+		}
 		payload := map[string]interface{}{
 			"project":     cachedToken.ProjectID,
 			"requestId":   requestId,
