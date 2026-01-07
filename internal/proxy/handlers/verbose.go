@@ -1,13 +1,12 @@
 package handlers
 
 import (
-	"os"
-	"strings"
+	"github.com/pysugar/oauth-llm-nexus/internal/util"
 )
 
 // IsVerbose checks if NEXUS_VERBOSE environment variable is set.
 // Accepts: "1", "true", "yes" (case-insensitive)
+// This re-exports util.IsVerbose for backward compatibility.
 func IsVerbose() bool {
-	verbose := strings.ToLower(os.Getenv("NEXUS_VERBOSE"))
-	return verbose == "1" || verbose == "true" || verbose == "yes"
+	return util.IsVerbose()
 }

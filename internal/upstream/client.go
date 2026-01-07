@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"os"
 	"time"
+
+	"github.com/pysugar/oauth-llm-nexus/internal/util"
 )
 
 const (
@@ -97,7 +99,7 @@ func (c *Client) doRequest(method, url, accessToken string, payload interface{})
 		body = bytes.NewBuffer(jsonData)
 
 		// Stage 2: Centralized Gemini request logging
-		if isVerbose() {
+		if util.IsVerbose() {
 			prettyBytes, _ := json.MarshalIndent(payload, "", "  ")
 			log.Printf("🔄 [VERBOSE] Gemini API Request Payload:\n%s", string(prettyBytes))
 		}
@@ -118,10 +120,4 @@ func (c *Client) doRequest(method, url, accessToken string, payload interface{})
 	}
 
 	return resp, nil
-}
-
-// isVerbose checks if NEXUS_VERBOSE environment variable is set
-func isVerbose() bool {
-	v := os.Getenv("NEXUS_VERBOSE")
-	return v == "1" || v == "true"
 }
