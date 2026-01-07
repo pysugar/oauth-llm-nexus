@@ -187,9 +187,9 @@ type GeminiContent struct {
 
 type GeminiPart struct {
 	Text             string                  `json:"text,omitempty"`
-	FunctionCall     *GeminiFunctionCall     `json:"functionCall,omitempty"`     // For model's tool call request
-	FunctionResponse *GeminiFunctionResponse `json:"functionResponse,omitempty"` // For user's tool result
-	ThoughtSignature string                  `json:"thoughtSignature,omitempty"` // Required for Gemini 3 models (at part level)
+	FunctionCall     *GeminiFunctionCall     `json:"functionCall,omitempty"`      // For model's tool call request
+	FunctionResponse *GeminiFunctionResponse `json:"functionResponse,omitempty"`  // For user's tool result
+	ThoughtSignature string                  `json:"thought_signature,omitempty"` // Required for Gemini 3 models (at part level)
 }
 
 // GeminiFunctionCall represents a function call from the model
@@ -564,8 +564,21 @@ func GeminiToOpenAI(geminiResp map[string]interface{}, model string, isStreaming
 				}
 				if parts, ok := content["parts"].([]interface{}); ok && len(parts) > 0 {
 					// Iterate through all parts to find text and functionCall content
-					// Gemini 3 Pro models may have parts with only thoughtSignature
+					// Gemini 3 Pro models may provide thoughtSignature in one part and functionCall in another
 					var textParts []string
+					var currentThoughtSignature string
+
+					// First pass: extract any thought signature for the whole candidate
+					for _, p := range parts {
+						if part, ok := p.(map[string]interface{}); ok {
+							if sig, ok := part["thoughtSignature"].(string); ok && sig != "" {
+								currentThoughtSignature = sig
+							} else if sig, ok := part["thought_signature"].(string); ok && sig != "" {
+								currentThoughtSignature = sig
+							}
+						}
+					}
+
 					for _, p := range parts {
 						if part, ok := p.(map[string]interface{}); ok {
 							// Extract text
@@ -579,11 +592,10 @@ func GeminiToOpenAI(geminiResp map[string]interface{}, model string, isStreaming
 								argsJSON, _ := json.Marshal(args)
 
 								// Extract thought_signature for Gemini 3 models
-								// Note: thoughtSignature is at part level, sibling of functionCall
 								var extraContent map[string]map[string]string
-								if sig, ok := part["thoughtSignature"].(string); ok && sig != "" {
+								if currentThoughtSignature != "" {
 									extraContent = map[string]map[string]string{
-										"google": {"thought_signature": sig},
+										"google": {"thought_signature": currentThoughtSignature},
 									}
 								}
 
