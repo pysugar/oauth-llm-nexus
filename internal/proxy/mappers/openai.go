@@ -73,16 +73,28 @@ type OpenAIMessage struct {
 
 // UnmarshalJSON handles both string and array content formats
 func (m *OpenAIMessage) UnmarshalJSON(data []byte) error {
-	// Try simple struct first
+	// Try full struct first to get all fields
 	type Alias struct {
-		Role    string          `json:"role"`
-		Content json.RawMessage `json:"content"`
+		Role       string           `json:"role"`
+		Content    json.RawMessage  `json:"content"`
+		ToolCalls  []OpenAIToolCall `json:"tool_calls,omitempty"`
+		ToolCallID string           `json:"tool_call_id,omitempty"`
+		Name       string           `json:"name,omitempty"`
 	}
 	var alias Alias
 	if err := json.Unmarshal(data, &alias); err != nil {
 		return err
 	}
 	m.Role = alias.Role
+	m.ToolCalls = alias.ToolCalls
+	m.ToolCallID = alias.ToolCallID
+	m.Name = alias.Name
+
+	// Handle content field - can be string, array, or null
+	if len(alias.Content) == 0 || string(alias.Content) == "null" {
+		m.Content = ""
+		return nil
+	}
 
 	// Try string content first
 	var strContent string
