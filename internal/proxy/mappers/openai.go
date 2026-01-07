@@ -8,6 +8,8 @@ import (
 
 // OpenAI Request/Response structures
 
+const ThoughtSignatureSeparator = "__thought__"
+
 type OpenAIChatRequest struct {
 	Model       string          `json:"model"`
 	Messages    []OpenAIMessage `json:"messages"`
@@ -50,11 +52,10 @@ type ApproximateLocation struct {
 
 // OpenAIToolCall represents a tool call in the response (assistant wants to call a function)
 type OpenAIToolCall struct {
-	Index        *int                         `json:"index,omitempty"`
-	ID           string                       `json:"id,omitempty"`
-	Type         string                       `json:"type,omitempty"` // "function"
-	Function     *OpenAIFunctionCall          `json:"function,omitempty"`
-	ExtraContent map[string]map[string]string `json:"extra_content,omitempty"` // For thought_signature: {"google": {"thought_signature": "..."}}
+	Index    *int                `json:"index,omitempty"`
+	ID       string              `json:"id,omitempty"`
+	Type     string              `json:"type,omitempty"` // "function"
+	Function *OpenAIFunctionCall `json:"function,omitempty"`
 }
 
 // OpenAIFunctionCall contains the function name and arguments
@@ -196,12 +197,18 @@ type GeminiPart struct {
 type GeminiFunctionCall struct {
 	Name string                 `json:"name"`
 	Args map[string]interface{} `json:"args"`
+	// Non-standard field to support Claude-on-Vertex via Cloud Code API
+	// Cloud Code translation layer needs this ID to generate valid Anthropic tool_use blocks
+	ID string `json:"id,omitempty"`
 }
 
 // GeminiFunctionResponse represents a function response from the user
 type GeminiFunctionResponse struct {
 	Name     string                 `json:"name"`
 	Response map[string]interface{} `json:"response"`
+	// Non-standard field to support Claude-on-Vertex via Cloud Code API
+	// Cloud Code translation layer needs this ID to match tool_result with tool_use
+	ID string `json:"id,omitempty"`
 }
 
 type GeminiGenerationConfig struct {
@@ -299,8 +306,16 @@ func OpenAIToGemini(req OpenAIChatRequest, resolvedModel, projectID string) Gemi
 
 			// Get function name from Name field or ToolCallID
 			funcName := msg.Name
+			toolCallID := msg.ToolCallID
+
+			// Clean toolCallID if it contains a smuggled signature
+			if strings.Contains(toolCallID, ThoughtSignatureSeparator) {
+				parts := strings.SplitN(toolCallID, ThoughtSignatureSeparator, 2)
+				toolCallID = parts[0]
+			}
+
 			if funcName == "" {
-				funcName = msg.ToolCallID // Fallback to ToolCallID if Name not provided
+				funcName = toolCallID // Fallback to ToolCallID if Name not provided
 			}
 
 			contents = append(contents, GeminiContent{
@@ -310,6 +325,7 @@ func OpenAIToGemini(req OpenAIChatRequest, resolvedModel, projectID string) Gemi
 						FunctionResponse: &GeminiFunctionResponse{
 							Name:     funcName,
 							Response: responseData,
+							ID:       toolCallID, // Pass the ID to upstream for correlation
 						},
 					},
 				},
@@ -330,18 +346,22 @@ func OpenAIToGemini(req OpenAIChatRequest, resolvedModel, projectID string) Gemi
 				var args map[string]interface{}
 				json.Unmarshal([]byte(tc.Function.Arguments), &args)
 
-				// Extract thought_signature from extra_content if present
+				// Extract thought_signature from tool_call_id
 				var thoughtSignature string
-				if tc.ExtraContent != nil {
-					if google, ok := tc.ExtraContent["google"]; ok {
-						thoughtSignature = google["thought_signature"]
-					}
+
+				// ID Smuggling: try extracting from ID
+				cleanID := tc.ID
+				if strings.Contains(tc.ID, ThoughtSignatureSeparator) {
+					parts := strings.SplitN(tc.ID, ThoughtSignatureSeparator, 2)
+					cleanID = parts[0]
+					thoughtSignature = parts[1]
 				}
 
 				parts = append(parts, GeminiPart{
 					FunctionCall: &GeminiFunctionCall{
 						Name: tc.Function.Name,
 						Args: args,
+						ID:   cleanID, // Pass the ID (without signature) to upstream
 					},
 					ThoughtSignature: thoughtSignature, // At part level, not inside functionCall
 				})
@@ -472,10 +492,29 @@ func ConvertToolsToGemini(tools []Tool) []GeminiTool {
 					hasGoogleSearch = true
 					continue
 				}
+
+				params := ConvertJSONSchemaToOpenAPI(tool.Function.Parameters)
+				// Strict root-level filtering for Claude/Vertex: only allow compliant keys
+				if params != nil {
+					allowedKeys := map[string]bool{
+						"type":                 true,
+						"properties":           true,
+						"required":             true,
+						"additionalProperties": true,
+						"$defs":                true,
+						"strict":               true,
+					}
+					for k := range params {
+						if !allowedKeys[k] {
+							delete(params, k)
+						}
+					}
+				}
+
 				funcDecl := GeminiFunctionDeclaration{
 					Name:        tool.Function.Name,
 					Description: tool.Function.Description,
-					Parameters:  ConvertJSONSchemaToOpenAPI(tool.Function.Parameters),
+					Parameters:  params,
 				}
 				functionDeclarations = append(functionDeclarations, funcDecl)
 			}
@@ -506,22 +545,99 @@ func ConvertToolsToGemini(tools []Tool) []GeminiTool {
 	return geminiTools
 }
 
-// ConvertJSONSchemaToOpenAPI converts OpenAI JSON Schema to Gemini OpenAPI schema
-// Removes unsupported fields like additionalProperties, strict
+// ConvertJSONSchemaToOpenAPI converts OpenAI JSON Schema to Gemini/Claude OpenAPI schema
+// Removes unsupported fields like additionalProperties, strict, nullable, description at root
+// ConvertJSONSchemaToOpenAPI converts OpenAI JSON Schema to Gemini/Claude OpenAPI schema
+// Removes unsupported fields like additionalProperties, strict, nullable, description at root
+// Flattens 'anyOf' constructs containing enums into a single 'enum' array for Claude/Vertex parsing
 func ConvertJSONSchemaToOpenAPI(schema map[string]interface{}) map[string]interface{} {
 	if schema == nil {
 		return nil
 	}
 
 	result := make(map[string]interface{})
+
+	// Check for 'anyOf' that can be flattened to 'enum'
+	// Claude on Vertex dislikes complex nested schemas.
+	// Pattern: "anyOf": [{"enum": ["a"]}, {"enum": ["b"]}] -> "enum": ["a", "b"]
+	if anyOf, ok := schema["anyOf"].([]interface{}); ok {
+		var flattenedEnums []interface{}
+		canFlatten := true
+		for _, item := range anyOf {
+			itemMap, ok := item.(map[string]interface{})
+			if !ok {
+				canFlatten = false
+				break
+			}
+			// Extract enum if present
+			if enums, hasEnum := itemMap["enum"].([]interface{}); hasEnum {
+				flattenedEnums = append(flattenedEnums, enums...)
+			} else {
+				// If any item is not a simple enum wrapper, abort flattening
+				canFlatten = false
+				break
+			}
+		}
+
+		if canFlatten && len(flattenedEnums) > 0 {
+			result["enum"] = flattenedEnums
+			// Inherit type from the first item if avail, usually "string" for enums
+			if firstItem, ok := anyOf[0].(map[string]interface{}); ok {
+				if t, ok := firstItem["type"]; ok {
+					result["type"] = t
+				}
+			}
+			// Skip copying "anyOf" to result since we replaced it with "enum"
+			// Also skip "description" processing below for this level as we handled the core structure
+			// However, we still need to process other fields if they exist in schema (like description at root)
+		} else {
+			// Cannot flatten, process recursively
+			newAnyOf := make([]interface{}, len(anyOf))
+			for i, item := range anyOf {
+				if itemMap, ok := item.(map[string]interface{}); ok {
+					newAnyOf[i] = ConvertJSONSchemaToOpenAPI(itemMap)
+				} else {
+					newAnyOf[i] = item
+				}
+			}
+			result["anyOf"] = newAnyOf
+		}
+	}
+
 	for k, v := range schema {
-		// Skip unsupported fields
-		if k == "additionalProperties" || k == "strict" || k == "$schema" {
+		// Skip fields we already handled or want to remove
+		if k == "anyOf" && result["enum"] != nil {
+			continue // Already flattened
+		}
+		if k == "anyOf" {
+			continue // Already processed in the else block above if not flattened
+		}
+
+		// Skip unsupported fields according to Gemini/Anthropic requirements
+		// Note: description at root level of parameters is often redundant or causing 400s in Vertex/Claude
+		if k == "additionalProperties" || k == "strict" || k == "$schema" || k == "nullable" || k == "example" || k == "examples" || k == "title" {
 			continue
 		}
-		// Recursively handle nested objects
+
+		// Remove default values if they are null, as they are often invalid for non-nullable types in strict Draft 2020-12
+		if k == "default" && v == nil {
+			continue
+		}
+
+		// Recursively handle nested objects or arrays (exclude anyOf as it's handled above)
 		if nested, ok := v.(map[string]interface{}); ok {
 			result[k] = ConvertJSONSchemaToOpenAPI(nested)
+		} else if arr, ok := v.([]interface{}); ok {
+			// Also process arrays (e.g. allOf, items)
+			newArr := make([]interface{}, len(arr))
+			for i, item := range arr {
+				if itemMap, ok := item.(map[string]interface{}); ok {
+					newArr[i] = ConvertJSONSchemaToOpenAPI(itemMap)
+				} else {
+					newArr[i] = item
+				}
+			}
+			result[k] = newArr
 		} else {
 			result[k] = v
 		}
@@ -591,25 +707,23 @@ func GeminiToOpenAI(geminiResp map[string]interface{}, model string, isStreaming
 								args, _ := fc["args"].(map[string]interface{})
 								argsJSON, _ := json.Marshal(args)
 
-								// Extract thought_signature for Gemini 3 models
-								var extraContent map[string]map[string]string
-								if currentThoughtSignature != "" {
-									extraContent = map[string]map[string]string{
-										"google": {"thought_signature": currentThoughtSignature},
-									}
-								}
-
 								toolCallCounter++
 								currIdx := toolCallCounter - 1
+
+								// ID Smuggling: Embed signature into ID if present
+								toolCallID := "call_" + time.Now().Format("20060102150405") + "_" + string(rune('0'+toolCallCounter))
+								if currentThoughtSignature != "" {
+									toolCallID = toolCallID + ThoughtSignatureSeparator + currentThoughtSignature
+								}
+
 								toolCalls = append(toolCalls, OpenAIToolCall{
 									Index: &currIdx,
-									ID:    "call_" + time.Now().Format("20060102150405") + "_" + string(rune('0'+toolCallCounter)),
+									ID:    toolCallID,
 									Type:  "function",
 									Function: &OpenAIFunctionCall{
 										Name:      name,
 										Arguments: string(argsJSON),
 									},
-									ExtraContent: extraContent,
 								})
 							}
 						}

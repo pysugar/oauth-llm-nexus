@@ -81,3 +81,185 @@ func TestOpenAIToGemini_NoSystemRole(t *testing.T) {
 		t.Fatalf("Expected 1 message, got %d", len(geminiReq.Request.Contents))
 	}
 }
+func TestOpenAIToGemini_IDSmuggling(t *testing.T) {
+	// Test extraction from tool_calls
+	req := OpenAIChatRequest{
+		Model: "gpt-4o-mini",
+		Messages: []OpenAIMessage{
+			{
+				Role: "assistant",
+				ToolCalls: []OpenAIToolCall{
+					{
+						ID:   "call_123__thought__test_sig",
+						Type: "function",
+						Function: &OpenAIFunctionCall{
+							Name:      "test_func",
+							Arguments: `{"arg": "val"}`,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	geminiReq := OpenAIToGemini(req, "gemini-3-flash", "test-project")
+
+	if len(geminiReq.Request.Contents) != 1 {
+		t.Fatalf("Expected 1 content message, got %d", len(geminiReq.Request.Contents))
+	}
+
+	parts := geminiReq.Request.Contents[0].Parts
+	if len(parts) != 1 {
+		t.Fatalf("Expected 1 part, got %d", len(parts))
+	}
+
+	if parts[0].ThoughtSignature != "test_sig" {
+		t.Errorf("Expected thought_signature 'test_sig', got %q", parts[0].ThoughtSignature)
+	}
+
+	// Test extraction from tool role (cleaning)
+	req2 := OpenAIChatRequest{
+		Model: "gpt-4o-mini",
+		Messages: []OpenAIMessage{
+			{
+				Role:       "tool",
+				ToolCallID: "call_123__thought__test_sig",
+				Name:       "test_func",
+				Content:    "result",
+			},
+		},
+	}
+
+	geminiReq2 := OpenAIToGemini(req2, "gemini-3-flash", "test-project")
+	if geminiReq2.Request.Contents[0].Parts[0].FunctionResponse.Name != "test_func" {
+		t.Errorf("Expected function name 'test_func', got %q", geminiReq2.Request.Contents[0].Parts[0].FunctionResponse.Name)
+	}
+}
+
+func TestConvertJSONSchemaToOpenAPI_ClaudeStrict(t *testing.T) {
+	schema := map[string]interface{}{
+		"type":        "object",
+		"description": "Root description that should be removed",
+		"properties": map[string]interface{}{
+			"start_line": map[string]interface{}{
+				"type":        "integer",
+				"description": "Inner description that should stay",
+				"default":     nil,  // Should be removed
+				"nullable":    true, // Should be removed
+			},
+			"options": map[string]interface{}{
+				"anyOf": []interface{}{
+					map[string]interface{}{
+						"type":    "string",
+						"title":   "Title to remove",
+						"example": "Example to remove",
+					},
+				},
+			},
+		},
+		"required": []string{"start_line"},
+		"strict":   true,
+	}
+
+	result := ConvertJSONSchemaToOpenAPI(schema)
+
+	// In OpenAIToGemini, we also apply strict root filtering
+	allowedKeys := map[string]bool{
+		"type":                 true,
+		"properties":           true,
+		"required":             true,
+		"additionalProperties": true,
+		"$defs":                true,
+		"strict":               true,
+	}
+	for k := range result {
+		if !allowedKeys[k] {
+			delete(result, k)
+		}
+	}
+
+	// Assertions
+	if _, ok := result["description"]; ok {
+		t.Errorf("Root description should have been filtered out")
+	}
+	if result["type"] != "object" {
+		t.Errorf("Expected type object, got %v", result["type"])
+	}
+
+	props := result["properties"].(map[string]interface{})
+	startLine := props["start_line"].(map[string]interface{})
+
+	if _, ok := startLine["default"]; ok {
+		t.Errorf("Null default should have been removed")
+	}
+	if _, ok := startLine["nullable"]; ok {
+		t.Errorf("Nullable should have been removed")
+	}
+	if startLine["description"] != "Inner description that should stay" {
+		t.Errorf("Inner description should have been preserved")
+	}
+
+	options := props["options"].(map[string]interface{})
+	anyOf := options["anyOf"].([]interface{})
+	first := anyOf[0].(map[string]interface{})
+
+	if _, ok := first["title"]; ok {
+		t.Errorf("Inner title should have been removed")
+	}
+	if _, ok := first["example"]; ok {
+		t.Errorf("Inner example should have been removed")
+	}
+}
+
+func TestConvertJSONSchemaToOpenAPI_AnyOfFlattening(t *testing.T) {
+	// Schema simulating the "now" tool's timezone parameter
+	schema := map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"timezone": map[string]interface{}{
+				"description": "The timezone to use",
+				"anyOf": []interface{}{
+					map[string]interface{}{
+						"description": "Use UTC",
+						"enum":        []interface{}{"utc"},
+						"type":        "string",
+					},
+					map[string]interface{}{
+						"description": "Use local time",
+						"enum":        []interface{}{"local"},
+						"type":        "string",
+					},
+				},
+			},
+		},
+	}
+
+	result := ConvertJSONSchemaToOpenAPI(schema)
+
+	props := result["properties"].(map[string]interface{})
+	timezone := props["timezone"].(map[string]interface{})
+
+	// Should NOT have anyOf
+	if _, ok := timezone["anyOf"]; ok {
+		t.Errorf("anyOf should have been flattened")
+	}
+
+	// Should have enum: ["utc", "local"]
+	if enums, ok := timezone["enum"].([]interface{}); ok {
+		if len(enums) != 2 {
+			t.Errorf("Expected 2 enum values, got %d", len(enums))
+		} else {
+			// Basic check (order might not be guaranteed if map iteration was involved, but slice append preserves it)
+			if enums[0] != "utc" || enums[1] != "local" {
+				t.Errorf("Unexpected enum values: %v", enums)
+			}
+		}
+	} else {
+		t.Errorf("enum field missing after flattening")
+	}
+
+	// Should inherit type: string
+	if tType, ok := timezone["type"]; !ok || tType != "string" {
+		t.Errorf("Expected type string, got %v", tType)
+	}
+}
