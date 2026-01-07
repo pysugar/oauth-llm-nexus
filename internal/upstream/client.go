@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"time"
@@ -86,12 +87,20 @@ func (c *Client) LoadCodeAssist(accessToken string) (string, error) {
 // doRequest performs an HTTP request with proper headers
 func (c *Client) doRequest(method, url, accessToken string, payload interface{}) (*http.Response, error) {
 	var body io.Reader
+	var jsonData []byte
 	if payload != nil {
-		jsonData, err := json.Marshal(payload)
+		var err error
+		jsonData, err = json.Marshal(payload)
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal payload: %w", err)
 		}
 		body = bytes.NewBuffer(jsonData)
+
+		// Stage 2: Centralized Gemini request logging
+		if isVerbose() {
+			prettyBytes, _ := json.MarshalIndent(payload, "", "  ")
+			log.Printf("🔄 [VERBOSE] Gemini API Request Payload:\n%s", string(prettyBytes))
+		}
 	}
 
 	req, err := http.NewRequest(method, url, body)
@@ -109,4 +118,10 @@ func (c *Client) doRequest(method, url, accessToken string, payload interface{})
 	}
 
 	return resp, nil
+}
+
+// isVerbose checks if NEXUS_VERBOSE environment variable is set
+func isVerbose() bool {
+	v := os.Getenv("NEXUS_VERBOSE")
+	return v == "1" || v == "true"
 }

@@ -53,6 +53,12 @@ func ClaudeMessagesHandler(tokenMgr *token.Manager, upstreamClient *upstream.Cli
 
 		log.Printf("📨 Claude request: model=%s messages=%d stream=%v", model, len(messages), stream)
 
+		// Stage 1: Verbose logging for raw Claude request
+		if isVerbose() {
+			reqBytes, _ := json.MarshalIndent(rawReq, "", "  ")
+			log.Printf("📥 [VERBOSE] Claude raw request:\n%s", string(reqBytes))
+		}
+
 		// Build Gemini request directly (flexible approach)
 		geminiContents := make([]map[string]interface{}, 0)
 
@@ -190,16 +196,27 @@ func handleClaudeNonStreaming(w http.ResponseWriter, client *upstream.Client, to
 	// Unwrap Cloud Code API response
 	var wrapped map[string]interface{}
 	json.Unmarshal(body, &wrapped)
-	
+
 	geminiResp, ok := wrapped["response"].(map[string]interface{})
 	if !ok {
 		json.Unmarshal(body, &geminiResp)
+	}
+
+	// Stage 3: Verbose logging for Gemini response
+	if isVerbose() {
+		prettyBytes, _ := json.MarshalIndent(wrapped, "", "  ")
+		log.Printf("📥 [VERBOSE] Gemini API Response:\n%s", string(prettyBytes))
 	}
 
 	claudeResp, err := mappers.GeminiToClaude(geminiResp, model)
 	if err != nil {
 		writeClaudeError(w, "Response conversion error", http.StatusInternalServerError)
 		return
+	}
+
+	// Stage 4: Verbose logging for final Claude response
+	if isVerbose() {
+		log.Printf("📤 [VERBOSE] /anthropic/v1/messages Final Response:\n%s", string(claudeResp))
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -226,12 +243,12 @@ func handleClaudeStreaming(w http.ResponseWriter, client *upstream.Client, token
 
 	// Send message_start event
 	msgStart := &mappers.ClaudeResponse{
-		ID:    "msg-nexus",
-		Type:  "message",
-		Role:  "assistant",
-		Model: model,
+		ID:      "msg-nexus",
+		Type:    "message",
+		Role:    "assistant",
+		Model:   model,
 		Content: []mappers.ClaudeContentBlock{},
-		Usage: mappers.ClaudeUsage{InputTokens: 0, OutputTokens: 0},
+		Usage:   mappers.ClaudeUsage{InputTokens: 0, OutputTokens: 0},
 	}
 	startEvent, _ := mappers.CreateClaudeStreamEvent("message_start", msgStart)
 	fmt.Fprintf(w, "event: message_start\ndata: %s\n\n", startEvent)
@@ -275,11 +292,11 @@ func handleClaudeStreaming(w http.ResponseWriter, client *upstream.Client, token
 	// Send stop events
 	fmt.Fprintf(w, "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n")
 	flusher.Flush()
-	
+
 	stopEvent, _ := mappers.CreateClaudeStreamEvent("message_delta", nil)
 	fmt.Fprintf(w, "event: message_delta\ndata: %s\n\n", stopEvent)
 	flusher.Flush()
-	
+
 	fmt.Fprintf(w, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
 	flusher.Flush()
 }
@@ -349,7 +366,7 @@ func ClaudeModelsHandler(database *gorm.DB) http.HandlerFunc {
 			"data":     validModels,
 			"has_more": false,
 		}
-		
+
 		if len(validModels) > 0 {
 			response["first_id"] = validModels[0]["id"]
 			response["last_id"] = validModels[len(validModels)-1]["id"]

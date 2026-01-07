@@ -50,6 +50,12 @@ func GenAIHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client) http
 
 		log.Printf("📨 GenAI request: model=%s", model)
 
+		// Stage 1: Verbose logging for raw GenAI request
+		if isVerbose() {
+			reqBytes, _ := json.MarshalIndent(reqBody, "", "  ")
+			log.Printf("📥 [VERBOSE] GenAI raw request:\n%s", string(reqBytes))
+		}
+
 		// Build Cloud Code API payload (wrapped format)
 		payload := map[string]interface{}{
 			"project":     cachedToken.ProjectID,
@@ -84,7 +90,18 @@ func GenAIHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client) http
 			return
 		}
 
+		// Stage 3: Verbose logging for Gemini response
+		if isVerbose() {
+			prettyBytes, _ := json.MarshalIndent(wrapped, "", "  ")
+			log.Printf("📥 [VERBOSE] Gemini API Response:\n%s", string(prettyBytes))
+		}
+
 		if inner, ok := wrapped["response"]; ok {
+			// Stage 4: Verbose logging for final GenAI response
+			if isVerbose() {
+				innerBytes, _ := json.MarshalIndent(inner, "", "  ")
+				log.Printf("📤 [VERBOSE] /genai/v1beta Final Response:\n%s", string(innerBytes))
+			}
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(inner)
 		} else {
@@ -126,6 +143,12 @@ func GenAIStreamHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client
 		}
 
 		log.Printf("📨 GenAI stream request: model=%s", model)
+
+		// Stage 1: Verbose logging for raw GenAI stream request
+		if isVerbose() {
+			reqBytes, _ := json.MarshalIndent(reqBody, "", "  ")
+			log.Printf("📥 [VERBOSE] GenAI stream raw request:\n%s", string(reqBytes))
+		}
 
 		payload := map[string]interface{}{
 			"project":     cachedToken.ProjectID,
@@ -228,7 +251,7 @@ func GenAIModelsListHandler(tokenMgr *token.Manager, upstreamClient *upstream.Cl
 
 		// Pass through upstream response directly
 		// It returns {"models": [...]} which matches standard GenAI format
-		
+
 		// Parse Cloud Code upstream response
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
