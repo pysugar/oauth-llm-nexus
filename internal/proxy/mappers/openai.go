@@ -2,6 +2,7 @@ package mappers
 
 import (
 	"encoding/json"
+	"log"
 	"strings"
 	"time"
 )
@@ -467,7 +468,7 @@ You are pair programming with a USER to solve their coding task. The task may re
 
 	// Convert tools to Gemini format
 	if len(req.Tools) > 0 {
-		tools := ConvertToolsToGemini(req.Tools)
+		tools := ConvertToolsToGemini(req.Tools, resolvedModel)
 		if len(tools) > 0 {
 			geminiReq.Request.Tools = tools
 		}
@@ -497,11 +498,15 @@ func getThinkingLevelForModel(model string) string {
 
 // ConvertToolsToGemini converts OpenAI tools to Gemini format
 // Supports: "function", "web_search", "web_search_preview"
-// Based on LiteLLM's _map_function implementation
-func ConvertToolsToGemini(tools []Tool) []GeminiTool {
+// Note: googleSearch is skipped for gemini-3 models in Cloud Code API
+// because thinking mode (default for gemini-3) conflicts with grounding
+func ConvertToolsToGemini(tools []Tool, targetModel string) []GeminiTool {
 	var geminiTools []GeminiTool
 	var functionDeclarations []GeminiFunctionDeclaration
 	hasGoogleSearch := false
+
+	// Check if this is a gemini-3 model (thinking mode conflicts with grounding in Cloud Code API)
+	isGemini3 := strings.Contains(targetModel, "gemini-3")
 
 	for _, tool := range tools {
 		switch tool.Type {
@@ -561,10 +566,13 @@ func ConvertToolsToGemini(tools []Tool) []GeminiTool {
 	}
 
 	// Add Google Search as a separate tool
-	if hasGoogleSearch {
+	// Note: Skip for gemini-3 models - thinking mode conflicts with grounding in Cloud Code API
+	if hasGoogleSearch && !isGemini3 {
 		geminiTools = append(geminiTools, GeminiTool{
 			GoogleSearch: &struct{}{},
 		})
+	} else if hasGoogleSearch && isGemini3 {
+		log.Printf("⚠️ Skipping googleSearch for %s - thinking mode conflicts with grounding in Cloud Code API", targetModel)
 	}
 
 	return geminiTools
