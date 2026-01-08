@@ -202,19 +202,19 @@ func (m *Manager) GetTokenByIdentifier(identifier string) (*CachedToken, error) 
 
 // StartRefreshLoop starts background token refresh
 func (m *Manager) StartRefreshLoop() {
-	ticker := time.NewTicker(5 * time.Minute)
+	ticker := time.NewTicker(15 * time.Minute) // Reduced frequency to minimize Google OAuth load
 	go func() {
 		for range ticker.C {
 			m.refreshExpiredTokens()
 		}
 	}()
-	log.Println("🔄 Token refresh loop started")
+	log.Println("🔄 Token refresh loop started (interval: 15min)")
 }
 
-// refreshExpiredTokens refreshes all tokens expiring within 10 minutes
+// refreshExpiredTokens refreshes all tokens expiring within 20 minutes
 func (m *Manager) refreshExpiredTokens() {
 	var accounts []models.Account
-	threshold := time.Now().Add(10 * time.Minute)
+	threshold := time.Now().Add(20 * time.Minute)
 	m.db.Where("is_active = ? AND expires_at < ?", true, threshold).Find(&accounts)
 
 	for _, acc := range accounts {

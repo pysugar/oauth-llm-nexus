@@ -21,11 +21,13 @@ func TestHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client) http.
 			return
 		}
 
-		// Build a simple test request
+		// Build a simple test request matching Antigravity's format
 		payload := map[string]interface{}{
-			"project":   cachedToken.ProjectID,
-			"requestId": "test-" + time.Now().Format("20060102150405"),
-			"model":     "gemini-2.5-flash",
+			"project":     cachedToken.ProjectID,
+			"requestId":   "agent-" + time.Now().Format("20060102150405"),
+			"model":       "gemini-2.5-flash",
+			"userAgent":   "antigravity",
+			"requestType": "agent",
 			"request": map[string]interface{}{
 				"contents": []map[string]interface{}{
 					{

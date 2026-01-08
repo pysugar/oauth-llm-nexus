@@ -161,10 +161,12 @@ type OpenAIStreamChunk struct {
 
 // Gemini Internal structures
 type GeminiRequest struct {
-	Project   string               `json:"project"`
-	RequestID string               `json:"requestId"`
-	Model     string               `json:"model"`
-	Request   GeminiRequestPayload `json:"request"`
+	Project     string               `json:"project"`
+	RequestID   string               `json:"requestId"`
+	Model       string               `json:"model"`
+	Request     GeminiRequestPayload `json:"request"`
+	UserAgent   string               `json:"userAgent,omitempty"`   // Required: "antigravity"
+	RequestType string               `json:"requestType,omitempty"` // Required: "agent" or "web_search"
 }
 
 type GeminiRequestPayload struct {
@@ -391,11 +393,32 @@ func OpenAIToGemini(req OpenAIChatRequest, resolvedModel, projectID string) Gemi
 	// Use resolved model passed from handler
 	model := resolvedModel
 
+	// Antigravity identity injection (v3.3.17 feature)
+	// Prepend identity prompt to systemInstruction for better API compatibility
+	const antigravityIdentity = `You are Antigravity, a powerful agentic AI coding assistant designed by the Google Deepmind team working on Advanced Agentic Coding.
+You are pair programming with a USER to solve their coding task. The task may require creating a new codebase, modifying or debugging an existing codebase, or simply answering a question.
+**Absolute paths only**
+**Proactiveness**`
+
+	// Check if already contains Antigravity identity
+	hasAntigravity := false
+	for _, part := range systemParts {
+		if strings.Contains(part.Text, "You are Antigravity") {
+			hasAntigravity = true
+			break
+		}
+	}
+
+	// Prepend identity if not present
+	if !hasAntigravity {
+		systemParts = append([]GeminiPart{{Text: antigravityIdentity}}, systemParts...)
+	}
+
 	payload := GeminiRequestPayload{
 		Contents: contents,
 	}
 
-	// Add system instruction if present
+	// Add system instruction (always present now due to identity injection)
 	if len(systemParts) > 0 {
 		payload.SystemInstruction = &GeminiContent{
 			Parts: systemParts,
@@ -403,10 +426,12 @@ func OpenAIToGemini(req OpenAIChatRequest, resolvedModel, projectID string) Gemi
 	}
 
 	geminiReq := GeminiRequest{
-		Project:   projectID,
-		RequestID: "req-" + time.Now().Format("20060102150405"),
-		Model:     model,
-		Request:   payload,
+		Project:     projectID,
+		RequestID:   "agent-" + time.Now().Format("20060102150405"), // Must use agent- prefix like Antigravity
+		Model:       model,
+		Request:     payload,
+		UserAgent:   "antigravity",
+		RequestType: "agent", // "agent" for normal, "web_search" when using googleSearch
 	}
 
 	// Map generation config

@@ -68,7 +68,7 @@ func GenAIHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client) http
 			"request":     reqBody,
 			"model":       model,
 			"userAgent":   "antigravity",
-			"requestType": "gemini",
+			"requestType": "agent",
 		}
 
 		// Verbose: Log Gemini payload before sending
@@ -184,7 +184,7 @@ func GenAIStreamHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client
 			"request":     reqBody,
 			"model":       model,
 			"userAgent":   "antigravity",
-			"requestType": "gemini",
+			"requestType": "agent",
 		}
 
 		// Verbose: Log Gemini payload before sending

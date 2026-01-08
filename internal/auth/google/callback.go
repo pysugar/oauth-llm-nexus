@@ -27,7 +27,7 @@ func HandleCallback(db *gorm.DB) http.HandlerFunc {
 
 		// Exchange authorization code for tokens
 		code := r.URL.Query().Get("code")
-		
+
 		// Dynamically construct redirect URL from the request
 		scheme := "http"
 		if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
@@ -35,7 +35,7 @@ func HandleCallback(db *gorm.DB) http.HandlerFunc {
 		}
 		host := r.Host
 		redirectURL := fmt.Sprintf("%s://%s/auth/google/callback", scheme, host)
-		
+
 		config := GetOAuthConfig(redirectURL)
 
 		token, err := config.Exchange(context.Background(), code)
@@ -77,7 +77,7 @@ func HandleCallback(db *gorm.DB) http.HandlerFunc {
 		var existingAccount models.Account
 		var accountID string
 		var isPrimary bool
-		
+
 		err = db.Where("email = ? AND provider = ?", userInfo.Email, "google").First(&existingAccount).Error
 		if err == nil {
 			accountID = existingAccount.ID
@@ -141,14 +141,20 @@ func HandleCallback(db *gorm.DB) http.HandlerFunc {
 
 // fetchProjectInfo calls the loadCodeAssist endpoint to get project ID and subscription tier.
 func fetchProjectInfo(client *http.Client) (projectID string, subscriptionTier string) {
-	// Send metadata like Antigravity-Manager does
-	// Note: API requires ideType to be one of the allowed values (e.g. ANTIGRAVITY)
+	// Build request with proper headers like Antigravity-Manager's project_resolver.rs
 	reqBody := strings.NewReader(`{"metadata": {"ideType": "ANTIGRAVITY"}}`)
-	resp, err := client.Post(
-		"https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
-		"application/json",
-		reqBody,
-	)
+	req, err := http.NewRequest("POST", "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist", reqBody)
+	if err != nil {
+		log.Printf("⚠️  Failed to create loadCodeAssist request: %v", err)
+		return "bamboo-precept-lgxtn", "FREE"
+	}
+
+	// Set headers to match Antigravity-Manager exactly
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Host", "cloudcode-pa.googleapis.com")
+	req.Header.Set("User-Agent", "antigravity/1.11.9 windows/amd64")
+
+	resp, err := client.Do(req)
 	if err != nil {
 		log.Printf("⚠️  loadCodeAssist API error: %v", err)
 		return "bamboo-precept-lgxtn", "FREE"

@@ -164,7 +164,7 @@ func ClaudeMessagesHandler(tokenMgr *token.Manager, upstreamClient *upstream.Cli
 			"requestId":   requestId,
 			"model":       model,
 			"userAgent":   "antigravity",
-			"requestType": "gemini",
+			"requestType": "agent",
 			"request": map[string]interface{}{
 				"contents": geminiContents,
 				"generationConfig": map[string]interface{}{

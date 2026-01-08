@@ -352,7 +352,8 @@ var dashboardHTML = `<!DOCTYPE html>
             const tier = (tierStr || 'FREE').toUpperCase();
             if (tier.includes('ULTRA')) {
                 return { tier: 'Ultra', color: 'bg-gradient-to-r from-purple-500 to-pink-500' };
-            } else if (tier.includes('PRO')) {
+            } else if (tier.includes('PRO') || tier.includes('STANDARD')) {
+                // standard-tier from Cloud Code API = Gemini Code Assist Pro subscription
                 return { tier: 'Pro', color: 'bg-gradient-to-r from-blue-500 to-cyan-500' };
             }
             return { tier: 'Free', color: 'bg-gray-600' };

@@ -82,7 +82,7 @@ func OpenAIChatHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client)
 
 		// Add Cloud Code API required fields
 		payload["userAgent"] = "antigravity"
-		payload["requestType"] = "gemini"
+		payload["requestType"] = "agent" // Must be "agent" not "gemini" - critical for avoiding 429
 		payload["requestId"] = requestId
 
 		// Verbose: Log Gemini payload before sending
@@ -149,6 +149,30 @@ func handleOpenAINonStreaming(w http.ResponseWriter, client *upstream.Client, to
 		}
 		writeOpenAIError(w, "Response conversion error", http.StatusInternalServerError)
 		return
+	}
+
+	// P1.2: Extract grounding metadata and convert to annotations
+	groundingMetadata := mappers.ExtractGroundingMetadata(wrapped)
+	if groundingMetadata != nil && len(groundingMetadata.GroundingChunks) > 0 {
+		annotations := mappers.ConvertGroundingMetadataToAnnotations(groundingMetadata)
+		if len(annotations) > 0 {
+			// Inject annotations into the response
+			var respMap map[string]interface{}
+			json.Unmarshal(openaiResp, &respMap)
+
+			if choices, ok := respMap["choices"].([]interface{}); ok && len(choices) > 0 {
+				if choice, ok := choices[0].(map[string]interface{}); ok {
+					if msg, ok := choice["message"].(map[string]interface{}); ok {
+						msg["annotations"] = annotations
+						if verbose {
+							log.Printf("🔗 [VERBOSE] [%s] Added %d grounding annotations", requestId, len(annotations))
+						}
+					}
+				}
+			}
+
+			openaiResp, _ = json.Marshal(respMap)
+		}
 	}
 
 	// Verbose: Log final OpenAI response with empty content detection
