@@ -366,10 +366,53 @@ func OpenAIChatHandlerWithMonitor(tokenMgr *token.Manager, upstreamClient *upstr
 		}
 		json.Unmarshal(bodyBytes, &req)
 
+		// Get account email
+		var accountEmail string
+		if accountHeader := r.Header.Get("X-Nexus-Account"); accountHeader != "" {
+			if cachedToken, err := tokenMgr.GetTokenByIdentifier(accountHeader); err == nil {
+				accountEmail = cachedToken.Email
+			}
+		} else {
+			if cachedToken, err := tokenMgr.GetPrimaryOrDefaultToken(); err == nil {
+				accountEmail = cachedToken.Email
+			}
+		}
+
 		// Use response recorder to capture status and body
 		rec := &responseRecorder{ResponseWriter: w, statusCode: 200}
 
 		baseHandler(rec, r)
+
+		// Extract tokens and error from response
+		var inputTokens, outputTokens int
+		var errorMsg string
+		respBody := rec.body.String()
+
+		if rec.statusCode >= 200 && rec.statusCode < 400 {
+			// Parse usage from OpenAI response
+			var resp struct {
+				Usage struct {
+					PromptTokens     int `json:"prompt_tokens"`
+					CompletionTokens int `json:"completion_tokens"`
+				} `json:"usage"`
+			}
+			if json.Unmarshal([]byte(respBody), &resp) == nil {
+				inputTokens = resp.Usage.PromptTokens
+				outputTokens = resp.Usage.CompletionTokens
+			}
+		} else {
+			// Extract error message
+			var errResp struct {
+				Error struct {
+					Message string `json:"message"`
+				} `json:"error"`
+			}
+			if json.Unmarshal([]byte(respBody), &errResp) == nil && errResp.Error.Message != "" {
+				errorMsg = errResp.Error.Message
+			} else if len(respBody) < 500 {
+				errorMsg = respBody
+			}
+		}
 
 		// Log the request
 		pm.LogRequest(models.RequestLog{
@@ -379,8 +422,12 @@ func OpenAIChatHandlerWithMonitor(tokenMgr *token.Manager, upstreamClient *upstr
 			Duration:     time.Since(startTime).Milliseconds(),
 			Model:        req.Model,
 			MappedModel:  db.ResolveModel(req.Model, "google"),
+			AccountEmail: accountEmail,
+			Error:        errorMsg,
+			InputTokens:  inputTokens,
+			OutputTokens: outputTokens,
 			RequestBody:  string(bodyBytes),
-			ResponseBody: rec.body.String(),
+			ResponseBody: respBody,
 		})
 	}
 }

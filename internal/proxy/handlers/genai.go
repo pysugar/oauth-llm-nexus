@@ -413,10 +413,53 @@ func GenAIHandlerWithMonitor(tokenMgr *token.Manager, upstreamClient *upstream.C
 		bodyBytes, _ := io.ReadAll(r.Body)
 		r.Body = io.NopCloser(strings.NewReader(string(bodyBytes)))
 
+		// Get account email
+		var accountEmail string
+		if accountHeader := r.Header.Get("X-Nexus-Account"); accountHeader != "" {
+			if cachedToken, err := tokenMgr.GetTokenByIdentifier(accountHeader); err == nil {
+				accountEmail = cachedToken.Email
+			}
+		} else {
+			if cachedToken, err := tokenMgr.GetPrimaryOrDefaultToken(); err == nil {
+				accountEmail = cachedToken.Email
+			}
+		}
+
 		// Use response recorder
 		rec := &responseRecorder{ResponseWriter: w, statusCode: 200}
 
 		baseHandler(rec, r)
+
+		// Extract tokens and error from response
+		var inputTokens, outputTokens int
+		var errorMsg string
+		respBody := rec.body.String()
+
+		if rec.statusCode >= 200 && rec.statusCode < 400 {
+			// Parse usage from GenAI/Gemini response
+			var resp struct {
+				UsageMetadata struct {
+					PromptTokenCount     int `json:"promptTokenCount"`
+					CandidatesTokenCount int `json:"candidatesTokenCount"`
+				} `json:"usageMetadata"`
+			}
+			if json.Unmarshal([]byte(respBody), &resp) == nil {
+				inputTokens = resp.UsageMetadata.PromptTokenCount
+				outputTokens = resp.UsageMetadata.CandidatesTokenCount
+			}
+		} else {
+			// Extract error message
+			var errResp struct {
+				Error struct {
+					Message string `json:"message"`
+				} `json:"error"`
+			}
+			if json.Unmarshal([]byte(respBody), &errResp) == nil && errResp.Error.Message != "" {
+				errorMsg = errResp.Error.Message
+			} else if len(respBody) < 500 {
+				errorMsg = respBody
+			}
+		}
 
 		// Log the request
 		pm.LogRequest(models.RequestLog{
@@ -426,8 +469,12 @@ func GenAIHandlerWithMonitor(tokenMgr *token.Manager, upstreamClient *upstream.C
 			Duration:     time.Since(startTime).Milliseconds(),
 			Model:        rawModel,
 			MappedModel:  db.ResolveModel(rawModel, "google"),
+			AccountEmail: accountEmail,
+			Error:        errorMsg,
+			InputTokens:  inputTokens,
+			OutputTokens: outputTokens,
 			RequestBody:  string(bodyBytes),
-			ResponseBody: rec.body.String(),
+			ResponseBody: respBody,
 		})
 	}
 }
@@ -449,8 +496,19 @@ func GenAIStreamHandlerWithMonitor(tokenMgr *token.Manager, upstreamClient *upst
 		bodyBytes, _ := io.ReadAll(r.Body)
 		r.Body = io.NopCloser(strings.NewReader(string(bodyBytes)))
 
+		// Get account email
+		var accountEmail string
+		if accountHeader := r.Header.Get("X-Nexus-Account"); accountHeader != "" {
+			if cachedToken, err := tokenMgr.GetTokenByIdentifier(accountHeader); err == nil {
+				accountEmail = cachedToken.Email
+			}
+		} else {
+			if cachedToken, err := tokenMgr.GetPrimaryOrDefaultToken(); err == nil {
+				accountEmail = cachedToken.Email
+			}
+		}
+
 		// For streaming, we can't easily capture the full response
-		// So we just log the request start and capture what we can
 		baseHandler(w, r)
 
 		// Log the request (response body will be empty for streams)
@@ -461,6 +519,7 @@ func GenAIStreamHandlerWithMonitor(tokenMgr *token.Manager, upstreamClient *upst
 			Duration:     time.Since(startTime).Milliseconds(),
 			Model:        rawModel,
 			MappedModel:  db.ResolveModel(rawModel, "google"),
+			AccountEmail: accountEmail,
 			RequestBody:  string(bodyBytes),
 			ResponseBody: "[streaming response]",
 		})

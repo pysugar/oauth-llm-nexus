@@ -466,10 +466,53 @@ func ClaudeMessagesHandlerWithMonitor(tokenMgr *token.Manager, upstreamClient *u
 		}
 		json.Unmarshal(bodyBytes, &req)
 
+		// Get account email
+		var accountEmail string
+		if accountHeader := r.Header.Get("X-Nexus-Account"); accountHeader != "" {
+			if cachedToken, err := tokenMgr.GetTokenByIdentifier(accountHeader); err == nil {
+				accountEmail = cachedToken.Email
+			}
+		} else {
+			if cachedToken, err := tokenMgr.GetPrimaryOrDefaultToken(); err == nil {
+				accountEmail = cachedToken.Email
+			}
+		}
+
 		// Use response recorder
 		rec := &responseRecorder{ResponseWriter: w, statusCode: 200}
 
 		baseHandler(rec, r)
+
+		// Extract tokens and error from response
+		var inputTokens, outputTokens int
+		var errorMsg string
+		respBody := rec.body.String()
+
+		if rec.statusCode >= 200 && rec.statusCode < 400 {
+			// Parse usage from Claude response
+			var resp struct {
+				Usage struct {
+					InputTokens  int `json:"input_tokens"`
+					OutputTokens int `json:"output_tokens"`
+				} `json:"usage"`
+			}
+			if json.Unmarshal([]byte(respBody), &resp) == nil {
+				inputTokens = resp.Usage.InputTokens
+				outputTokens = resp.Usage.OutputTokens
+			}
+		} else {
+			// Extract error message
+			var errResp struct {
+				Error struct {
+					Message string `json:"message"`
+				} `json:"error"`
+			}
+			if json.Unmarshal([]byte(respBody), &errResp) == nil && errResp.Error.Message != "" {
+				errorMsg = errResp.Error.Message
+			} else if len(respBody) < 500 {
+				errorMsg = respBody
+			}
+		}
 
 		// Log the request
 		pm.LogRequest(models.RequestLog{
@@ -479,8 +522,12 @@ func ClaudeMessagesHandlerWithMonitor(tokenMgr *token.Manager, upstreamClient *u
 			Duration:     time.Since(startTime).Milliseconds(),
 			Model:        req.Model,
 			MappedModel:  db.ResolveModel(req.Model, "google"),
+			AccountEmail: accountEmail,
+			Error:        errorMsg,
+			InputTokens:  inputTokens,
+			OutputTokens: outputTokens,
 			RequestBody:  string(bodyBytes),
-			ResponseBody: rec.body.String(),
+			ResponseBody: respBody,
 		})
 	}
 }

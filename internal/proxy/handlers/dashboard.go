@@ -343,9 +343,9 @@ var dashboardHTML = `<!DOCTYPE html>
 
         <!-- Request Monitor Card -->
         <div class="bg-gray-800 rounded-xl p-4 mb-6">
-            <div class="flex justify-between items-center mb-3">
-                <h3 class="text-sm font-semibold text-gray-400">📊 Request Monitor</h3>
-                <div class="flex items-center gap-3">
+            <div class="flex justify-between items-center">
+                <div class="flex items-center gap-4">
+                    <h3 class="text-sm font-semibold text-gray-400">📊 Request Monitor</h3>
                     <div id="monitor-stats" class="flex gap-3 text-xs font-bold">
                         <span class="text-blue-400"><span id="stat-total">0</span> REQS</span>
                         <span class="text-green-400"><span id="stat-success">0</span> OK</span>
@@ -355,42 +355,14 @@ var dashboardHTML = `<!DOCTYPE html>
                         <span id="logging-dot" class="w-2 h-2 rounded-full bg-gray-400"></span>
                         <span id="logging-label">Paused</span>
                     </button>
-                    <button onclick="clearLogs()" class="text-xs bg-gray-600 hover:bg-gray-500 px-2 py-1 rounded">🗑️</button>
-                    <button onclick="loadRequestLogs()" class="text-xs bg-gray-600 hover:bg-gray-500 px-2 py-1 rounded">↻</button>
                 </div>
-            </div>
-            <div id="request-logs-container" class="max-h-80 overflow-y-auto">
-                <table class="w-full text-xs">
-                    <thead class="sticky top-0 bg-gray-700 text-gray-400">
-                        <tr>
-                            <th class="px-2 py-1 text-left">Status</th>
-                            <th class="px-2 py-1 text-left">Method</th>
-                            <th class="px-2 py-1 text-left">Model</th>
-                            <th class="px-2 py-1 text-left">Path</th>
-                            <th class="px-2 py-1 text-right">Duration</th>
-                            <th class="px-2 py-1 text-right">Time</th>
-                        </tr>
-                    </thead>
-                    <tbody id="request-logs-tbody" class="text-gray-300">
-                        <tr><td colspan="6" class="text-center py-4 text-gray-500">No logs yet. Enable logging to start recording.</td></tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-
-        <!-- Request Detail Modal -->
-        <div id="request-detail-modal" class="hidden fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-            <div class="bg-gray-800 rounded-xl p-4 max-w-3xl w-full mx-4 max-h-[80vh] overflow-y-auto border border-gray-700">
-                <div class="flex justify-between items-center mb-4">
-                    <h3 class="font-semibold">Request Details</h3>
-                    <button onclick="hideRequestDetail()" class="text-gray-400 hover:text-white">✕</button>
-                </div>
-                <div id="request-detail-content" class="space-y-4 text-sm"></div>
+                <a href="/monitor" class="text-xs bg-blue-600 hover:bg-blue-500 px-3 py-1.5 rounded text-white">Open Full Monitor →</a>
             </div>
         </div>
 
         <div class="mt-6 text-center py-3 border-t border-gray-700">
             <a href="/tools" class="inline-block px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded text-white text-sm font-medium mr-2">🛠️ Config Inspector</a>
+            <a href="/monitor" class="inline-block px-4 py-2 bg-purple-600 hover:bg-purple-500 rounded text-white text-sm font-medium mr-2">📊 Monitor</a>
             <span class="text-gray-500 text-xs"><span id="status">Ready</span> • <span class="text-gray-300 font-bold">{{VERSION}}</span> • <a href="/healthz" class="hover:text-gray-300">Health</a></span>
         </div>
     </div>

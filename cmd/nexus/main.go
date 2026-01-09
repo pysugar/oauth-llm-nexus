@@ -66,6 +66,9 @@ func main() {
 	// Tools page (protected if NEXUS_ADMIN_PASSWORD is set)
 	r.With(optionalAdminAuth).Get("/tools", handlers.ToolsPageHandler())
 
+	// Monitor page (protected if NEXUS_ADMIN_PASSWORD is set)
+	r.With(optionalAdminAuth).Get("/monitor", handlers.MonitorPageHandler(proxyMonitor))
+
 	// OAuth flow (uses temporary 51121 port for callback, falls back to random high port)
 	r.Get("/auth/google/login", google.HandleLoginWithDB(database))
 	r.Get("/auth/google/callback", google.HandleCallback(database)) // Legacy callback route
