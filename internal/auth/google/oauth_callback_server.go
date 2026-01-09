@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -171,10 +172,16 @@ func StartOAuthCallbackServer(db *gorm.DB) (actualPort int, resultChan <-chan OA
 		// Return success HTML
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		// Return success HTML with countdown
-		// Try to determine the dashboard URL
-		// For now, we assume standard ports or user will manually close if redirect fails
-		// In a real scenario, we could pass the original port via state or cookie
-		dashboardPort := "8080" // Default
+		// Determine dashboard port from environment
+		dashboardPort := os.Getenv("PORT")
+		if dashboardPort == "" {
+			// Match main.go logic: release mode uses 8086, dev uses 8080
+			if os.Getenv("NEXUS_MODE") == "release" {
+				dashboardPort = "8086"
+			} else {
+				dashboardPort = "8080"
+			}
+		}
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fmt.Fprintf(w, `<!DOCTYPE html>
