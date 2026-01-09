@@ -141,18 +141,23 @@ func HandleCallback(db *gorm.DB) http.HandlerFunc {
 
 // fetchProjectInfo calls the loadCodeAssist endpoint to get project ID and subscription tier.
 func fetchProjectInfo(client *http.Client) (projectID string, subscriptionTier string) {
-	// Build request with proper headers like Antigravity-Manager's project_resolver.rs
-	reqBody := strings.NewReader(`{"metadata": {"ideType": "ANTIGRAVITY"}}`)
+	// Default fallback if no project ID is found (from oh-my-opencode/opencode-antigravity-auth)
+	const fallbackProjectID = "rising-fact-p41fc"
+	// Build request with proper headers matching CLIProxyAPI (sdk/auth/antigravity.go lines 375-397)
+	// IMPORTANT: Using IDE_UNSPECIFIED instead of ANTIGRAVITY to avoid being flagged as suspicious client
+	reqBody := strings.NewReader(`{"metadata":{"ideType":"IDE_UNSPECIFIED","platform":"PLATFORM_UNSPECIFIED","pluginType":"GEMINI"}}`)
 	req, err := http.NewRequest("POST", "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist", reqBody)
 	if err != nil {
 		log.Printf("⚠️  Failed to create loadCodeAssist request: %v", err)
 		return "bamboo-precept-lgxtn", "FREE"
 	}
 
-	// Set headers to match Antigravity-Manager exactly
+	// Set headers to match CLIProxyAPI exactly (sdk/auth/antigravity.go lines 393-397)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Host", "cloudcode-pa.googleapis.com")
-	req.Header.Set("User-Agent", "antigravity/1.11.9 windows/amd64")
+	req.Header.Set("User-Agent", "google-api-nodejs-client/9.15.1")
+	req.Header.Set("X-Goog-Api-Client", "google-cloud-sdk vscode_cloudshelleditor/0.1")
+	req.Header.Set("Client-Metadata", `{"ideType":"IDE_UNSPECIFIED","platform":"PLATFORM_UNSPECIFIED","pluginType":"GEMINI"}`)
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -192,7 +197,7 @@ func fetchProjectInfo(client *http.Client) (projectID string, subscriptionTier s
 	}
 	if err := json.Unmarshal(bodyBytes, &result); err != nil {
 		log.Printf("⚠️  Failed to parse loadCodeAssist response: %v", err)
-		return "bamboo-precept-lgxtn", "FREE"
+		return fallbackProjectID, "FREE"
 	}
 
 	// Get project ID
@@ -201,7 +206,7 @@ func fetchProjectInfo(client *http.Client) (projectID string, subscriptionTier s
 		projectID = result.Config.ProjectID
 	}
 	if projectID == "" {
-		projectID = "bamboo-precept-lgxtn"
+		projectID = fallbackProjectID
 	}
 
 	// Tier detection: prefer paidTier > currentTier > manageSubscriptionUri > FREE

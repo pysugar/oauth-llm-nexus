@@ -82,7 +82,7 @@ func OpenAIChatHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client)
 
 		// Add Cloud Code API required fields
 		payload["userAgent"] = "antigravity"
-		payload["requestType"] = "agent" // Must be "agent" not "gemini" - critical for avoiding 429
+		payload["requestType"] = "agent" // Restored per Antigravity-Manager reference
 		payload["requestId"] = requestId
 
 		// Verbose: Log Gemini payload before sending

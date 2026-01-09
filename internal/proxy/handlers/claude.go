@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/pysugar/oauth-llm-nexus/internal/auth/token"
@@ -159,14 +160,18 @@ func ClaudeMessagesHandler(tokenMgr *token.Manager, upstreamClient *upstream.Cli
 			}
 		}
 
+		// Generate sessionId per oh-my-opencode reference: "-{random_number}"
+		sessionId := fmt.Sprintf("-%d", time.Now().UnixNano())
+
 		payload := map[string]interface{}{
 			"project":     cachedToken.ProjectID,
 			"requestId":   requestId,
 			"model":       model,
 			"userAgent":   "antigravity",
-			"requestType": "agent",
+			"requestType": "agent", // Restored per Antigravity-Manager reference
 			"request": map[string]interface{}{
-				"contents": geminiContents,
+				"contents":  geminiContents,
+				"sessionId": sessionId, // Required by oh-my-opencode for multi-turn conversations
 				"generationConfig": map[string]interface{}{
 					"maxOutputTokens": 64000,
 				},

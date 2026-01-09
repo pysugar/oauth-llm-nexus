@@ -517,7 +517,7 @@ func OpenAIResponsesHandler(database *gorm.DB, tokenMgr *token.Manager, upstream
 			requestId = "agent-" + uuid.New().String()
 		}
 		payload["userAgent"] = "antigravity"
-		payload["requestType"] = "agent"
+		payload["requestType"] = "agent" // Restored per Antigravity-Manager reference
 		payload["requestId"] = requestId
 
 		// Verbose: Log Gemini payload

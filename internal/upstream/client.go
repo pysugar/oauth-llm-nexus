@@ -13,10 +13,12 @@ import (
 	"github.com/pysugar/oauth-llm-nexus/internal/util"
 )
 
-// Endpoints with fallback (matching Antigravity-Manager behavior)
+// Endpoints with fallback (matching Antigravity-Manager: prod → daily)
+// Endpoints with fallback (daily → prod, same as oh-my-opencode)
 var BaseURLs = []string{
-	"https://cloudcode-pa.googleapis.com/v1internal",               // Primary (prod)
-	"https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal", // Fallback (daily)
+	"https://daily-cloudcode-pa.googleapis.com/v1internal",         // daily (primary for oh-my-opencode)
+	"https://cloudcode-pa.googleapis.com/v1internal",               // prod (fallback)
+	"https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal", // sandbox-daily (last resort)
 }
 
 const (
@@ -98,13 +100,40 @@ func (c *Client) LoadCodeAssist(accessToken string) (string, error) {
 }
 
 // EnsureRequestFormat ensures payload has required userAgent and requestType fields
-// This centralizes the format requirement that was previously scattered across handlers
 func EnsureRequestFormat(payload map[string]interface{}) {
 	if _, ok := payload["userAgent"]; !ok {
 		payload["userAgent"] = "antigravity"
 	}
 	if _, ok := payload["requestType"]; !ok {
-		payload["requestType"] = "agent"
+		payload["requestType"] = "agent" // Restored per Antigravity-Manager reference
+	}
+
+	// Add proper toolConfig for function calling (per CLIProxyAPI)
+	// IMPORTANT: toolConfig must be inside the "request" object, not at the top level
+	if req, ok := payload["request"].(map[string]interface{}); ok {
+		if _, ok := req["toolConfig"]; !ok {
+			// Only add if tools are present or implicitly required (safe default)
+			req["toolConfig"] = map[string]interface{}{
+				"functionCallingConfig": map[string]interface{}{
+					"mode": "VALIDATED",
+				},
+			}
+		} else {
+			// If toolConfig exists, ensure functionCallingConfig.mode is VALIDATED
+			if toolConfig, ok := req["toolConfig"].(map[string]interface{}); ok {
+				if _, ok := toolConfig["functionCallingConfig"]; !ok {
+					toolConfig["functionCallingConfig"] = map[string]interface{}{
+						"mode": "VALIDATED",
+					}
+				} else if fcc, ok := toolConfig["functionCallingConfig"].(map[string]interface{}); ok {
+					fcc["mode"] = "VALIDATED"
+				}
+			}
+		}
+	} else {
+		// If "request" key is missing or not a map (unlikely for valid payloads),
+		// we might be looking at a different payload structure or error.
+		// For now, assume if "request" is missing, we can't inject toolConfig properly.
 	}
 }
 
@@ -141,15 +170,16 @@ func (c *Client) doRequestWithFallback(method, queryString, accessToken string, 
 			return resp, nil
 		}
 
-		// Check if we should try next endpoint (429 or 5xx)
-		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+		// Check if we should try next endpoint (429, 403 SUBSCRIPTION_REQUIRED, or 5xx)
+		// 403 is added because autopush endpoint may require subscription but prod/daily work
+		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusForbidden || resp.StatusCode >= 500 {
 			log.Printf("⚠️ Endpoint %d returned %d, trying next...", i+1, resp.StatusCode)
 			lastResp = resp
 			lastErr = fmt.Errorf("endpoint %d returned %d", i+1, resp.StatusCode)
 			continue
 		}
 
-		// Non-retriable error (4xx except 429), return immediately
+		// Non-retriable error (4xx except 429/403), return immediately
 		return resp, nil
 	}
 

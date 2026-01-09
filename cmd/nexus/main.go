@@ -62,9 +62,9 @@ func main() {
 	// Tools page (protected if NEXUS_ADMIN_PASSWORD is set)
 	r.With(optionalAdminAuth).Get("/tools", handlers.ToolsPageHandler())
 
-	// OAuth flow
-	r.Get("/auth/google/login", google.HandleLogin)
-	r.Get("/auth/google/callback", google.HandleCallback(database))
+	// OAuth flow (uses temporary 51121 port for callback, falls back to random high port)
+	r.Get("/auth/google/login", google.HandleLoginWithDB(database))
+	r.Get("/auth/google/callback", google.HandleCallback(database)) // Legacy callback route
 
 	// API routes (protected if NEXUS_ADMIN_PASSWORD is set)
 	r.Route("/api", func(r chi.Router) {
