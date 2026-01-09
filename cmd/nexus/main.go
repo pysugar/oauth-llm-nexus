@@ -68,6 +68,7 @@ func main() {
 
 	// Monitor page (protected if NEXUS_ADMIN_PASSWORD is set)
 	r.With(optionalAdminAuth).Get("/monitor", handlers.MonitorPageHandler(proxyMonitor))
+	r.With(optionalAdminAuth).Get("/monitor/history", handlers.MonitorHistoryPageHandler(proxyMonitor))
 
 	// Health check endpoint (public)
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -118,6 +119,7 @@ func main() {
 
 		// Request Monitor
 		r.Get("/request-logs", handlers.GetRequestLogsHandler(proxyMonitor))
+		r.Get("/request-logs/history", handlers.GetRequestLogsHistoryHandler(proxyMonitor))
 		r.Get("/request-stats", handlers.GetRequestStatsHandler(proxyMonitor))
 		r.Post("/request-logs/clear", handlers.ClearRequestLogsHandler(proxyMonitor))
 		r.Post("/request-logs/toggle", handlers.ToggleLoggingHandler(proxyMonitor))

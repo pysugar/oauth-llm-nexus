@@ -8,7 +8,7 @@ import (
 	"github.com/pysugar/oauth-llm-nexus/internal/proxy/monitor"
 )
 
-// GetRequestLogsHandler returns paginated request logs
+// GetRequestLogsHandler returns recent request logs (last 30 minutes, max 100)
 func GetRequestLogsHandler(pm *monitor.ProxyMonitor) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		limit := 100
@@ -18,12 +18,52 @@ func GetRequestLogsHandler(pm *monitor.ProxyMonitor) http.HandlerFunc {
 			}
 		}
 
-		logs := pm.GetLogs(limit)
+		// Default: last 30 minutes
+		sinceMinutes := 30
+		if sinceStr := r.URL.Query().Get("since"); sinceStr != "" {
+			if s, err := strconv.Atoi(sinceStr); err == nil && s > 0 {
+				sinceMinutes = s
+			}
+		}
+
+		logs := pm.GetLogs(limit, sinceMinutes)
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"logs":  logs,
 			"count": len(logs),
+		})
+	}
+}
+
+// GetRequestLogsHistoryHandler returns paginated logs for history view
+func GetRequestLogsHistoryHandler(pm *monitor.ProxyMonitor) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		page := 1
+		if pageStr := r.URL.Query().Get("page"); pageStr != "" {
+			if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+				page = p
+			}
+		}
+
+		pageSize := 100
+		if sizeStr := r.URL.Query().Get("size"); sizeStr != "" {
+			if s, err := strconv.Atoi(sizeStr); err == nil && s > 0 && s <= 500 {
+				pageSize = s
+			}
+		}
+
+		search := r.URL.Query().Get("q")
+
+		logs, total := pm.GetLogsWithPagination(page, pageSize, search)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"logs":        logs,
+			"page":        page,
+			"page_size":   pageSize,
+			"total":       total,
+			"total_pages": (total + int64(pageSize) - 1) / int64(pageSize),
 		})
 	}
 }

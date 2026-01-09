@@ -13,6 +13,7 @@ func init() {
 	dashboardHTML = strings.ReplaceAll(dashboardHTML, "{{VERSION}}", version.Version)
 	toolsPageHTML = strings.ReplaceAll(toolsPageHTML, "{{VERSION}}", version.Version)
 	monitorPageHTML = strings.ReplaceAll(monitorPageHTML, "{{VERSION}}", version.Version)
+	monitorHistoryHTML = strings.ReplaceAll(monitorHistoryHTML, "{{VERSION}}", version.Version)
 }
 
 // VersionHandler returns version information as JSON

@@ -115,14 +115,22 @@ func (pm *ProxyMonitor) LogRequest(logEntry models.RequestLog) {
 	}(logEntry)
 }
 
-// GetLogs returns recent request logs
-func (pm *ProxyMonitor) GetLogs(limit int) []models.RequestLog {
+// GetLogs returns recent request logs with optional time filter
+func (pm *ProxyMonitor) GetLogs(limit int, sinceMinutes int) []models.RequestLog {
 	if limit <= 0 {
 		limit = 100
 	}
 
 	var logs []models.RequestLog
-	if err := pm.db.Order("timestamp DESC").Limit(limit).Find(&logs).Error; err != nil {
+	query := pm.db.Order("timestamp DESC").Limit(limit)
+
+	// Apply time filter if specified
+	if sinceMinutes > 0 {
+		sinceTime := time.Now().Add(-time.Duration(sinceMinutes) * time.Minute).UnixMilli()
+		query = query.Where("timestamp >= ?", sinceTime)
+	}
+
+	if err := query.Find(&logs).Error; err != nil {
 		log.Printf("[Monitor] Failed to get logs from DB: %v", err)
 		// Fallback to memory
 		pm.logsMu.RLock()
@@ -133,6 +141,40 @@ func (pm *ProxyMonitor) GetLogs(limit int) []models.RequestLog {
 		return pm.recentLogs[:limit]
 	}
 	return logs
+}
+
+// GetLogsWithPagination returns logs with pagination support for history view
+func (pm *ProxyMonitor) GetLogsWithPagination(page, pageSize int, search string) ([]models.RequestLog, int64) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize <= 0 {
+		pageSize = 100
+	}
+
+	var logs []models.RequestLog
+	var total int64
+
+	query := pm.db.Model(&models.RequestLog{})
+
+	// Apply search filter
+	if search != "" {
+		searchPattern := "%" + search + "%"
+		query = query.Where("model LIKE ? OR url LIKE ? OR account_email LIKE ? OR error LIKE ?",
+			searchPattern, searchPattern, searchPattern, searchPattern)
+	}
+
+	// Count total
+	query.Count(&total)
+
+	// Get page
+	offset := (page - 1) * pageSize
+	if err := query.Order("timestamp DESC").Offset(offset).Limit(pageSize).Find(&logs).Error; err != nil {
+		log.Printf("[Monitor] Failed to get logs with pagination: %v", err)
+		return nil, 0
+	}
+
+	return logs, total
 }
 
 // GetStats returns aggregated request statistics

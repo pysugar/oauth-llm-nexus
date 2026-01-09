@@ -6,48 +6,43 @@ import (
 	"github.com/pysugar/oauth-llm-nexus/internal/proxy/monitor"
 )
 
-// MonitorPageHandler serves the dedicated request monitor page
-func MonitorPageHandler(pm *monitor.ProxyMonitor) http.HandlerFunc {
+// MonitorHistoryPageHandler serves the request logs history page with pagination
+func MonitorHistoryPageHandler(pm *monitor.ProxyMonitor) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write([]byte(monitorPageHTML))
+		w.Write([]byte(monitorHistoryHTML))
 	}
 }
 
-var monitorPageHTML = `<!DOCTYPE html>
+var monitorHistoryHTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Request Monitor - OAuth-LLM-Nexus</title>
+    <title>Request History - OAuth-LLM-Nexus</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
         .container { max-width: 1400px; margin: 0 auto; padding: 1.5rem; }
-        header { margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: center; }
+        header { margin-bottom: 1.5rem; }
         .back-link { color: #60a5fa; text-decoration: none; font-size: 0.875rem; }
         .back-link:hover { color: #93c5fd; }
         h1 { font-size: 1.5rem; font-weight: 700; color: white; }
         .subtitle { color: #94a3b8; font-size: 0.75rem; }
         
-        /* Controls */
-        .controls { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; margin-bottom: 1rem; }
-        .stats { display: flex; gap: 1.5rem; font-size: 0.875rem; font-weight: 600; }
-        .stat-total { color: #60a5fa; }
-        .stat-success { color: #4ade80; }
-        .stat-error { color: #f87171; }
-        
-        .btn { padding: 0.5rem 1rem; border-radius: 0.5rem; border: none; cursor: pointer; font-size: 0.875rem; font-weight: 500; transition: all 0.15s; display: inline-flex; align-items: center; gap: 0.5rem; }
-        .btn-record { background: #dc2626; color: white; }
-        .btn-record.paused { background: #374151; }
-        .btn-record:hover { opacity: 0.9; }
+        /* Search */
+        .search-bar { display: flex; gap: 1rem; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; }
+        .search-input { background: #1e293b; border: 1px solid #334155; border-radius: 0.5rem; padding: 0.5rem 1rem; color: white; font-size: 0.875rem; width: 300px; }
+        .search-input:focus { outline: none; border-color: #60a5fa; }
+        .search-input::placeholder { color: #64748b; }
+        .btn { padding: 0.5rem 1rem; border-radius: 0.5rem; border: none; cursor: pointer; font-size: 0.875rem; font-weight: 500; transition: all 0.15s; }
+        .btn-primary { background: #3b82f6; color: white; }
+        .btn-primary:hover { background: #2563eb; }
         .btn-ghost { background: #1e293b; border: 1px solid #334155; color: #94a3b8; }
         .btn-ghost:hover { background: #334155; color: white; }
         
-        .dot { width: 8px; height: 8px; border-radius: 50%; }
-        .dot.recording { background: white; animation: pulse 1.5s infinite; }
-        .dot.paused { background: #6b7280; }
-        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .stats { font-size: 0.875rem; color: #94a3b8; }
+        .stats strong { color: #60a5fa; }
         
         /* Table */
         .table-container { background: #1e293b; border-radius: 0.75rem; border: 1px solid #334155; overflow: hidden; }
@@ -66,23 +61,20 @@ var monitorPageHTML = `<!DOCTYPE html>
         .badge-warning { background: rgba(251,191,36,0.2); color: #fbbf24; }
         
         .model { color: #60a5fa; font-family: monospace; font-size: 0.75rem; }
-        .model-mapped { color: #4ade80; font-size: 0.6875rem; }
         .account { color: #94a3b8; font-size: 0.6875rem; max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
         .tokens { font-size: 0.6875rem; color: #94a3b8; }
-        .tokens span { display: block; }
         .duration { font-family: monospace; }
         .time { color: #64748b; font-size: 0.75rem; }
-        .error-tooltip { position: relative; }
-        .error-tooltip:hover::after { 
-            content: attr(title); 
-            position: absolute; top: 100%; left: 0; 
-            background: #1e293b; border: 1px solid #334155; 
-            padding: 0.5rem; border-radius: 0.375rem; 
-            font-size: 0.75rem; max-width: 300px; white-space: pre-wrap;
-            z-index: 100;
-        }
         
         .empty { text-align: center; padding: 3rem; color: #64748b; }
+        
+        /* Pagination */
+        .pagination { display: flex; justify-content: center; align-items: center; gap: 0.5rem; margin-top: 1rem; padding: 1rem; }
+        .page-btn { padding: 0.5rem 0.75rem; border-radius: 0.375rem; border: 1px solid #334155; background: #1e293b; color: #94a3b8; cursor: pointer; font-size: 0.75rem; }
+        .page-btn:hover:not(:disabled) { background: #334155; color: white; }
+        .page-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .page-btn.active { background: #3b82f6; border-color: #3b82f6; color: white; }
+        .page-info { color: #64748b; font-size: 0.75rem; }
         
         /* Modal */
         .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: none; align-items: center; justify-content: center; z-index: 1000; padding: 1rem; }
@@ -104,7 +96,6 @@ var monitorPageHTML = `<!DOCTYPE html>
         .payload-section h4 { font-size: 0.75rem; color: #94a3b8; text-transform: uppercase; margin-bottom: 0.5rem; }
         .payload-content { background: #020617; border-radius: 0.5rem; padding: 1rem; max-height: 300px; overflow: auto; }
         .payload-content pre { font-family: 'Monaco', 'Menlo', monospace; font-size: 0.6875rem; color: #a5f3fc; white-space: pre-wrap; word-break: break-all; }
-        .payload-empty { color: #64748b; font-style: italic; }
         
         .footer { text-align: center; padding: 1.5rem; color: #64748b; font-size: 0.875rem; border-top: 1px solid #1e293b; margin-top: 1.5rem; }
         .footer a { color: #60a5fa; text-decoration: none; }
@@ -114,27 +105,17 @@ var monitorPageHTML = `<!DOCTYPE html>
 <body>
     <div class="container">
         <header>
-            <div>
-                <a href="/" class="back-link">← Back to Dashboard</a>
-                <h1>📊 Request Monitor</h1>
-                <p class="subtitle">Real-time API request logging and analysis</p>
-            </div>
+            <a href="/monitor" class="back-link">← Back to Live Monitor</a>
+            <h1>📜 Request History</h1>
+            <p class="subtitle">Browse and search all request logs</p>
         </header>
 
-        <div class="controls">
-            <button id="toggle-btn" class="btn btn-record paused" onclick="toggleLogging()">
-                <span class="dot paused" id="dot"></span>
-                <span id="toggle-label">Start Recording</span>
-            </button>
-            <button class="btn btn-ghost" onclick="loadLogs()">↻ Refresh</button>
-            <button class="btn btn-ghost" onclick="clearLogs()">🗑️ Clear</button>
-            <a href="/monitor/history" class="btn btn-ghost">📜 Full History</a>
-            
+        <div class="search-bar">
+            <input type="text" id="search-input" class="search-input" placeholder="Search by model, URL, account, error..." onkeypress="if(event.key==='Enter')search()">
+            <button class="btn btn-primary" onclick="search()">🔍 Search</button>
+            <button class="btn btn-ghost" onclick="clearSearch()">Clear</button>
             <div class="stats">
-                <span class="stat-total"><span id="stat-total">0</span> requests</span>
-                <span class="stat-success"><span id="stat-success">0</span> success</span>
-                <span class="stat-error"><span id="stat-error">0</span> errors</span>
-                <span style="color:#64748b;font-size:0.75rem">(last 30 min)</span>
+                Showing <strong id="showing">0</strong> of <strong id="total">0</strong> logs
             </div>
         </div>
 
@@ -153,13 +134,15 @@ var monitorPageHTML = `<!DOCTYPE html>
                     </tr>
                 </thead>
                 <tbody id="logs-tbody">
-                    <tr><td colspan="8" class="empty">No logs yet. Click "Start Recording" to begin.</td></tr>
+                    <tr><td colspan="8" class="empty">Loading...</td></tr>
                 </tbody>
             </table>
         </div>
 
+        <div class="pagination" id="pagination"></div>
+
         <div class="footer">
-            <a href="/">Dashboard</a> • <a href="/monitor/history">Full History</a> • <a href="/tools">Config Inspector</a> • <span style="color:#cbd5e1;font-weight:bold;">{{VERSION}}</span>
+            <a href="/">Dashboard</a> • <a href="/monitor">Live Monitor</a> • <a href="/tools">Config Inspector</a> • <span style="color:#cbd5e1;font-weight:bold;">{{VERSION}}</span>
         </div>
     </div>
 
@@ -175,80 +158,46 @@ var monitorPageHTML = `<!DOCTYPE html>
     </div>
 
     <script>
-        let isLogging = false;
         let logsData = [];
+        let currentPage = 1;
+        let totalPages = 1;
+        let searchQuery = '';
 
-        async function loadStatus() {
+        async function loadLogs(page = 1) {
+            currentPage = page;
+            const params = new URLSearchParams({ page, size: 100 });
+            if (searchQuery) params.set('q', searchQuery);
+
             try {
-                const res = await fetch('/api/request-logs/status');
+                const res = await fetch('/api/request-logs/history?' + params);
                 if (res.ok) {
                     const data = await res.json();
-                    isLogging = data.enabled;
-                    updateUI();
-                }
-            } catch (e) { console.error(e); }
-        }
-
-        function updateUI() {
-            const btn = document.getElementById('toggle-btn');
-            const dot = document.getElementById('dot');
-            const label = document.getElementById('toggle-label');
-            
-            if (isLogging) {
-                btn.classList.remove('paused');
-                dot.classList.remove('paused');
-                dot.classList.add('recording');
-                label.textContent = 'Recording...';
-            } else {
-                btn.classList.add('paused');
-                dot.classList.add('paused');
-                dot.classList.remove('recording');
-                label.textContent = 'Start Recording';
-            }
-        }
-
-        async function toggleLogging() {
-            try {
-                const res = await fetch('/api/request-logs/toggle', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ enabled: !isLogging })
-                });
-                if (res.ok) {
-                    const data = await res.json();
-                    isLogging = data.enabled;
-                    updateUI();
-                }
-            } catch (e) { console.error(e); }
-        }
-
-        async function loadLogs() {
-            try {
-                const [logsRes, statsRes] = await Promise.all([
-                    fetch('/api/request-logs?limit=100'),
-                    fetch('/api/request-stats')
-                ]);
-                
-                if (statsRes.ok) {
-                    const stats = await statsRes.json();
-                    document.getElementById('stat-total').textContent = stats.total_requests;
-                    document.getElementById('stat-success').textContent = stats.success_count;
-                    document.getElementById('stat-error').textContent = stats.error_count;
-                }
-                
-                if (logsRes.ok) {
-                    const data = await logsRes.json();
                     logsData = data.logs || [];
+                    totalPages = data.total_pages || 1;
+                    document.getElementById('showing').textContent = logsData.length;
+                    document.getElementById('total').textContent = data.total || 0;
                     renderLogs();
+                    renderPagination();
                 }
             } catch (e) { console.error(e); }
+        }
+
+        function search() {
+            searchQuery = document.getElementById('search-input').value.trim();
+            loadLogs(1);
+        }
+
+        function clearSearch() {
+            document.getElementById('search-input').value = '';
+            searchQuery = '';
+            loadLogs(1);
         }
 
         function renderLogs() {
             const tbody = document.getElementById('logs-tbody');
             
             if (logsData.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="8" class="empty">No logs yet. Click "Start Recording" to begin.</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="8" class="empty">No logs found.</td></tr>';
                 return;
             }
             
@@ -256,36 +205,19 @@ var monitorPageHTML = `<!DOCTYPE html>
             logsData.forEach((log, idx) => {
                 const isSuccess = log.status >= 200 && log.status < 400;
                 const badgeClass = isSuccess ? 'badge-success' : (log.status === 429 ? 'badge-warning' : 'badge-error');
-                const time = new Date(log.timestamp).toLocaleTimeString();
+                const time = new Date(log.timestamp).toLocaleString();
                 const account = log.account_email ? log.account_email.replace(/(.{3}).*(@.*)/, '$1***$2') : '-';
                 
                 html += '<tr onclick="showDetail(' + idx + ')">';
-                
-                // Status with error tooltip
-                if (log.error && !isSuccess) {
-                    html += '<td><span class="badge ' + badgeClass + ' error-tooltip" title="' + escapeHtml(log.error) + '">' + log.status + '</span></td>';
-                } else {
-                    html += '<td><span class="badge ' + badgeClass + '">' + log.status + '</span></td>';
-                }
-                
+                html += '<td><span class="badge ' + badgeClass + '">' + log.status + '</span></td>';
                 html += '<td><strong>' + log.method + '</strong></td>';
-                
-                // Model
-                html += '<td>';
-                html += '<div class="model">' + (log.model || '-') + '</div>';
-                if (log.mapped_model && log.model !== log.mapped_model) {
-                    html += '<div class="model-mapped">→ ' + log.mapped_model + '</div>';
-                }
-                html += '</td>';
-                
+                html += '<td><div class="model">' + (log.model || '-') + '</div></td>';
                 html += '<td class="account">' + account + '</td>';
                 html += '<td>' + log.url + '</td>';
                 
-                // Tokens
                 html += '<td class="right tokens">';
                 if (log.input_tokens || log.output_tokens) {
-                    html += '<span>In: ' + (log.input_tokens || 0) + '</span>';
-                    html += '<span>Out: ' + (log.output_tokens || 0) + '</span>';
+                    html += (log.input_tokens || 0) + ' / ' + (log.output_tokens || 0);
                 } else {
                     html += '-';
                 }
@@ -297,6 +229,29 @@ var monitorPageHTML = `<!DOCTYPE html>
             });
             
             tbody.innerHTML = html;
+        }
+
+        function renderPagination() {
+            const container = document.getElementById('pagination');
+            let html = '';
+            
+            html += '<button class="page-btn" onclick="loadLogs(1)" ' + (currentPage === 1 ? 'disabled' : '') + '>«</button>';
+            html += '<button class="page-btn" onclick="loadLogs(' + (currentPage - 1) + ')" ' + (currentPage === 1 ? 'disabled' : '') + '>‹</button>';
+            
+            // Show page numbers
+            const start = Math.max(1, currentPage - 2);
+            const end = Math.min(totalPages, currentPage + 2);
+            
+            for (let i = start; i <= end; i++) {
+                html += '<button class="page-btn ' + (i === currentPage ? 'active' : '') + '" onclick="loadLogs(' + i + ')">' + i + '</button>';
+            }
+            
+            html += '<button class="page-btn" onclick="loadLogs(' + (currentPage + 1) + ')" ' + (currentPage >= totalPages ? 'disabled' : '') + '>›</button>';
+            html += '<button class="page-btn" onclick="loadLogs(' + totalPages + ')" ' + (currentPage >= totalPages ? 'disabled' : '') + '>»</button>';
+            
+            html += '<span class="page-info">Page ' + currentPage + ' of ' + totalPages + '</span>';
+            
+            container.innerHTML = html;
         }
 
         function escapeHtml(str) {
@@ -342,7 +297,7 @@ var monitorPageHTML = `<!DOCTYPE html>
         }
 
         function formatPayload(str) {
-            if (!str) return '<pre class="payload-empty">empty</pre>';
+            if (!str) return '<pre style="color:#64748b;font-style:italic">empty</pre>';
             try {
                 const obj = JSON.parse(str);
                 return '<pre>' + escapeHtml(JSON.stringify(obj, null, 2)) + '</pre>';
@@ -357,26 +312,8 @@ var monitorPageHTML = `<!DOCTYPE html>
             }
         }
 
-        async function clearLogs() {
-            if (!confirm('Clear all request logs?')) return;
-            try {
-                await fetch('/api/request-logs/clear', { method: 'POST' });
-                logsData = [];
-                renderLogs();
-                document.getElementById('stat-total').textContent = '0';
-                document.getElementById('stat-success').textContent = '0';
-                document.getElementById('stat-error').textContent = '0';
-            } catch (e) { console.error(e); }
-        }
-
         // Initial load
-        window.addEventListener('load', () => {
-            loadStatus();
-            loadLogs();
-        });
-
-        // Auto-refresh every 5 seconds
-        setInterval(loadLogs, 5000);
+        window.addEventListener('load', () => loadLogs(1));
     </script>
 </body>
 </html>`
