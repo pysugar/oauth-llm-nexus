@@ -341,6 +341,54 @@ var dashboardHTML = `<!DOCTYPE html>
             </div>
         </div>
 
+        <!-- Request Monitor Card -->
+        <div class="bg-gray-800 rounded-xl p-4 mb-6">
+            <div class="flex justify-between items-center mb-3">
+                <h3 class="text-sm font-semibold text-gray-400">📊 Request Monitor</h3>
+                <div class="flex items-center gap-3">
+                    <div id="monitor-stats" class="flex gap-3 text-xs font-bold">
+                        <span class="text-blue-400"><span id="stat-total">0</span> REQS</span>
+                        <span class="text-green-400"><span id="stat-success">0</span> OK</span>
+                        <span class="text-red-400"><span id="stat-error">0</span> ERR</span>
+                    </div>
+                    <button id="toggle-logging-btn" onclick="toggleLogging()" class="text-xs bg-gray-600 hover:bg-gray-500 px-3 py-1 rounded flex items-center gap-1">
+                        <span id="logging-dot" class="w-2 h-2 rounded-full bg-gray-400"></span>
+                        <span id="logging-label">Paused</span>
+                    </button>
+                    <button onclick="clearLogs()" class="text-xs bg-gray-600 hover:bg-gray-500 px-2 py-1 rounded">🗑️</button>
+                    <button onclick="loadRequestLogs()" class="text-xs bg-gray-600 hover:bg-gray-500 px-2 py-1 rounded">↻</button>
+                </div>
+            </div>
+            <div id="request-logs-container" class="max-h-80 overflow-y-auto">
+                <table class="w-full text-xs">
+                    <thead class="sticky top-0 bg-gray-700 text-gray-400">
+                        <tr>
+                            <th class="px-2 py-1 text-left">Status</th>
+                            <th class="px-2 py-1 text-left">Method</th>
+                            <th class="px-2 py-1 text-left">Model</th>
+                            <th class="px-2 py-1 text-left">Path</th>
+                            <th class="px-2 py-1 text-right">Duration</th>
+                            <th class="px-2 py-1 text-right">Time</th>
+                        </tr>
+                    </thead>
+                    <tbody id="request-logs-tbody" class="text-gray-300">
+                        <tr><td colspan="6" class="text-center py-4 text-gray-500">No logs yet. Enable logging to start recording.</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Request Detail Modal -->
+        <div id="request-detail-modal" class="hidden fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+            <div class="bg-gray-800 rounded-xl p-4 max-w-3xl w-full mx-4 max-h-[80vh] overflow-y-auto border border-gray-700">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="font-semibold">Request Details</h3>
+                    <button onclick="hideRequestDetail()" class="text-gray-400 hover:text-white">✕</button>
+                </div>
+                <div id="request-detail-content" class="space-y-4 text-sm"></div>
+            </div>
+        </div>
+
         <div class="mt-6 text-center py-3 border-t border-gray-700">
             <a href="/tools" class="inline-block px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded text-white text-sm font-medium mr-2">🛠️ Config Inspector</a>
             <span class="text-gray-500 text-xs"><span id="status">Ready</span> • <span class="text-gray-300 font-bold">{{VERSION}}</span> • <a href="/healthz" class="hover:text-gray-300">Health</a></span>
@@ -719,15 +767,150 @@ var dashboardHTML = `<!DOCTYPE html>
                 alert('Failed to reset: ' + e.message);
             }
         }
+        // ============================================
+        // Request Monitor Functions
+        // ============================================
+        let isLoggingEnabled = false;
+
+        async function loadLoggingStatus() {
+            try {
+                const res = await fetch('/api/request-logs/status');
+                if (res.ok) {
+                    const data = await res.json();
+                    isLoggingEnabled = data.enabled;
+                    updateLoggingUI();
+                }
+            } catch (e) { console.error(e); }
+        }
+
+        function updateLoggingUI() {
+            const dot = document.getElementById('logging-dot');
+            const label = document.getElementById('logging-label');
+            if (isLoggingEnabled) {
+                dot.className = 'w-2 h-2 rounded-full bg-red-500 animate-pulse';
+                label.textContent = 'Recording';
+            } else {
+                dot.className = 'w-2 h-2 rounded-full bg-gray-400';
+                label.textContent = 'Paused';
+            }
+        }
+
+        async function toggleLogging() {
+            try {
+                const res = await fetch('/api/request-logs/toggle', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled: !isLoggingEnabled })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    isLoggingEnabled = data.enabled;
+                    updateLoggingUI();
+                }
+            } catch (e) { console.error(e); }
+        }
+
+        async function loadRequestLogs() {
+            try {
+                const [logsRes, statsRes] = await Promise.all([
+                    fetch('/api/request-logs?limit=50'),
+                    fetch('/api/request-stats')
+                ]);
+                
+                if (statsRes.ok) {
+                    const stats = await statsRes.json();
+                    document.getElementById('stat-total').textContent = stats.total_requests;
+                    document.getElementById('stat-success').textContent = stats.success_count;
+                    document.getElementById('stat-error').textContent = stats.error_count;
+                }
+                
+                if (logsRes.ok) {
+                    const data = await logsRes.json();
+                    const tbody = document.getElementById('request-logs-tbody');
+                    
+                    if (!data.logs || data.logs.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="6" class="text-center py-4 text-gray-500">No logs yet. Enable logging to start recording.</td></tr>';
+                        return;
+                    }
+                    
+                    let html = '';
+                    for (const log of data.logs) {
+                        const statusClass = log.status >= 200 && log.status < 400 ? 'bg-green-500' : 'bg-red-500';
+                        const time = new Date(log.timestamp).toLocaleTimeString();
+                        const modelDisplay = log.mapped_model && log.model !== log.mapped_model 
+                            ? log.model + ' → ' + log.mapped_model 
+                            : (log.model || '-');
+                        
+                        html += '<tr class="hover:bg-gray-700/50 cursor-pointer" onclick="showRequestDetail(\'' + log.id + '\', ' + JSON.stringify(log).replace(/'/g, "\\'") + ')">';
+                        html += '<td class="px-2 py-1"><span class="px-1.5 py-0.5 rounded text-white text-[10px] ' + statusClass + '">' + log.status + '</span></td>';
+                        html += '<td class="px-2 py-1 font-bold">' + log.method + '</td>';
+                        html += '<td class="px-2 py-1 text-blue-400 truncate max-w-[150px]">' + modelDisplay + '</td>';
+                        html += '<td class="px-2 py-1 truncate max-w-[200px]">' + log.url + '</td>';
+                        html += '<td class="px-2 py-1 text-right">' + log.duration + 'ms</td>';
+                        html += '<td class="px-2 py-1 text-right text-gray-500">' + time + '</td>';
+                        html += '</tr>';
+                    }
+                    tbody.innerHTML = html;
+                }
+            } catch (e) {
+                console.error('Failed to load request logs', e);
+            }
+        }
+
+        async function clearLogs() {
+            if (!confirm('Clear all request logs?')) return;
+            try {
+                await fetch('/api/request-logs/clear', { method: 'POST' });
+                loadRequestLogs();
+            } catch (e) { console.error(e); }
+        }
+
+        function showRequestDetail(id, log) {
+            const content = document.getElementById('request-detail-content');
+            const statusClass = log.status >= 200 && log.status < 400 ? 'text-green-400' : 'text-red-400';
+            
+            let html = '<div class="grid grid-cols-2 gap-4 bg-gray-700/50 p-3 rounded">';
+            html += '<div><span class="text-gray-400 text-xs">Status</span><div class="font-bold ' + statusClass + '">' + log.status + '</div></div>';
+            html += '<div><span class="text-gray-400 text-xs">Duration</span><div class="font-bold">' + log.duration + 'ms</div></div>';
+            html += '<div><span class="text-gray-400 text-xs">Model</span><div class="font-bold text-blue-400">' + (log.model || '-') + '</div></div>';
+            html += '<div><span class="text-gray-400 text-xs">Mapped To</span><div class="font-bold text-green-400">' + (log.mapped_model || '-') + '</div></div>';
+            html += '</div>';
+            
+            html += '<div><h4 class="text-xs font-bold text-gray-400 mb-1">📤 Request Body</h4>';
+            html += '<pre class="bg-gray-900 p-2 rounded text-[10px] overflow-x-auto max-h-48">' + formatJSON(log.request_body) + '</pre></div>';
+            
+            html += '<div><h4 class="text-xs font-bold text-gray-400 mb-1">📥 Response Body</h4>';
+            html += '<pre class="bg-gray-900 p-2 rounded text-[10px] overflow-x-auto max-h-48">' + formatJSON(log.response_body) + '</pre></div>';
+            
+            content.innerHTML = html;
+            document.getElementById('request-detail-modal').classList.remove('hidden');
+        }
+
+        function hideRequestDetail() {
+            document.getElementById('request-detail-modal').classList.add('hidden');
+        }
+
+        function formatJSON(str) {
+            if (!str) return '<span class="text-gray-500 italic">empty</span>';
+            try {
+                return JSON.stringify(JSON.parse(str), null, 2);
+            } catch (e) {
+                return str.substring(0, 2000) + (str.length > 2000 ? '...' : '');
+            }
+        }
+
         // Initial Load
         window.addEventListener('load', () => {
             loadAll();
             loadAPIKey();
             loadModelRoutes();
+            loadLoggingStatus();
+            loadRequestLogs();
         });
         
         // Polling
         setInterval(loadAll, 60000);
+        setInterval(loadRequestLogs, 10000); // Refresh logs every 10s
     </script>
 </body>
 </html>`

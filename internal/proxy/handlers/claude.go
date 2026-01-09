@@ -13,7 +13,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/pysugar/oauth-llm-nexus/internal/auth/token"
 	"github.com/pysugar/oauth-llm-nexus/internal/db"
+	"github.com/pysugar/oauth-llm-nexus/internal/db/models"
 	"github.com/pysugar/oauth-llm-nexus/internal/proxy/mappers"
+	"github.com/pysugar/oauth-llm-nexus/internal/proxy/monitor"
 	"github.com/pysugar/oauth-llm-nexus/internal/upstream"
 	"gorm.io/gorm"
 )
@@ -439,5 +441,46 @@ func ClaudeModelsHandler(database *gorm.DB) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(response)
+	}
+}
+
+// ClaudeMessagesHandlerWithMonitor wraps ClaudeMessagesHandler with request logging
+func ClaudeMessagesHandlerWithMonitor(tokenMgr *token.Manager, upstreamClient *upstream.Client, pm *monitor.ProxyMonitor) http.HandlerFunc {
+	baseHandler := ClaudeMessagesHandler(tokenMgr, upstreamClient)
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !pm.IsEnabled() {
+			baseHandler(w, r)
+			return
+		}
+
+		startTime := time.Now()
+
+		// Read and restore body for logging
+		bodyBytes, _ := io.ReadAll(r.Body)
+		r.Body = io.NopCloser(strings.NewReader(string(bodyBytes)))
+
+		// Extract model from request
+		var req struct {
+			Model string `json:"model"`
+		}
+		json.Unmarshal(bodyBytes, &req)
+
+		// Use response recorder
+		rec := &responseRecorder{ResponseWriter: w, statusCode: 200}
+
+		baseHandler(rec, r)
+
+		// Log the request
+		pm.LogRequest(models.RequestLog{
+			Method:       r.Method,
+			URL:          r.URL.Path,
+			Status:       rec.statusCode,
+			Duration:     time.Since(startTime).Milliseconds(),
+			Model:        req.Model,
+			MappedModel:  db.ResolveModel(req.Model, "google"),
+			RequestBody:  string(bodyBytes),
+			ResponseBody: rec.body.String(),
+		})
 	}
 }

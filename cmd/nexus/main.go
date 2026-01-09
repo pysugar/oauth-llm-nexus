@@ -12,6 +12,7 @@ import (
 	"github.com/pysugar/oauth-llm-nexus/internal/db"
 	"github.com/pysugar/oauth-llm-nexus/internal/proxy/handlers"
 	"github.com/pysugar/oauth-llm-nexus/internal/proxy/middleware"
+	"github.com/pysugar/oauth-llm-nexus/internal/proxy/monitor"
 	"github.com/pysugar/oauth-llm-nexus/internal/upstream"
 )
 
@@ -24,6 +25,9 @@ func main() {
 
 	// Initialize upstream client
 	upstreamClient := upstream.NewClient()
+
+	// Initialize proxy monitor
+	proxyMonitor := monitor.NewProxyMonitor(database)
 
 	// Initialize token manager
 	tokenManager := token.NewManager(database)
@@ -102,6 +106,13 @@ func main() {
 
 		// Version info
 		r.Get("/version", handlers.VersionHandler())
+
+		// Request Monitor
+		r.Get("/request-logs", handlers.GetRequestLogsHandler(proxyMonitor))
+		r.Get("/request-stats", handlers.GetRequestStatsHandler(proxyMonitor))
+		r.Post("/request-logs/clear", handlers.ClearRequestLogsHandler(proxyMonitor))
+		r.Post("/request-logs/toggle", handlers.ToggleLoggingHandler(proxyMonitor))
+		r.Get("/request-logs/status", handlers.GetLoggingStatusHandler(proxyMonitor))
 	})
 
 	// ============================================
@@ -111,7 +122,7 @@ func main() {
 	// OpenAI-compatible API
 	r.Route("/v1", func(r chi.Router) {
 		r.Use(middleware.APIKeyAuth(database))
-		r.Post("/chat/completions", handlers.OpenAIChatHandler(tokenManager, upstreamClient))
+		r.Post("/chat/completions", handlers.OpenAIChatHandlerWithMonitor(tokenManager, upstreamClient, proxyMonitor))
 		r.Get("/models", handlers.OpenAIModelsListHandler(database))
 		r.Post("/responses", handlers.OpenAIResponsesHandler(database, tokenManager, upstreamClient))
 	})
@@ -120,7 +131,7 @@ func main() {
 	r.Route("/anthropic", func(r chi.Router) {
 		r.Use(middleware.APIKeyAuth(database))
 		r.Route("/v1", func(r chi.Router) {
-			r.Post("/messages", handlers.ClaudeMessagesHandler(tokenManager, upstreamClient))
+			r.Post("/messages", handlers.ClaudeMessagesHandlerWithMonitor(tokenManager, upstreamClient, proxyMonitor))
 			r.Get("/models", handlers.ClaudeModelsHandler(database))
 		})
 	})
@@ -130,8 +141,8 @@ func main() {
 		r.Use(middleware.APIKeyAuth(database))
 		r.Route("/v1beta/models", func(r chi.Router) {
 			r.Get("/", handlers.GenAIModelsListHandler(tokenManager, upstreamClient))
-			r.Post("/{model}:generateContent", handlers.GenAIHandler(tokenManager, upstreamClient))
-			r.Post("/{model}:streamGenerateContent", handlers.GenAIStreamHandler(tokenManager, upstreamClient))
+			r.Post("/{model}:generateContent", handlers.GenAIHandlerWithMonitor(tokenManager, upstreamClient, proxyMonitor))
+			r.Post("/{model}:streamGenerateContent", handlers.GenAIStreamHandlerWithMonitor(tokenManager, upstreamClient, proxyMonitor))
 		})
 	})
 

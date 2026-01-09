@@ -8,11 +8,14 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/pysugar/oauth-llm-nexus/internal/auth/token"
 	"github.com/pysugar/oauth-llm-nexus/internal/db"
+	"github.com/pysugar/oauth-llm-nexus/internal/db/models"
+	"github.com/pysugar/oauth-llm-nexus/internal/proxy/monitor"
 	"github.com/pysugar/oauth-llm-nexus/internal/upstream"
 )
 
@@ -391,4 +394,75 @@ func writeStaticGenAIModels(w http.ResponseWriter) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"models": models,
 	})
+}
+
+// GenAIHandlerWithMonitor wraps GenAIHandler with request logging
+func GenAIHandlerWithMonitor(tokenMgr *token.Manager, upstreamClient *upstream.Client, pm *monitor.ProxyMonitor) http.HandlerFunc {
+	baseHandler := GenAIHandler(tokenMgr, upstreamClient)
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !pm.IsEnabled() {
+			baseHandler(w, r)
+			return
+		}
+
+		startTime := time.Now()
+		rawModel := chi.URLParam(r, "model")
+
+		// Read and restore body for logging
+		bodyBytes, _ := io.ReadAll(r.Body)
+		r.Body = io.NopCloser(strings.NewReader(string(bodyBytes)))
+
+		// Use response recorder
+		rec := &responseRecorder{ResponseWriter: w, statusCode: 200}
+
+		baseHandler(rec, r)
+
+		// Log the request
+		pm.LogRequest(models.RequestLog{
+			Method:       r.Method,
+			URL:          r.URL.Path,
+			Status:       rec.statusCode,
+			Duration:     time.Since(startTime).Milliseconds(),
+			Model:        rawModel,
+			MappedModel:  db.ResolveModel(rawModel, "google"),
+			RequestBody:  string(bodyBytes),
+			ResponseBody: rec.body.String(),
+		})
+	}
+}
+
+// GenAIStreamHandlerWithMonitor wraps GenAIStreamHandler with request logging
+func GenAIStreamHandlerWithMonitor(tokenMgr *token.Manager, upstreamClient *upstream.Client, pm *monitor.ProxyMonitor) http.HandlerFunc {
+	baseHandler := GenAIStreamHandler(tokenMgr, upstreamClient)
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !pm.IsEnabled() {
+			baseHandler(w, r)
+			return
+		}
+
+		startTime := time.Now()
+		rawModel := chi.URLParam(r, "model")
+
+		// Read and restore body for logging
+		bodyBytes, _ := io.ReadAll(r.Body)
+		r.Body = io.NopCloser(strings.NewReader(string(bodyBytes)))
+
+		// For streaming, we can't easily capture the full response
+		// So we just log the request start and capture what we can
+		baseHandler(w, r)
+
+		// Log the request (response body will be empty for streams)
+		pm.LogRequest(models.RequestLog{
+			Method:       r.Method,
+			URL:          r.URL.Path,
+			Status:       200, // Assume success for streams
+			Duration:     time.Since(startTime).Milliseconds(),
+			Model:        rawModel,
+			MappedModel:  db.ResolveModel(rawModel, "google"),
+			RequestBody:  string(bodyBytes),
+			ResponseBody: "[streaming response]",
+		})
+	}
 }
