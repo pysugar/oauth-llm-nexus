@@ -360,9 +360,10 @@ func OpenAIChatHandlerWithMonitor(tokenMgr *token.Manager, upstreamClient *upstr
 		bodyBytes, _ := io.ReadAll(r.Body)
 		r.Body = io.NopCloser(strings.NewReader(string(bodyBytes)))
 
-		// Extract model from request
+		// Extract model and stream flag from request
 		var req struct {
-			Model string `json:"model"`
+			Model  string `json:"model"`
+			Stream bool   `json:"stream"`
 		}
 		json.Unmarshal(bodyBytes, &req)
 
@@ -378,7 +379,26 @@ func OpenAIChatHandlerWithMonitor(tokenMgr *token.Manager, upstreamClient *upstr
 			}
 		}
 
-		// Use response recorder to capture status and body
+		// For streaming requests, we can't wrap the response writer
+		// Just call base handler and log basic info
+		if req.Stream {
+			baseHandler(w, r)
+
+			pm.LogRequest(models.RequestLog{
+				Method:       r.Method,
+				URL:          r.URL.Path,
+				Status:       200, // Assume success for streams
+				Duration:     time.Since(startTime).Milliseconds(),
+				Model:        req.Model,
+				MappedModel:  db.ResolveModel(req.Model, "google"),
+				AccountEmail: accountEmail,
+				RequestBody:  string(bodyBytes),
+				ResponseBody: "[streaming response]",
+			})
+			return
+		}
+
+		// Use response recorder to capture status and body (non-streaming only)
 		rec := &responseRecorder{ResponseWriter: w, statusCode: 200}
 
 		baseHandler(rec, r)
