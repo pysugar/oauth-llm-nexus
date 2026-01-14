@@ -386,9 +386,9 @@ func handleClaudeStreaming(w http.ResponseWriter, client *upstream.Client, token
 	fmt.Fprintf(w, "event: message_start\ndata: %s\n\n", startEvent)
 	flusher.Flush()
 
-	// Send content_block_start
-	fmt.Fprintf(w, "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n")
-	flusher.Flush()
+	// Track whether we've started a text block (defer until we have actual text)
+	textBlockStarted := false
+	hasAnyContent := false
 
 	// Increase scanner buffer to handle large SSE frames (8MB limit)
 	scanner := bufio.NewScanner(resp.Body)
@@ -425,6 +425,13 @@ func handleClaudeStreaming(w http.ResponseWriter, client *upstream.Client, token
 			// Extract text
 			text := extractTextFromGemini(geminiResp)
 			if text != "" {
+				// Start text block on first actual text
+				if !textBlockStarted {
+					fmt.Fprintf(w, "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n")
+					flusher.Flush()
+					textBlockStarted = true
+				}
+				hasAnyContent = true
 				delta := &mappers.ClaudeDelta{Type: "text_delta", Text: text}
 				deltaEvent, _ := mappers.CreateClaudeStreamEvent("content_block_delta", delta)
 				fmt.Fprintf(w, "event: content_block_delta\ndata: %s\n\n", deltaEvent)
@@ -434,13 +441,22 @@ func handleClaudeStreaming(w http.ResponseWriter, client *upstream.Client, token
 
 			// Extract functionCall (tool_use) for streaming
 			if funcCall := extractFunctionCallFromGemini(geminiResp); funcCall != nil {
-				// Send content_block_stop for text block
-				fmt.Fprintf(w, "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n")
-				flusher.Flush()
+				// Close text block if it was started
+				if textBlockStarted {
+					fmt.Fprintf(w, "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n")
+					flusher.Flush()
+				}
+
+				// Determine tool_use index (0 if no text, 1 if text was present)
+				toolIndex := 0
+				if textBlockStarted {
+					toolIndex = 1
+				}
+				hasAnyContent = true
 
 				// Send tool_use content_block_start
-				toolUseStart := fmt.Sprintf(`{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"%s","name":"%s","input":{}}}`,
-					funcCall["id"], funcCall["name"])
+				toolUseStart := fmt.Sprintf(`{"type":"content_block_start","index":%d,"content_block":{"type":"tool_use","id":"%s","name":"%s","input":{}}}`,
+					toolIndex, funcCall["id"], funcCall["name"])
 				fmt.Fprintf(w, "event: content_block_start\ndata: %s\n\n", toolUseStart)
 				flusher.Flush()
 
@@ -448,14 +464,14 @@ func handleClaudeStreaming(w http.ResponseWriter, client *upstream.Client, token
 				if inputBytes, err := json.Marshal(funcCall["args"]); err == nil {
 					// Escape the JSON string for embedding in another JSON
 					escapedInput, _ := json.Marshal(string(inputBytes))
-					inputDelta := fmt.Sprintf(`{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":%s}}`,
-						string(escapedInput))
+					inputDelta := fmt.Sprintf(`{"type":"content_block_delta","index":%d,"delta":{"type":"input_json_delta","partial_json":%s}}`,
+						toolIndex, string(escapedInput))
 					fmt.Fprintf(w, "event: content_block_delta\ndata: %s\n\n", inputDelta)
 					flusher.Flush()
 				}
 
 				// Send content_block_stop for tool_use
-				fmt.Fprintf(w, "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":1}\n\n")
+				fmt.Fprintf(w, "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":%d}\n\n", toolIndex)
 				flusher.Flush()
 				chunkCount++
 			}
@@ -474,12 +490,21 @@ func handleClaudeStreaming(w http.ResponseWriter, client *upstream.Client, token
 		}
 	}
 
-	// Send stop events
-	fmt.Fprintf(w, "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n")
-	flusher.Flush()
+	// Only send text block stop if we started one and haven't closed it
+	if textBlockStarted {
+		fmt.Fprintf(w, "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n")
+		flusher.Flush()
+	}
+
+	// Determine stop_reason based on content
+	stopReason := "end_turn"
+	if !textBlockStarted && hasAnyContent {
+		// Only tool_use was sent
+		stopReason = "tool_use"
+	}
 
 	// message_delta with usage (required by Anthropic SDK)
-	fmt.Fprintf(w, "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":0}}\n\n")
+	fmt.Fprintf(w, "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"%s\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":0}}\n\n", stopReason)
 	flusher.Flush()
 
 	fmt.Fprintf(w, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")

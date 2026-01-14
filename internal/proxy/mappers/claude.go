@@ -121,6 +121,17 @@ func ClaudeToGemini(req ClaudeRequest, resolvedModel, projectID string) GeminiRe
 func GeminiToClaude(geminiResp map[string]interface{}, model string) ([]byte, error) {
 	var contentBlocks []ClaudeContentBlock
 
+	// Extract usage metadata from Gemini response
+	var inputTokens, outputTokens int
+	if usageMetadata, ok := geminiResp["usageMetadata"].(map[string]interface{}); ok {
+		if promptTokens, ok := usageMetadata["promptTokenCount"].(float64); ok {
+			inputTokens = int(promptTokens)
+		}
+		if candidatesTokens, ok := usageMetadata["candidatesTokenCount"].(float64); ok {
+			outputTokens = int(candidatesTokens)
+		}
+	}
+
 	if candidates, ok := geminiResp["candidates"].([]interface{}); ok && len(candidates) > 0 {
 		if candidate, ok := candidates[0].(map[string]interface{}); ok {
 			if content, ok := candidate["content"].(map[string]interface{}); ok {
@@ -180,8 +191,8 @@ func GeminiToClaude(geminiResp map[string]interface{}, model string) ([]byte, er
 		StopReason: stopReason,
 		Content:    contentBlocks,
 		Usage: ClaudeUsage{
-			InputTokens:  0,
-			OutputTokens: 100, // Rough estimate
+			InputTokens:  inputTokens,
+			OutputTokens: outputTokens,
 		},
 	}
 
