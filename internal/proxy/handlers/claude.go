@@ -126,10 +126,13 @@ func ClaudeMessagesHandler(tokenMgr *token.Manager, upstreamClient *upstream.Cli
 					description, _ := toolMap["description"].(string)
 					inputSchema, _ := toolMap["input_schema"].(map[string]interface{})
 
+					// Clean the schema for Gemini compatibility
+					cleanedSchema := cleanSchemaForGemini(inputSchema)
+
 					functionDeclarations = append(functionDeclarations, map[string]interface{}{
 						"name":        name,
 						"description": description,
-						"parameters":  inputSchema, // Anthropic input_schema is JSON Schema, compatible with Gemini parameters
+						"parameters":  cleanedSchema,
 					})
 				}
 			}
@@ -676,4 +679,81 @@ func ClaudeMessagesHandlerWithMonitor(tokenMgr *token.Manager, upstreamClient *u
 			ResponseBody: respBody,
 		})
 	}
+}
+
+// cleanSchemaForGemini recursively removes JSON Schema fields not supported by Gemini API.
+// Gemini doesn't support: $schema, exclusiveMinimum, exclusiveMaximum, and some other JSON Schema 7 fields.
+func cleanSchemaForGemini(schema map[string]interface{}) map[string]interface{} {
+	if schema == nil {
+		return nil
+	}
+
+	// Create a copy to avoid modifying the original
+	cleaned := make(map[string]interface{})
+
+	// Fields not supported by Gemini API
+	unsupportedFields := map[string]bool{
+		"$schema":           true,
+		"exclusiveMinimum":  true,
+		"exclusiveMaximum":  true,
+		"$id":               true,
+		"$ref":              true,
+		"$defs":             true,
+		"definitions":       true,
+		"patternProperties": true,
+		"additionalItems":   true,
+		"contains":          true,
+		"propertyNames":     true,
+		"if":                true,
+		"then":              true,
+		"else":              true,
+		"allOf":             true,
+		"anyOf":             true,
+		"oneOf":             true,
+		"not":               true,
+	}
+
+	for key, value := range schema {
+		// Skip unsupported fields
+		if unsupportedFields[key] {
+			// Convert exclusiveMinimum to minimum if it's a number
+			if key == "exclusiveMinimum" {
+				if num, ok := value.(float64); ok {
+					cleaned["minimum"] = num + 1
+				} else if num, ok := value.(int); ok {
+					cleaned["minimum"] = num + 1
+				}
+			}
+			// Convert exclusiveMaximum to maximum if it's a number
+			if key == "exclusiveMaximum" {
+				if num, ok := value.(float64); ok {
+					cleaned["maximum"] = num - 1
+				} else if num, ok := value.(int); ok {
+					cleaned["maximum"] = num - 1
+				}
+			}
+			continue
+		}
+
+		// Recursively clean nested objects
+		switch v := value.(type) {
+		case map[string]interface{}:
+			cleaned[key] = cleanSchemaForGemini(v)
+		case []interface{}:
+			// Handle arrays (e.g., items in arrays, required fields)
+			cleanedArray := make([]interface{}, len(v))
+			for i, item := range v {
+				if itemMap, ok := item.(map[string]interface{}); ok {
+					cleanedArray[i] = cleanSchemaForGemini(itemMap)
+				} else {
+					cleanedArray[i] = item
+				}
+			}
+			cleaned[key] = cleanedArray
+		default:
+			cleaned[key] = value
+		}
+	}
+
+	return cleaned
 }
