@@ -16,6 +16,7 @@ import (
 	"github.com/pysugar/oauth-llm-nexus/internal/db"
 	"github.com/pysugar/oauth-llm-nexus/internal/db/models"
 	"github.com/pysugar/oauth-llm-nexus/internal/proxy/monitor"
+	"github.com/pysugar/oauth-llm-nexus/internal/proxy/translator"
 	"github.com/pysugar/oauth-llm-nexus/internal/upstream"
 )
 
@@ -99,6 +100,12 @@ func GenAIHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client) http
 				"request":   reqBody,
 				"sessionId": sessionId,
 			}
+		}
+
+		// For Claude models, ensure functionCall/functionResponse have proper IDs
+		if translator.NeedsClaudeFormat(model) {
+			translator.PrepareRequestForClaude(payload)
+			log.Printf("🔧 [GenAI] Prepared request for Claude model: %s", model)
 		}
 
 		// Verbose: Log Gemini payload before sending
@@ -217,6 +224,22 @@ func GenAIStreamHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client
 			"model":       model,
 			"userAgent":   "antigravity",
 			"requestType": "agent", // Restored per Antigravity-Manager reference
+		}
+
+		// Inject sessionId (required for multi-turn tool call conversations)
+		// Similar to GenAIHandler, use a random negative number string if not provided
+		// Note: The sessionId must be inside the "request" object for v1internal
+		sessionId := fmt.Sprintf("-%d", time.Now().UnixNano())
+		if reqMap, ok := payload["request"].(map[string]interface{}); ok {
+			if _, exists := reqMap["sessionId"]; !exists {
+				reqMap["sessionId"] = sessionId
+			}
+		}
+
+		// For Claude models, ensure functionCall/functionResponse have proper IDs
+		if translator.NeedsClaudeFormat(model) {
+			translator.PrepareRequestForClaude(payload)
+			log.Printf("🔧 [GenAI Stream] Prepared request for Claude model: %s", model)
 		}
 
 		// Verbose: Log Gemini payload before sending
