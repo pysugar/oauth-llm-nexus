@@ -16,12 +16,11 @@ import (
 	"github.com/pysugar/oauth-llm-nexus/internal/util"
 )
 
-// Endpoints with fallback (matching Antigravity-Manager: prod → daily)
-// Endpoints with fallback (daily → prod, same as oh-my-opencode)
+// Endpoints with fallback (same order as CLIProxyAPI: sandbox-daily → daily → prod)
 var BaseURLs = []string{
-	"https://daily-cloudcode-pa.googleapis.com/v1internal",         // daily (primary for oh-my-opencode)
-	"https://cloudcode-pa.googleapis.com/v1internal",               // prod (fallback)
-	"https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal", // sandbox-daily (last resort)
+	"https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal", // sandbox-daily (primary, different rate limits)
+	"https://daily-cloudcode-pa.googleapis.com/v1internal",         // daily (fallback)
+	"https://cloudcode-pa.googleapis.com/v1internal",               // prod (last resort)
 }
 
 const (

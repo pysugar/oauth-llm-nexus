@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -235,14 +236,17 @@ func StartOAuthCallbackServer(db *gorm.DB) (actualPort int, resultChan <-chan OA
 	}()
 
 	// Cleanup function
+	var once sync.Once
 	cleanup = func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		if err := srv.Shutdown(ctx); err != nil {
-			log.Printf("[OAuth] Error shutting down callback server: %v", err)
-		}
-		close(resultChannel)
-		log.Printf("[OAuth] Callback server stopped")
+		once.Do(func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			if err := srv.Shutdown(ctx); err != nil {
+				log.Printf("[OAuth] Error shutting down callback server: %v", err)
+			}
+			close(resultChannel)
+			log.Printf("[OAuth] Callback server stopped")
+		})
 	}
 
 	// Auto-cleanup after timeout
@@ -250,7 +254,11 @@ func StartOAuthCallbackServer(db *gorm.DB) (actualPort int, resultChan <-chan OA
 		time.Sleep(CallbackTimeout)
 		if !callbackReceived {
 			log.Printf("[OAuth] Callback timeout after %v", CallbackTimeout)
-			resultChannel <- OAuthCallbackResult{Success: false, Error: fmt.Errorf("OAuth callback timeout")}
+			// Non-blocking send in case channel is already closed/full (though cleanup handles close)
+			select {
+			case resultChannel <- OAuthCallbackResult{Success: false, Error: fmt.Errorf("OAuth callback timeout")}:
+			default:
+			}
 		}
 		cleanup()
 	}()

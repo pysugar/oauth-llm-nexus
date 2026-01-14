@@ -97,6 +97,55 @@ func ClaudeMessagesHandler(tokenMgr *token.Manager, upstreamClient *upstream.Cli
 			}
 		}
 
+		// Convert tools
+		var geminiTools []map[string]interface{}
+		if tools, ok := rawReq["tools"].([]interface{}); ok && len(tools) > 0 {
+			var functionDeclarations []map[string]interface{}
+			var hasGoogleSearch bool
+
+			for _, t := range tools {
+				if toolMap, ok := t.(map[string]interface{}); ok {
+					name, _ := toolMap["name"].(string)
+
+					// Web Search Mapping
+					// User logic: if NOT gemini-3 AND NOT claude, map "web_search" (or similar) to googleSearch
+					isSearchTool := name == "web_search" || name == "google_search"
+					supportsSearch := !strings.Contains(model, "gemini-3") && !strings.Contains(model, "claude") && !strings.Contains(model, "gemini-3-pro")
+
+					if isSearchTool {
+						if supportsSearch {
+							hasGoogleSearch = true
+							log.Printf("🔍 [ClaudeHandler] Mapping '%s' to googleSearch for model %s", name, model)
+						} else {
+							log.Printf("⚠️ [ClaudeHandler] Skipping '%s' for model %s (search not supported)", name, model)
+						}
+						continue
+					}
+
+					// Function Tool Mapping
+					description, _ := toolMap["description"].(string)
+					inputSchema, _ := toolMap["input_schema"].(map[string]interface{})
+
+					functionDeclarations = append(functionDeclarations, map[string]interface{}{
+						"name":        name,
+						"description": description,
+						"parameters":  inputSchema, // Anthropic input_schema is JSON Schema, compatible with Gemini parameters
+					})
+				}
+			}
+
+			if len(functionDeclarations) > 0 {
+				geminiTools = append(geminiTools, map[string]interface{}{
+					"functionDeclarations": functionDeclarations,
+				})
+			}
+			if hasGoogleSearch {
+				geminiTools = append(geminiTools, map[string]interface{}{
+					"googleSearch": map[string]interface{}{},
+				})
+			}
+		}
+
 		// Convert messages
 		for _, msg := range messages {
 			m, ok := msg.(map[string]interface{})
@@ -132,10 +181,14 @@ func ClaudeMessagesHandler(tokenMgr *token.Manager, upstreamClient *upstream.Cli
 							}
 						case "tool_use":
 							// Convert to Gemini function call
+							// Gemini-3 models require thoughtSignature, use skip sentinel
 							name, _ := b["name"].(string)
+							id, _ := b["id"].(string)
 							input := b["input"]
 							parts = append(parts, map[string]interface{}{
+								"thoughtSignature": "skip_thought_signature_validator",
 								"functionCall": map[string]interface{}{
+									"id":   id,
 									"name": name,
 									"args": input,
 								},
@@ -144,10 +197,29 @@ func ClaudeMessagesHandler(tokenMgr *token.Manager, upstreamClient *upstream.Cli
 							// Convert to Gemini function response
 							toolUseId, _ := b["tool_use_id"].(string)
 							resultContent := b["content"]
+							// Parse content if it's a string (JSON) - Gemini requires Struct
+							var responseResult interface{}
+							switch c := resultContent.(type) {
+							case string:
+								var parsed map[string]interface{}
+								if err := json.Unmarshal([]byte(c), &parsed); err == nil {
+									responseResult = parsed
+								} else {
+									responseResult = c
+								}
+							case map[string]interface{}:
+								responseResult = c
+							default:
+								responseResult = fmt.Sprintf("%v", resultContent)
+							}
+
 							parts = append(parts, map[string]interface{}{
 								"functionResponse": map[string]interface{}{
-									"name":     toolUseId,
-									"response": resultContent,
+									"id":   toolUseId,
+									"name": toolUseId,
+									"response": map[string]interface{}{
+										"result": responseResult,
+									},
 								},
 							})
 						}
@@ -165,19 +237,32 @@ func ClaudeMessagesHandler(tokenMgr *token.Manager, upstreamClient *upstream.Cli
 		// Generate sessionId per oh-my-opencode reference: "-{random_number}"
 		sessionId := fmt.Sprintf("-%d", time.Now().UnixNano())
 
+		// Build request object
+		requestObj := map[string]interface{}{
+			"contents":  geminiContents,
+			"sessionId": sessionId, // Required by oh-my-opencode for multi-turn conversations
+			"generationConfig": map[string]interface{}{
+				"maxOutputTokens": 64000,
+			},
+		}
+
+		// Only add tools and toolConfig if geminiTools is not empty
+		if len(geminiTools) > 0 {
+			requestObj["tools"] = geminiTools
+			requestObj["toolConfig"] = map[string]interface{}{
+				"functionCallingConfig": map[string]interface{}{
+					"mode": "AUTO", // Use AUTO mode for flexibility
+				},
+			}
+		}
+
 		payload := map[string]interface{}{
 			"project":     cachedToken.ProjectID,
 			"requestId":   requestId,
 			"model":       model,
 			"userAgent":   "antigravity",
 			"requestType": "agent", // Restored per Antigravity-Manager reference
-			"request": map[string]interface{}{
-				"contents":  geminiContents,
-				"sessionId": sessionId, // Required by oh-my-opencode for multi-turn conversations
-				"generationConfig": map[string]interface{}{
-					"maxOutputTokens": 64000,
-				},
-			},
+			"request":     requestObj,
 		}
 
 		// Verbose: Log Gemini payload before sending
@@ -343,6 +428,34 @@ func handleClaudeStreaming(w http.ResponseWriter, client *upstream.Client, token
 				flusher.Flush()
 				chunkCount++
 			}
+
+			// Extract functionCall (tool_use) for streaming
+			if funcCall := extractFunctionCallFromGemini(geminiResp); funcCall != nil {
+				// Send content_block_stop for text block
+				fmt.Fprintf(w, "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n")
+				flusher.Flush()
+
+				// Send tool_use content_block_start
+				toolUseStart := fmt.Sprintf(`{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"%s","name":"%s","input":{}}}`,
+					funcCall["id"], funcCall["name"])
+				fmt.Fprintf(w, "event: content_block_start\ndata: %s\n\n", toolUseStart)
+				flusher.Flush()
+
+				// Send input delta - partial_json should be a string, not embedded JSON
+				if inputBytes, err := json.Marshal(funcCall["args"]); err == nil {
+					// Escape the JSON string for embedding in another JSON
+					escapedInput, _ := json.Marshal(string(inputBytes))
+					inputDelta := fmt.Sprintf(`{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":%s}}`,
+						string(escapedInput))
+					fmt.Fprintf(w, "event: content_block_delta\ndata: %s\n\n", inputDelta)
+					flusher.Flush()
+				}
+
+				// Send content_block_stop for tool_use
+				fmt.Fprintf(w, "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":1}\n\n")
+				flusher.Flush()
+				chunkCount++
+			}
 		}
 	}
 	// Check scanner error after loop (streaming reliability fix)
@@ -385,6 +498,37 @@ func extractTextFromGemini(resp map[string]interface{}) string {
 		}
 	}
 	return ""
+}
+
+// extractFunctionCallFromGemini extracts functionCall from Gemini streaming response
+func extractFunctionCallFromGemini(resp map[string]interface{}) map[string]interface{} {
+	if candidates, ok := resp["candidates"].([]interface{}); ok && len(candidates) > 0 {
+		if candidate, ok := candidates[0].(map[string]interface{}); ok {
+			if content, ok := candidate["content"].(map[string]interface{}); ok {
+				if parts, ok := content["parts"].([]interface{}); ok {
+					for _, part := range parts {
+						if p, ok := part.(map[string]interface{}); ok {
+							if funcCall, ok := p["functionCall"].(map[string]interface{}); ok {
+								name, _ := funcCall["name"].(string)
+								args := funcCall["args"]
+								id, _ := funcCall["id"].(string)
+								if id == "" {
+									// Generate ID if not present
+									id = "toolu_" + time.Now().Format("20060102150405")
+								}
+								return map[string]interface{}{
+									"id":   id,
+									"name": name,
+									"args": args,
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func writeClaudeError(w http.ResponseWriter, message string, status int) {

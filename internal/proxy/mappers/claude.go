@@ -36,6 +36,10 @@ type ClaudeResponse struct {
 type ClaudeContentBlock struct {
 	Type string `json:"type"`
 	Text string `json:"text,omitempty"`
+	// Fields for tool_use type
+	ID    string      `json:"id,omitempty"`
+	Name  string      `json:"name,omitempty"`
+	Input interface{} `json:"input,omitempty"`
 }
 
 type ClaudeUsage struct {
@@ -113,19 +117,58 @@ func ClaudeToGemini(req ClaudeRequest, resolvedModel, projectID string) GeminiRe
 }
 
 // GeminiToClaude converts a Gemini response to Claude format
+// Handles both text parts and functionCall parts (for tool use)
 func GeminiToClaude(geminiResp map[string]interface{}, model string) ([]byte, error) {
-	text := ""
+	var contentBlocks []ClaudeContentBlock
+
 	if candidates, ok := geminiResp["candidates"].([]interface{}); ok && len(candidates) > 0 {
 		if candidate, ok := candidates[0].(map[string]interface{}); ok {
 			if content, ok := candidate["content"].(map[string]interface{}); ok {
-				if parts, ok := content["parts"].([]interface{}); ok && len(parts) > 0 {
-					if part, ok := parts[0].(map[string]interface{}); ok {
-						if t, ok := part["text"].(string); ok {
-							text = t
+				if parts, ok := content["parts"].([]interface{}); ok {
+					for _, part := range parts {
+						if p, ok := part.(map[string]interface{}); ok {
+							// Check for functionCall (tool use)
+							if functionCall, ok := p["functionCall"].(map[string]interface{}); ok {
+								name, _ := functionCall["name"].(string)
+								args := functionCall["args"]
+
+								// Generate a unique ID for the tool use
+								toolUseID := "toolu_" + time.Now().Format("20060102150405")
+
+								contentBlocks = append(contentBlocks, ClaudeContentBlock{
+									Type:  "tool_use",
+									ID:    toolUseID,
+									Name:  name,
+									Input: args,
+								})
+								continue
+							}
+
+							// Check for text
+							if text, ok := p["text"].(string); ok && text != "" {
+								contentBlocks = append(contentBlocks, ClaudeContentBlock{
+									Type: "text",
+									Text: text,
+								})
+							}
 						}
 					}
 				}
 			}
+		}
+	}
+
+	// If no content blocks found, add empty text block
+	if len(contentBlocks) == 0 {
+		contentBlocks = []ClaudeContentBlock{{Type: "text", Text: ""}}
+	}
+
+	// Determine stop_reason based on content
+	stopReason := "end_turn"
+	for _, block := range contentBlocks {
+		if block.Type == "tool_use" {
+			stopReason = "tool_use"
+			break
 		}
 	}
 
@@ -134,16 +177,11 @@ func GeminiToClaude(geminiResp map[string]interface{}, model string) ([]byte, er
 		Type:       "message",
 		Role:       "assistant",
 		Model:      model,
-		StopReason: "end_turn",
-		Content: []ClaudeContentBlock{
-			{
-				Type: "text",
-				Text: text,
-			},
-		},
+		StopReason: stopReason,
+		Content:    contentBlocks,
 		Usage: ClaudeUsage{
 			InputTokens:  0,
-			OutputTokens: len(text) / 4, // Rough estimate
+			OutputTokens: 100, // Rough estimate
 		},
 	}
 
