@@ -195,7 +195,8 @@ func ClaudeMessagesHandler(tokenMgr *token.Manager, upstreamClient *upstream.Cli
 }
 
 func handleClaudeNonStreaming(w http.ResponseWriter, client *upstream.Client, token string, payload map[string]interface{}, model string, requestId string) {
-	resp, err := client.GenerateContent(token, payload)
+	// Use SmartGenerateContent for automatic premium model handling
+	resp, err := client.SmartGenerateContent(token, payload)
 	if err != nil {
 		if IsVerbose() {
 			log.Printf("❌ [VERBOSE] [%s] /anthropic/v1/messages Upstream error: %v", requestId, err)
@@ -254,7 +255,8 @@ func handleClaudeNonStreaming(w http.ResponseWriter, client *upstream.Client, to
 }
 
 func handleClaudeStreaming(w http.ResponseWriter, client *upstream.Client, token string, payload map[string]interface{}, model string, requestId string) {
-	resp, err := client.StreamGenerateContent(token, payload)
+	// Use SmartStreamGenerateContent for automatic premium model handling
+	resp, err := client.SmartStreamGenerateContent(token, payload)
 	if err != nil {
 		writeClaudeError(w, "Upstream error: "+err.Error(), http.StatusBadGateway)
 		return
@@ -360,8 +362,8 @@ func handleClaudeStreaming(w http.ResponseWriter, client *upstream.Client, token
 	fmt.Fprintf(w, "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n")
 	flusher.Flush()
 
-	stopEvent, _ := mappers.CreateClaudeStreamEvent("message_delta", nil)
-	fmt.Fprintf(w, "event: message_delta\ndata: %s\n\n", stopEvent)
+	// message_delta with usage (required by Anthropic SDK)
+	fmt.Fprintf(w, "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":0}}\n\n")
 	flusher.Flush()
 
 	fmt.Fprintf(w, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")

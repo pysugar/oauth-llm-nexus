@@ -19,6 +19,16 @@ import (
 	"github.com/pysugar/oauth-llm-nexus/internal/upstream"
 )
 
+// Antigravity systemInstruction - required for premium models (gemini-3-pro, Claude)
+// This is NOT a fingerprint bypass, but a required identity for the Cloud Code API
+const antigravitySystemInstruction = "You are Antigravity, a powerful agentic AI coding assistant designed by the Google Deepmind team working on Advanced Agentic Coding.You are pair programming with a USER to solve their coding task. The task may require creating a new codebase, modifying or debugging an existing codebase, or simply answering a question.**Absolute paths only****Proactiveness**"
+
+// isPremiumModel returns true if the model requires special handling (streaming endpoint + systemInstruction)
+func isPremiumModel(model string) bool {
+	lowerModel := strings.ToLower(model)
+	return strings.Contains(lowerModel, "claude") || strings.Contains(model, "gemini-3-pro")
+}
+
 // GenAIHandler handles /genai/v1beta/models/{model}:generateContent
 func GenAIHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -59,6 +69,7 @@ func GenAIHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client) http
 		if requestId == "" {
 			requestId = "agent-" + uuid.New().String()
 		}
+
 		if IsVerbose() {
 			reqBytes, _ := json.MarshalIndent(reqBody, "", "  ")
 			log.Printf("📥 [VERBOSE] [%s] /genai/v1beta Raw request:\n%s", requestId, string(reqBytes))
@@ -74,13 +85,31 @@ func GenAIHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client) http
 			"requestType": "agent", // Restored per Antigravity-Manager reference
 		}
 
+		// Inject sessionId (required for some models/backends)
+		// Similar to claude.go, use a random negative number string if not provided
+		// Note: The sessionId must be inside the "request" object for v1internal
+		sessionId := fmt.Sprintf("-%d", time.Now().UnixNano())
+		if reqMap, ok := payload["request"].(map[string]interface{}); ok {
+			if _, exists := reqMap["sessionId"]; !exists {
+				reqMap["sessionId"] = sessionId
+			}
+		} else {
+			// If request is not a map (unlikely), wrap it
+			payload["request"] = map[string]interface{}{
+				"request":   reqBody,
+				"sessionId": sessionId,
+			}
+		}
+
 		// Verbose: Log Gemini payload before sending
 		if IsVerbose() {
 			geminiPayloadBytes, _ := json.MarshalIndent(payload, "", "  ")
 			log.Printf("📤 [VERBOSE] [%s] /genai/v1beta Gemini Request Payload:\n%s", requestId, string(geminiPayloadBytes))
 		}
 
-		resp, err := upstreamClient.GenerateContent(cachedToken.AccessToken, payload)
+		// Use SmartGenerateContent which automatically handles premium models
+		// (gemini-3-pro, Claude use streaming endpoint + systemInstruction)
+		resp, err := upstreamClient.SmartGenerateContent(cachedToken.AccessToken, payload)
 		if err != nil {
 			if IsVerbose() {
 				log.Printf("❌ [VERBOSE] [%s] /genai/v1beta Upstream error: %v", requestId, err)
@@ -196,7 +225,9 @@ func GenAIStreamHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client
 			log.Printf("📤 [VERBOSE] [%s] /genai/v1beta Gemini Stream Request Payload:\n%s", requestId, string(geminiPayloadBytes))
 		}
 
-		resp, err := upstreamClient.StreamGenerateContent(cachedToken.AccessToken, payload)
+		// Use SmartStreamGenerateContent which automatically handles premium models
+		// (gemini-3-pro, Claude use streaming endpoint + sessionId + toolConfig)
+		resp, err := upstreamClient.SmartStreamGenerateContent(cachedToken.AccessToken, payload)
 		if err != nil {
 			writeGenAIError(w, "Upstream error: "+err.Error(), http.StatusBadGateway)
 			return

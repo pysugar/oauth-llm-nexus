@@ -23,14 +23,14 @@ type ClaudeMessage struct {
 }
 
 type ClaudeResponse struct {
-	ID           string              `json:"id"`
-	Type         string              `json:"type"`
-	Role         string              `json:"role"`
+	ID           string               `json:"id"`
+	Type         string               `json:"type"`
+	Role         string               `json:"role"`
 	Content      []ClaudeContentBlock `json:"content"`
-	Model        string              `json:"model"`
-	StopReason   string              `json:"stop_reason,omitempty"`
-	StopSequence *string             `json:"stop_sequence,omitempty"`
-	Usage        ClaudeUsage         `json:"usage"`
+	Model        string               `json:"model"`
+	StopReason   string               `json:"stop_reason,omitempty"`
+	StopSequence *string              `json:"stop_sequence,omitempty"`
+	Usage        ClaudeUsage          `json:"usage"`
 }
 
 type ClaudeContentBlock struct {
@@ -47,7 +47,7 @@ type ClaudeUsage struct {
 type ClaudeStreamEvent struct {
 	Type         string              `json:"type"`
 	Message      *ClaudeResponse     `json:"message,omitempty"`
-	Index        int                 `json:"index,omitempty"`
+	Index        *int                `json:"index,omitempty"`
 	ContentBlock *ClaudeContentBlock `json:"content_block,omitempty"`
 	Delta        *ClaudeDelta        `json:"delta,omitempty"`
 }
@@ -61,7 +61,7 @@ type ClaudeDelta struct {
 // ClaudeToGemini converts a Claude request to Gemini format
 func ClaudeToGemini(req ClaudeRequest, resolvedModel, projectID string) GeminiRequest {
 	contents := make([]GeminiContent, 0, len(req.Messages)+1)
-	
+
 	// Add system message as first user message if present
 	if req.System != "" {
 		contents = append(contents, GeminiContent{
@@ -71,13 +71,13 @@ func ClaudeToGemini(req ClaudeRequest, resolvedModel, projectID string) GeminiRe
 			},
 		})
 	}
-	
+
 	for _, msg := range req.Messages {
 		role := msg.Role
 		if role == "assistant" {
 			role = "model"
 		}
-		
+
 		contents = append(contents, GeminiContent{
 			Role: role,
 			Parts: []GeminiPart{
@@ -85,10 +85,10 @@ func ClaudeToGemini(req ClaudeRequest, resolvedModel, projectID string) GeminiRe
 			},
 		})
 	}
-	
+
 	// Use resolved model passed from handler
 	model := resolvedModel
-	
+
 	geminiReq := GeminiRequest{
 		Project:   projectID,
 		RequestID: "req-" + time.Now().Format("20060102150405"),
@@ -97,7 +97,7 @@ func ClaudeToGemini(req ClaudeRequest, resolvedModel, projectID string) GeminiRe
 			Contents: contents,
 		},
 	}
-	
+
 	// Map generation config
 	maxTokens := req.MaxTokens
 	if maxTokens == 0 {
@@ -108,7 +108,7 @@ func ClaudeToGemini(req ClaudeRequest, resolvedModel, projectID string) GeminiRe
 		MaxOutputTokens: &maxTokens,
 		TopP:            req.TopP,
 	}
-	
+
 	return geminiReq
 }
 
@@ -128,7 +128,7 @@ func GeminiToClaude(geminiResp map[string]interface{}, model string) ([]byte, er
 			}
 		}
 	}
-	
+
 	resp := ClaudeResponse{
 		ID:         "msg-nexus-" + time.Now().Format("20060102150405"),
 		Type:       "message",
@@ -146,7 +146,7 @@ func GeminiToClaude(geminiResp map[string]interface{}, model string) ([]byte, er
 			OutputTokens: len(text) / 4, // Rough estimate
 		},
 	}
-	
+
 	return json.Marshal(resp)
 }
 
@@ -155,7 +155,7 @@ func CreateClaudeStreamEvent(eventType string, data interface{}) ([]byte, error)
 	event := ClaudeStreamEvent{
 		Type: eventType,
 	}
-	
+
 	switch eventType {
 	case "message_start":
 		if msg, ok := data.(*ClaudeResponse); ok {
@@ -163,12 +163,13 @@ func CreateClaudeStreamEvent(eventType string, data interface{}) ([]byte, error)
 		}
 	case "content_block_delta":
 		if delta, ok := data.(*ClaudeDelta); ok {
-			event.Index = 0
+			index := 0
+			event.Index = &index
 			event.Delta = delta
 		}
 	case "message_delta":
 		event.Delta = &ClaudeDelta{StopReason: "end_turn"}
 	}
-	
+
 	return json.Marshal(event)
 }

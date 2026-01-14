@@ -105,7 +105,8 @@ func OpenAIChatHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client)
 func handleOpenAINonStreaming(w http.ResponseWriter, client *upstream.Client, token string, payload map[string]interface{}, model string, requestId string) {
 	verbose := IsVerbose()
 
-	resp, err := client.GenerateContent(token, payload)
+	// Use SmartGenerateContent for automatic premium model handling
+	resp, err := client.SmartGenerateContent(token, payload)
 	if err != nil {
 		if verbose {
 			log.Printf("❌ [VERBOSE] [%s] /v1/chat/completions Upstream error: %v", requestId, err)
@@ -195,7 +196,8 @@ func handleOpenAINonStreaming(w http.ResponseWriter, client *upstream.Client, to
 }
 
 func handleOpenAIStreaming(w http.ResponseWriter, client *upstream.Client, token string, payload map[string]interface{}, model string, requestId string) {
-	resp, err := client.StreamGenerateContent(token, payload)
+	// Use SmartStreamGenerateContent for automatic premium model handling
+	resp, err := client.SmartStreamGenerateContent(token, payload)
 	if err != nil {
 		writeOpenAIError(w, "Upstream error: "+err.Error(), http.StatusBadGateway)
 		return
@@ -453,6 +455,7 @@ func OpenAIChatHandlerWithMonitor(tokenMgr *token.Manager, upstreamClient *upstr
 }
 
 // responseRecorder wraps http.ResponseWriter to capture status code and body
+// Also implements http.Flusher for streaming support
 type responseRecorder struct {
 	http.ResponseWriter
 	statusCode int
@@ -467,4 +470,11 @@ func (r *responseRecorder) WriteHeader(code int) {
 func (r *responseRecorder) Write(b []byte) (int, error) {
 	r.body.Write(b) // Capture for logging
 	return r.ResponseWriter.Write(b)
+}
+
+// Flush implements http.Flusher interface for streaming support
+func (r *responseRecorder) Flush() {
+	if flusher, ok := r.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
 }
