@@ -261,6 +261,26 @@ curl -X POST http://localhost:8086/v1/chat/completions \
 
 > **Note**: The specified account must be linked in the Dashboard and active. If not found, the request returns 401 Unauthorized.
 
+## 🛠️ Tools
+
+### Quick Quota Check
+
+Check real-time quota for your **locally logged-in Antigravity account** (not the accounts linked in Nexus):
+
+```bash
+# Install dependency
+pip install requests
+
+# Run quota check
+python3 scripts/antigravity_quota.py
+
+# Output formats
+python3 scripts/antigravity_quota.py --json    # JSON output
+python3 scripts/antigravity_quota.py --raw     # Raw API response
+```
+
+This script reads credentials from your local Antigravity installation and shows accurate quota percentages for all available models.
+
 ## 🏗️ Architecture
 
 ```mermaid

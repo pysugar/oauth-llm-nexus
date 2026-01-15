@@ -80,7 +80,7 @@ func AccountModelsHandler(tokenMgr *token.Manager, upstreamClient *upstream.Clie
 		}
 		log.Printf("📊 Fetching models for Account: %s (Token: %s)", cachedToken.Email, tokenSuffix)
 
-		resp, err := upstreamClient.FetchAvailableModels(cachedToken.AccessToken)
+		resp, err := upstreamClient.FetchAvailableModels(cachedToken.AccessToken, cachedToken.ProjectID)
 		if err != nil {
 			http.Error(w, "Failed to fetch models: "+err.Error(), http.StatusBadGateway)
 			return
@@ -483,7 +483,8 @@ var dashboardHTML = `<!DOCTYPE html>
                 html += '<div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">';
                 
                 for (const [id, m] of modelEntries) {
-                    const remaining = Math.round((m.quotaInfo?.remainingFraction || 0) * 100);
+                    const remainingRaw = (m.quotaInfo?.remainingFraction || 0) * 100;
+                    const remaining = Math.round(remainingRaw * 10) / 10; // Keep 1 decimal
                     const barColor = remaining > 50 ? 'bg-green-500' : remaining > 20 ? 'bg-yellow-500' : 'bg-red-500';
                     const resetTime = m.quotaInfo?.resetTime ? formatResetTime(m.quotaInfo.resetTime) : '';
                     

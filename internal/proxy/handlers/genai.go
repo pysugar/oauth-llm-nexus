@@ -331,7 +331,7 @@ func GenAIModelsListHandler(tokenMgr *token.Manager, upstreamClient *upstream.Cl
 
 		// Fetch real models from upstream Google API
 		// We use the internal 'fetchAvailableModels' endpoint exposed by Cloud Code
-		resp, err := upstreamClient.FetchAvailableModels(cachedToken.AccessToken)
+		resp, err := upstreamClient.FetchAvailableModels(cachedToken.AccessToken, cachedToken.ProjectID)
 		if err != nil {
 			log.Printf("⚠️ Failed to fetch upstream models: %v", err)
 			// Fallback to static list if upstream fails

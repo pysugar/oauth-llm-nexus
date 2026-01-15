@@ -414,9 +414,17 @@ func (c *Client) GenerateContent(accessToken string, payload map[string]interfac
 }
 
 // FetchAvailableModels retrieves the list of available models
-func (c *Client) FetchAvailableModels(accessToken string) (*http.Response, error) {
-	url := fmt.Sprintf("%s:fetchAvailableModels", BaseURLs[0])
-	return c.doRequest("POST", url, accessToken, map[string]interface{}{})
+// Uses production endpoint for accurate quota (sandbox returns stepwise 0/20/40/60/80/100%)
+// If projectID is provided, quota information will be more accurate
+func (c *Client) FetchAvailableModels(accessToken string, projectID string) (*http.Response, error) {
+	// Use production endpoint for accurate quota information
+	// Sandbox endpoints return stepwise values (0%, 20%, 40%, etc.)
+	url := "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels"
+	payload := map[string]interface{}{}
+	if projectID != "" {
+		payload["project"] = projectID
+	}
+	return c.doRequest("POST", url, accessToken, payload)
 }
 
 // LoadCodeAssist fetches project configuration

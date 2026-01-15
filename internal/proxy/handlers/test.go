@@ -83,7 +83,7 @@ func ModelsHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client) htt
 			return
 		}
 
-		resp, err := upstreamClient.FetchAvailableModels(cachedToken.AccessToken)
+		resp, err := upstreamClient.FetchAvailableModels(cachedToken.AccessToken, cachedToken.ProjectID)
 		if err != nil {
 			http.Error(w, "Upstream error: "+err.Error(), http.StatusBadGateway)
 			return

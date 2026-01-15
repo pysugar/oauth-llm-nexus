@@ -261,6 +261,26 @@ curl -X POST http://localhost:8086/v1/chat/completions \
 
 > **注意**：指定的账号必须已在 Dashboard 中链接且处于活跃状态。如果找不到，请求将返回 401 Unauthorized。
 
+## 🛠️ 工具
+
+### 快速配额检查
+
+检查**本地已登录 Antigravity 账号**的实时配额（非 Nexus 中链接的账号）：
+
+```bash
+# 安装依赖
+pip install requests
+
+# 运行配额检查
+python3 scripts/antigravity_quota.py
+
+# 输出格式
+python3 scripts/antigravity_quota.py --json    # JSON 输出
+python3 scripts/antigravity_quota.py --raw     # 原始 API 响应
+```
+
+此脚本从本地 Antigravity 安装读取凭证，显示所有可用模型的精确配额百分比。
+
 ## 🏗️ 架构
 
 ```mermaid
