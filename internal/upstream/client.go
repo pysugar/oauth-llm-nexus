@@ -176,6 +176,10 @@ func (c *Client) consumeAndMergeSSE(resp *http.Response) ([]byte, error) {
 		currentIsText = false
 	}
 
+	// Error counting for diagnostics (limit log spam)
+	parseErrorCount := 0
+	const maxParseErrorLogs = 5
+
 	for scanner.Scan() {
 		line := scanner.Text()
 		if !strings.HasPrefix(line, "data: ") {
@@ -188,6 +192,10 @@ func (c *Client) consumeAndMergeSSE(resp *http.Response) ([]byte, error) {
 
 		var chunk map[string]interface{}
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			parseErrorCount++
+			if util.IsVerbose() && parseErrorCount <= maxParseErrorLogs {
+				log.Printf("⚠️ [consumeAndMergeSSE] Chunk parse error #%d: %v (data: %.100s...)", parseErrorCount, err, data)
+			}
 			continue
 		}
 
@@ -301,7 +309,15 @@ func (c *Client) consumeAndMergeSSE(resp *http.Response) ([]byte, error) {
 	// Flush any remaining text
 	flushText()
 
+	// Log total parse errors if any occurred
+	if parseErrorCount > 0 && util.IsVerbose() {
+		log.Printf("⚠️ [consumeAndMergeSSE] Total chunk parse errors: %d", parseErrorCount)
+	}
+
 	if err := scanner.Err(); err != nil {
+		if util.IsVerbose() {
+			log.Printf("❌ [consumeAndMergeSSE] Scanner error: %v", err)
+		}
 		return nil, fmt.Errorf("scanner error: %w", err)
 	}
 
