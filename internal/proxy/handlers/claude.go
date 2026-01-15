@@ -199,6 +199,9 @@ func ClaudeMessagesHandler(tokenMgr *token.Manager, upstreamClient *upstream.Cli
 						case "tool_result":
 							// Convert to Gemini function response
 							toolUseId, _ := b["tool_use_id"].(string)
+							// Extract function name from tool_use_id using stateless parsing
+							// Format: {funcName}-{random8hex}
+							funcName := mappers.ExtractFunctionName(toolUseId)
 							resultContent := b["content"]
 							// Parse content if it's a string (JSON) - Gemini requires Struct
 							var responseResult interface{}
@@ -219,7 +222,7 @@ func ClaudeMessagesHandler(tokenMgr *token.Manager, upstreamClient *upstream.Cli
 							parts = append(parts, map[string]interface{}{
 								"functionResponse": map[string]interface{}{
 									"id":   toolUseId,
-									"name": toolUseId,
+									"name": funcName,
 									"response": map[string]interface{}{
 										"result": responseResult,
 									},
@@ -541,8 +544,8 @@ func extractFunctionCallFromGemini(resp map[string]interface{}) map[string]inter
 								args := funcCall["args"]
 								id, _ := funcCall["id"].(string)
 								if id == "" {
-									// Generate ID if not present
-									id = "toolu_" + time.Now().Format("20060102150405")
+									// Generate ID with embedded function name: {funcName}-{random8hex}
+									id = mappers.GenerateToolUseIDFromHandler(name)
 								}
 								return map[string]interface{}{
 									"id":   id,

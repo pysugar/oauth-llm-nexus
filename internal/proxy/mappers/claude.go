@@ -1,7 +1,11 @@
 package mappers
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
+	"log"
+	"strings"
 	"time"
 )
 
@@ -60,6 +64,39 @@ type ClaudeDelta struct {
 	Type       string `json:"type,omitempty"`
 	Text       string `json:"text,omitempty"`
 	StopReason string `json:"stop_reason,omitempty"`
+}
+
+// GenerateToolUseID creates a tool use ID in format: {funcName}-{random8hex}
+// This format allows stateless extraction of function name from tool_use_id in tool_result
+func GenerateToolUseID(funcName string) string {
+	b := make([]byte, 4)
+	rand.Read(b)
+	randomHex := hex.EncodeToString(b)
+	return funcName + "-" + randomHex
+}
+
+// GenerateToolUseIDFromHandler is an alias for GenerateToolUseID for use in handlers package
+func GenerateToolUseIDFromHandler(funcName string) string {
+	return GenerateToolUseID(funcName)
+}
+
+// ExtractFunctionName extracts function name from tool_use_id
+// Format: {funcName}-{random8hex} or legacy format (toolu_*)
+// If parsing fails, returns the original ID with a warning log
+func ExtractFunctionName(toolUseId string) string {
+	// Try to find the last '-' separator
+	if idx := strings.LastIndex(toolUseId, "-"); idx > 0 {
+		suffix := toolUseId[idx+1:]
+		// Verify suffix is 8-character hex
+		if len(suffix) == 8 {
+			if _, err := hex.DecodeString(suffix); err == nil {
+				return toolUseId[:idx]
+			}
+		}
+	}
+	// Fallback: return original ID and log warning
+	log.Printf("⚠️ [ExtractFunctionName] Cannot parse function name from tool_use_id: %s (using as-is)", toolUseId)
+	return toolUseId
 }
 
 // ClaudeToGemini converts a Claude request to Gemini format
@@ -143,8 +180,9 @@ func GeminiToClaude(geminiResp map[string]interface{}, model string) ([]byte, er
 								name, _ := functionCall["name"].(string)
 								args := functionCall["args"]
 
-								// Generate a unique ID for the tool use
-								toolUseID := "toolu_" + time.Now().Format("20060102150405")
+								// Generate a unique ID for the tool use with embedded function name
+								// Format: {funcName}-{random8hex} for stateless name extraction
+								toolUseID := GenerateToolUseID(name)
 
 								contentBlocks = append(contentBlocks, ClaudeContentBlock{
 									Type:  "tool_use",
