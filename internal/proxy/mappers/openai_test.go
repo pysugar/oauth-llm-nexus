@@ -1,6 +1,7 @@
 package mappers
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -18,15 +19,23 @@ func TestOpenAIToGemini_SystemRole(t *testing.T) {
 	geminiReq := OpenAIToGemini(req, "gemini-test-model", "test-project")
 
 	// 1. Verify System Instruction
+	// With Antigravity identity injection (v3.3.17), SystemInstruction has 2 parts:
+	// - Part 0: Antigravity identity
+	// - Part 1: User's system message
 	if geminiReq.Request.SystemInstruction == nil {
 		t.Fatal("SystemInstruction should not be nil")
 	}
-	if len(geminiReq.Request.SystemInstruction.Parts) != 1 {
-		t.Fatalf("Expected 1 system part, got %d", len(geminiReq.Request.SystemInstruction.Parts))
+	if len(geminiReq.Request.SystemInstruction.Parts) != 2 {
+		t.Fatalf("Expected 2 system parts (identity + user), got %d", len(geminiReq.Request.SystemInstruction.Parts))
 	}
+	// Part 0 should be Antigravity identity
+	if !strings.Contains(geminiReq.Request.SystemInstruction.Parts[0].Text, "You are Antigravity") {
+		t.Errorf("Part 0 should contain Antigravity identity")
+	}
+	// Part 1 should be user's system message
 	expectedSys := "You are a helpful assistant."
-	if geminiReq.Request.SystemInstruction.Parts[0].Text != expectedSys {
-		t.Errorf("System instruction mismatch. Expected %q, got %q", expectedSys, geminiReq.Request.SystemInstruction.Parts[0].Text)
+	if geminiReq.Request.SystemInstruction.Parts[1].Text != expectedSys {
+		t.Errorf("System instruction mismatch. Expected %q, got %q", expectedSys, geminiReq.Request.SystemInstruction.Parts[1].Text)
 	}
 
 	// 2. Verify Message Content (System messages should be removed from contents)
@@ -71,9 +80,16 @@ func TestOpenAIToGemini_NoSystemRole(t *testing.T) {
 
 	geminiReq := OpenAIToGemini(req, "gemini-test-model", "test-project")
 
-	// Verify System Instruction is nil
-	if geminiReq.Request.SystemInstruction != nil {
-		t.Fatal("SystemInstruction should be nil when no system message is present")
+	// With Antigravity identity injection (v3.3.17), SystemInstruction is always present
+	// containing the Antigravity identity even without user system message
+	if geminiReq.Request.SystemInstruction == nil {
+		t.Fatal("SystemInstruction should contain Antigravity identity")
+	}
+	if len(geminiReq.Request.SystemInstruction.Parts) != 1 {
+		t.Fatalf("Expected 1 part (identity only), got %d", len(geminiReq.Request.SystemInstruction.Parts))
+	}
+	if !strings.Contains(geminiReq.Request.SystemInstruction.Parts[0].Text, "You are Antigravity") {
+		t.Error("SystemInstruction should contain Antigravity identity")
 	}
 
 	// Verify Contents
