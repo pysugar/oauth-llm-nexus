@@ -73,8 +73,18 @@ func (c *Client) SmartGenerateContent(accessToken string, payload map[string]int
 	// For premium models: use streaming endpoint, consume stream, merge to JSON
 	if isPremiumModel(model) {
 		c.enhanceForPremiumModel(payload)
-		log.Printf("⚠️ [PERFORMANCE] Premium model %s in non-stream mode - consider using stream=true for better performance", model)
-		log.Printf("🔄 SmartGenerateContent: using streaming endpoint for premium model %s (will merge to JSON)", model)
+		// Extract requestId for logging
+		requestId := ""
+		if rid, ok := payload["requestId"].(string); ok {
+			requestId = rid
+		}
+		if requestId != "" {
+			log.Printf("⚠️ [%s] Premium model %s in non-stream mode - consider using stream=true", requestId, model)
+			log.Printf("🔄 [%s] SmartGenerateContent: using streaming endpoint (will merge to JSON)", requestId)
+		} else {
+			log.Printf("⚠️ [PERFORMANCE] Premium model %s in non-stream mode - consider using stream=true", model)
+			log.Printf("🔄 SmartGenerateContent: using streaming endpoint for premium model %s (will merge to JSON)", model)
+		}
 
 		// Get streaming response
 		resp, err := c.doRequestWithFallback("streamGenerateContent", "alt=sse", accessToken, payload)
@@ -376,7 +386,16 @@ func (c *Client) SmartStreamGenerateContent(accessToken string, payload map[stri
 	// Apply premium model enhancements
 	if isPremiumModel(model) {
 		c.enhanceForPremiumModel(payload)
-		log.Printf("🔄 SmartStreamGenerateContent: enhanced premium model %s", model)
+		// Extract requestId for logging
+		requestId := ""
+		if rid, ok := payload["requestId"].(string); ok {
+			requestId = rid
+		}
+		if requestId != "" {
+			log.Printf("🔄 [%s] SmartStreamGenerateContent: enhanced premium model %s", requestId, model)
+		} else {
+			log.Printf("🔄 SmartStreamGenerateContent: enhanced premium model %s", model)
+		}
 	} else {
 		c.ensureToolConfig(payload)
 	}
@@ -545,10 +564,21 @@ func (c *Client) doRequest(method, url, accessToken string, payload interface{})
 		}
 		body = bytes.NewBuffer(jsonData)
 
-		// Stage 2: Centralized Gemini request logging
+		// Stage 2: Centralized Gemini request logging with requestId for tracing
 		if util.IsVerbose() {
+			// Extract requestId from payload for log correlation
+			requestId := ""
+			if payloadMap, ok := payload.(map[string]interface{}); ok {
+				if rid, ok := payloadMap["requestId"].(string); ok {
+					requestId = rid
+				}
+			}
 			prettyBytes, _ := json.MarshalIndent(payload, "", "  ")
-			log.Printf("🔄 [VERBOSE] Gemini API Request Payload:\n%s", string(prettyBytes))
+			if requestId != "" {
+				log.Printf("🔄 [VERBOSE] [%s] Gemini API Request Payload:\n%s", requestId, string(prettyBytes))
+			} else {
+				log.Printf("🔄 [VERBOSE] Gemini API Request Payload:\n%s", string(prettyBytes))
+			}
 		}
 	}
 
