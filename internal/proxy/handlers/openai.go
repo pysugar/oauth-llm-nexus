@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/pysugar/oauth-llm-nexus/internal/auth/token"
 	"github.com/pysugar/oauth-llm-nexus/internal/db"
 	"github.com/pysugar/oauth-llm-nexus/internal/db/models"
@@ -23,24 +22,11 @@ import (
 // OpenAIChatHandler handles /v1/chat/completions
 func OpenAIChatHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Get token: Check for explicit account header, else use Primary/Default
-		var cachedToken *token.CachedToken
-		var err error
-
-		if accountHeader := r.Header.Get("X-Nexus-Account"); accountHeader != "" {
-			// Explicit account selection
-			cachedToken, err = tokenMgr.GetTokenByIdentifier(accountHeader)
-			if err != nil {
-				writeOpenAIError(w, fmt.Sprintf("Account not found: %s", accountHeader), http.StatusUnauthorized)
-				return
-			}
-		} else {
-			// Implicit: Use Primary or Default account
-			cachedToken, err = tokenMgr.GetPrimaryOrDefaultToken()
-			if err != nil {
-				writeOpenAIError(w, "No valid token available", http.StatusUnauthorized)
-				return
-			}
+		// Get token using common helper
+		cachedToken, err := GetTokenFromRequest(r, tokenMgr)
+		if err != nil {
+			writeOpenAIError(w, "No valid token available: "+err.Error(), http.StatusUnauthorized)
+			return
 		}
 
 		// Parse request
@@ -50,12 +36,8 @@ func OpenAIChatHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client)
 			return
 		}
 
-		// Generate requestId early so all logs can use it
-		// Use client-provided X-Request-ID if present, otherwise generate new one
-		requestId := r.Header.Get("X-Request-ID")
-		if requestId == "" {
-			requestId = "agent-" + uuid.New().String()
-		}
+		// Generate requestId using common helper
+		requestId := GetOrGenerateRequestID(r)
 
 		// Verbose logging controlled by NEXUS_VERBOSE
 		verbose := IsVerbose()
@@ -220,9 +202,7 @@ func handleOpenAIStreaming(w http.ResponseWriter, client *upstream.Client, token
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
+	SetSSEHeaders(w)
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -373,17 +353,8 @@ func OpenAIChatHandlerWithMonitor(tokenMgr *token.Manager, upstreamClient *upstr
 		}
 		json.Unmarshal(bodyBytes, &req)
 
-		// Get account email
-		var accountEmail string
-		if accountHeader := r.Header.Get("X-Nexus-Account"); accountHeader != "" {
-			if cachedToken, err := tokenMgr.GetTokenByIdentifier(accountHeader); err == nil {
-				accountEmail = cachedToken.Email
-			}
-		} else {
-			if cachedToken, err := tokenMgr.GetPrimaryOrDefaultToken(); err == nil {
-				accountEmail = cachedToken.Email
-			}
-		}
+		// Get account email using common helper
+		accountEmail := GetAccountEmail(r, tokenMgr)
 
 		// For streaming requests, we can't wrap the response writer
 		// Just call base handler and log basic info

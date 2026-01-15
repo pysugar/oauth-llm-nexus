@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/pysugar/oauth-llm-nexus/internal/auth/token"
 	"github.com/pysugar/oauth-llm-nexus/internal/db"
 	"github.com/pysugar/oauth-llm-nexus/internal/db/models"
@@ -23,22 +22,11 @@ import (
 // ClaudeMessagesHandler handles /anthropic/v1/messages
 func ClaudeMessagesHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Get token: Check for explicit account header, else use Primary/Default
-		var cachedToken *token.CachedToken
-		var err error
-
-		if accountHeader := r.Header.Get("X-Nexus-Account"); accountHeader != "" {
-			cachedToken, err = tokenMgr.GetTokenByIdentifier(accountHeader)
-			if err != nil {
-				writeClaudeError(w, fmt.Sprintf("Account not found: %s", accountHeader), http.StatusUnauthorized)
-				return
-			}
-		} else {
-			cachedToken, err = tokenMgr.GetPrimaryOrDefaultToken()
-			if err != nil {
-				writeClaudeError(w, "No valid token available", http.StatusUnauthorized)
-				return
-			}
+		// Get token using common helper
+		cachedToken, err := GetTokenFromRequest(r, tokenMgr)
+		if err != nil {
+			writeClaudeError(w, "No valid token available: "+err.Error(), http.StatusUnauthorized)
+			return
 		}
 
 		// Parse request as flexible JSON (Claude Code sends complex content blocks)
@@ -56,11 +44,8 @@ func ClaudeMessagesHandler(tokenMgr *token.Manager, upstreamClient *upstream.Cli
 
 		log.Printf("📨 Claude request: model=%s messages=%d stream=%v", model, len(messages), stream)
 
-		// Generate requestId early so all logs can use it
-		requestId := r.Header.Get("X-Request-ID")
-		if requestId == "" {
-			requestId = "agent-" + uuid.New().String()
-		}
+		// Generate requestId using common helper
+		requestId := GetOrGenerateRequestID(r)
 
 		// Stage 1: Verbose logging for raw Claude request
 		if IsVerbose() {
@@ -371,9 +356,7 @@ func handleClaudeStreaming(w http.ResponseWriter, client *upstream.Client, token
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
+	SetSSEHeaders(w)
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -648,17 +631,8 @@ func ClaudeMessagesHandlerWithMonitor(tokenMgr *token.Manager, upstreamClient *u
 		}
 		json.Unmarshal(bodyBytes, &req)
 
-		// Get account email
-		var accountEmail string
-		if accountHeader := r.Header.Get("X-Nexus-Account"); accountHeader != "" {
-			if cachedToken, err := tokenMgr.GetTokenByIdentifier(accountHeader); err == nil {
-				accountEmail = cachedToken.Email
-			}
-		} else {
-			if cachedToken, err := tokenMgr.GetPrimaryOrDefaultToken(); err == nil {
-				accountEmail = cachedToken.Email
-			}
-		}
+		// Get account email using common helper
+		accountEmail := GetAccountEmail(r, tokenMgr)
 
 		// Use response recorder
 		rec := &responseRecorder{ResponseWriter: w, statusCode: 200}

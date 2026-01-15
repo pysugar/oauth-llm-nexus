@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"github.com/pysugar/oauth-llm-nexus/internal/auth/token"
 	"github.com/pysugar/oauth-llm-nexus/internal/db"
 	"github.com/pysugar/oauth-llm-nexus/internal/db/models"
@@ -37,22 +36,11 @@ func GenAIHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client) http
 		// Resolve model mapping (e.g. gemini-2.0-flash -> gemini-3-flash)
 		model := db.ResolveModel(rawModel, "google")
 
-		// Get token: Check for explicit account header, else use Primary/Default
-		var cachedToken *token.CachedToken
-		var err error
-
-		if accountHeader := r.Header.Get("X-Nexus-Account"); accountHeader != "" {
-			cachedToken, err = tokenMgr.GetTokenByIdentifier(accountHeader)
-			if err != nil {
-				writeGenAIError(w, "Account not found: "+accountHeader, http.StatusUnauthorized)
-				return
-			}
-		} else {
-			cachedToken, err = tokenMgr.GetPrimaryOrDefaultToken()
-			if err != nil {
-				writeGenAIError(w, "No valid token", http.StatusUnauthorized)
-				return
-			}
+		// Get token using common helper
+		cachedToken, err := GetTokenFromRequest(r, tokenMgr)
+		if err != nil {
+			writeGenAIError(w, "No valid token: "+err.Error(), http.StatusUnauthorized)
+			return
 		}
 
 		// Parse request body
@@ -64,12 +52,8 @@ func GenAIHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client) http
 
 		log.Printf("📨 GenAI request: model=%s", model)
 
-		// Generate requestId early so all logs can use it
-		// Use client-provided X-Request-ID if present, otherwise generate new one
-		requestId := r.Header.Get("X-Request-ID")
-		if requestId == "" {
-			requestId = "agent-" + uuid.New().String()
-		}
+		// Generate requestId using common helper
+		requestId := GetOrGenerateRequestID(r)
 
 		if IsVerbose() {
 			reqBytes, _ := json.MarshalIndent(reqBody, "", "  ")
@@ -183,22 +167,11 @@ func GenAIStreamHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client
 		// Resolve model mapping
 		model := db.ResolveModel(rawModel, "google")
 
-		// Get token: Check for explicit account header, else use Primary/Default
-		var cachedToken *token.CachedToken
-		var err error
-
-		if accountHeader := r.Header.Get("X-Nexus-Account"); accountHeader != "" {
-			cachedToken, err = tokenMgr.GetTokenByIdentifier(accountHeader)
-			if err != nil {
-				writeGenAIError(w, "Account not found: "+accountHeader, http.StatusUnauthorized)
-				return
-			}
-		} else {
-			cachedToken, err = tokenMgr.GetPrimaryOrDefaultToken()
-			if err != nil {
-				writeGenAIError(w, "No valid token", http.StatusUnauthorized)
-				return
-			}
+		// Get token using common helper
+		cachedToken, err := GetTokenFromRequest(r, tokenMgr)
+		if err != nil {
+			writeGenAIError(w, "No valid token: "+err.Error(), http.StatusUnauthorized)
+			return
 		}
 
 		var reqBody map[string]interface{}
@@ -209,12 +182,8 @@ func GenAIStreamHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client
 
 		log.Printf("📨 GenAI stream request: model=%s", model)
 
-		// Stage 1: Verbose logging for raw GenAI stream request
-		// Use client-provided X-Request-ID if present, otherwise generate new one
-		requestId := r.Header.Get("X-Request-ID")
-		if requestId == "" {
-			requestId = "agent-" + uuid.New().String()
-		}
+		// Generate requestId using common helper
+		requestId := GetOrGenerateRequestID(r)
 		if IsVerbose() {
 			reqBytes, _ := json.MarshalIndent(reqBody, "", "  ")
 			log.Printf("📥 [VERBOSE] [%s] GenAI stream raw request:\n%s", requestId, string(reqBytes))
@@ -272,9 +241,7 @@ func GenAIStreamHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client
 			return
 		}
 
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("Connection", "keep-alive")
+		SetSSEHeaders(w)
 
 		flusher, ok := w.(http.Flusher)
 		if !ok {
@@ -470,17 +437,8 @@ func GenAIHandlerWithMonitor(tokenMgr *token.Manager, upstreamClient *upstream.C
 		bodyBytes, _ := io.ReadAll(r.Body)
 		r.Body = io.NopCloser(strings.NewReader(string(bodyBytes)))
 
-		// Get account email
-		var accountEmail string
-		if accountHeader := r.Header.Get("X-Nexus-Account"); accountHeader != "" {
-			if cachedToken, err := tokenMgr.GetTokenByIdentifier(accountHeader); err == nil {
-				accountEmail = cachedToken.Email
-			}
-		} else {
-			if cachedToken, err := tokenMgr.GetPrimaryOrDefaultToken(); err == nil {
-				accountEmail = cachedToken.Email
-			}
-		}
+		// Get account email using common helper
+		accountEmail := GetAccountEmail(r, tokenMgr)
 
 		// Use response recorder
 		rec := &responseRecorder{ResponseWriter: w, statusCode: 200}
@@ -553,17 +511,8 @@ func GenAIStreamHandlerWithMonitor(tokenMgr *token.Manager, upstreamClient *upst
 		bodyBytes, _ := io.ReadAll(r.Body)
 		r.Body = io.NopCloser(strings.NewReader(string(bodyBytes)))
 
-		// Get account email
-		var accountEmail string
-		if accountHeader := r.Header.Get("X-Nexus-Account"); accountHeader != "" {
-			if cachedToken, err := tokenMgr.GetTokenByIdentifier(accountHeader); err == nil {
-				accountEmail = cachedToken.Email
-			}
-		} else {
-			if cachedToken, err := tokenMgr.GetPrimaryOrDefaultToken(); err == nil {
-				accountEmail = cachedToken.Email
-			}
-		}
+		// Get account email using common helper
+		accountEmail := GetAccountEmail(r, tokenMgr)
 
 		// For streaming, we can't easily capture the full response
 		baseHandler(w, r)
