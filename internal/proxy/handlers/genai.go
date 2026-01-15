@@ -126,7 +126,10 @@ func GenAIHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client) http
 		}
 		defer resp.Body.Close()
 
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
+		if err != nil && IsVerbose() {
+			log.Printf("⚠️ [VERBOSE] [%s] /genai/v1beta ReadAll error: %v", requestId, err)
+		}
 
 		if resp.StatusCode != http.StatusOK {
 			if IsVerbose() {

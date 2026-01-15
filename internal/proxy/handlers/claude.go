@@ -297,7 +297,10 @@ func handleClaudeNonStreaming(w http.ResponseWriter, client *upstream.Client, to
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil && IsVerbose() {
+		log.Printf("⚠️ [VERBOSE] [%s] /anthropic/v1/messages ReadAll error: %v", requestId, err)
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		if IsVerbose() {
@@ -314,7 +317,9 @@ func handleClaudeNonStreaming(w http.ResponseWriter, client *upstream.Client, to
 
 	// Unwrap Cloud Code API response
 	var wrapped map[string]interface{}
-	json.Unmarshal(body, &wrapped)
+	if err := json.Unmarshal(body, &wrapped); err != nil && IsVerbose() {
+		log.Printf("⚠️ [VERBOSE] [%s] /anthropic/v1/messages Unmarshal error: %v", requestId, err)
+	}
 
 	geminiResp, ok := wrapped["response"].(map[string]interface{})
 	if !ok {

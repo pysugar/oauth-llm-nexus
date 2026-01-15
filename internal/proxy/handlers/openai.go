@@ -116,7 +116,10 @@ func handleOpenAINonStreaming(w http.ResponseWriter, client *upstream.Client, to
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil && verbose {
+		log.Printf("⚠️ [VERBOSE] [%s] /v1/chat/completions ReadAll error: %v", requestId, err)
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		if verbose {
@@ -136,9 +139,10 @@ func handleOpenAINonStreaming(w http.ResponseWriter, client *upstream.Client, to
 		log.Printf("📥 [VERBOSE] /v1/chat/completions Gemini API Response:\n%s", string(prettyBytes))
 	}
 
-	// Unwrap Cloud Code API response
 	var wrapped map[string]interface{}
-	json.Unmarshal(body, &wrapped)
+	if err := json.Unmarshal(body, &wrapped); err != nil && verbose {
+		log.Printf("⚠️ [VERBOSE] [%s] /v1/chat/completions Unmarshal error: %v", requestId, err)
+	}
 
 	geminiResp, ok := wrapped["response"].(map[string]interface{})
 	if !ok {
