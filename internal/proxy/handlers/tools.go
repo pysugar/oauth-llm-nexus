@@ -266,7 +266,9 @@ var toolsPageHTML = `<!DOCTYPE html>
             </div>
 
         <div class="footer">
-            <a href="/">← Dashboard</a> • <span style="color:#cbd5e1; font-weight:bold;">{{VERSION}}</span> • <a href="/healthz">Health Check</a>
+            <a href="/">← Dashboard</a> • 
+            <button onclick="toggleDemoMode()" id="demo-mode-btn" style="background:#4b5563;border:none;color:white;padding:0.375rem 0.75rem;border-radius:0.375rem;cursor:pointer;font-size:0.75rem;">🎬 Demo Mode</button>
+            • <span style="color:#cbd5e1; font-weight:bold;">{{VERSION}}</span> • <a href="/healthz">Health Check</a>
         </div>
 
         <!-- Import Preview Modal -->
@@ -668,23 +670,50 @@ var toolsPageHTML = `<!DOCTYPE html>
         }
         const baseUrl = window.location.origin;
 
+        // Demo Mode: masks sensitive data for safe screenshots
+        let demoMode = false;
+        let apiKey = 'sk-xxx';
+        
+        function toggleDemoMode() {
+            demoMode = !demoMode;
+            const btn = document.getElementById('demo-mode-btn');
+            if (demoMode) {
+                btn.style.background = '#22c55e';
+                btn.textContent = '🎬 Demo Mode ON';
+            } else {
+                btn.style.background = '#4b5563';
+                btn.textContent = '🎬 Demo Mode';
+            }
+            generateConfigExamples();
+            // Update the API key display in header too
+            const displayKey = demoMode ? 'sk-demo...demo' : apiKey;
+            document.getElementById('api-key-display').textContent = displayKey;
+        }
+        
+        function getDisplayApiKey() {
+            return demoMode ? 'sk-demo...demo' : apiKey;
+        }
+
         async function loadAPIKey() {
             try {
                 const res = await fetch('/api/config/apikey');
                 if (res.ok) {
                     const data = await res.json();
                     apiKey = data.api_key || 'sk-xxx';
-                    document.getElementById('api-key-display').textContent = apiKey;
+                    const displayKey = demoMode ? 'sk-demo...demo' : apiKey;
+                    document.getElementById('api-key-display').textContent = displayKey;
                     generateConfigExamples();
                 }
             } catch (e) { console.error(e); }
         }
 
         function generateConfigExamples() {
+            const displayKey = getDisplayApiKey();
+            
             // Claude Code - Complete example with all env vars
             document.getElementById('claude-config').textContent = JSON.stringify({
                 "env": {
-                    "ANTHROPIC_AUTH_TOKEN": apiKey,
+                    "ANTHROPIC_AUTH_TOKEN": displayKey,
                     "ANTHROPIC_BASE_URL": baseUrl + "/anthropic",
                     "ANTHROPIC_MODEL": "claude-sonnet-4-5",
                     "ANTHROPIC_DEFAULT_HAIKU_MODEL": "gemini-3-flash",
@@ -696,7 +725,7 @@ var toolsPageHTML = `<!DOCTYPE html>
 
             // Codex
             document.getElementById('codex-config').textContent = 
-                '# auth.json\n' + JSON.stringify({"OPENAI_API_KEY": apiKey}, null, 2) + '\n\n' +
+                '# auth.json\n' + JSON.stringify({"OPENAI_API_KEY": displayKey}, null, 2) + '\n\n' +
                 '# config.toml\nmodel_provider = "nexus"\nmodel = "gpt-4o"\nmodel_reasoning_effort = "high"\n\n' +
                 '[model_providers.nexus]\nname = "Nexus Proxy"\nbase_url = "' + baseUrl + '/v1"\n' +
                 'wire_api = "responses"\nrequires_openai_auth = true';
@@ -704,7 +733,7 @@ var toolsPageHTML = `<!DOCTYPE html>
             // Gemini CLI - Use /v1 endpoint (OpenAI-compatible)
             document.getElementById('gemini-config').textContent = 
                 '# Gemini CLI can use OpenAI-compatible endpoint\n' +
-                'OPENAI_API_KEY=' + apiKey + '\n' +
+                'OPENAI_API_KEY=' + displayKey + '\n' +
                 'OPENAI_BASE_URL=' + baseUrl + '/v1\n' +
                 '# Or use native Gemini endpoint (requires Gemini API key)\n' +
                 '# GEMINI_API_KEY=your-gemini-api-key';
@@ -713,7 +742,7 @@ var toolsPageHTML = `<!DOCTYPE html>
             document.getElementById('genai-config').textContent = 
                 'from google import genai\n\n' +
                 'client = genai.Client(\n' +
-                '    api_key="' + apiKey + '",\n' +
+                '    api_key="' + displayKey + '",\n' +
                 '    http_options={"base_url": "' + baseUrl + '/genai"}\n' +
                 ')\n\n' +
                 '# response = client.models.generate_content(model="gemini-3-flash", contents="Hello")';
@@ -723,7 +752,7 @@ var toolsPageHTML = `<!DOCTYPE html>
                 "language_models": {
                     "openai": {
                         "api_url": baseUrl + "/v1",
-                        "api_key": apiKey,
+                        "api_key": displayKey,
                         "available_models": [
                             {"name": "gpt-4o", "max_tokens": 128000},
                             {"name": "claude-sonnet-4-5", "max_tokens": 200000},
@@ -735,31 +764,32 @@ var toolsPageHTML = `<!DOCTYPE html>
 
             // OpenAI SDK / Cursor
             document.getElementById('openai-config').textContent = 
-                'Base URL: ' + baseUrl + '/v1\nAPI Key: ' + apiKey + '\n\n' +
+                'Base URL: ' + baseUrl + '/v1\nAPI Key: ' + displayKey + '\n\n' +
                 '# Python SDK\n' +
                 'from openai import OpenAI\n' +
                 'client = OpenAI(\n' +
                 '    base_url="' + baseUrl + '/v1",\n' +
-                '    api_key="' + apiKey + '"\n' +
+                '    api_key="' + displayKey + '"\n' +
                 ')';
 
             // Shell / Aider
             document.getElementById('shell-config').textContent = 
                 '# Claude/Anthropic-compatible\n' +
                 'export ANTHROPIC_BASE_URL=' + baseUrl + '/anthropic\n' +
-                'export ANTHROPIC_API_KEY=' + apiKey + '\n\n' +
+                'export ANTHROPIC_API_KEY=' + displayKey + '\n\n' +
                 '# OpenAI-compatible (works with most tools)\n' +
                 'export OPENAI_BASE_URL=' + baseUrl + '/v1\n' +
-                'export OPENAI_API_KEY=' + apiKey;
+                'export OPENAI_API_KEY=' + displayKey;
         }
 
         function copyConfig(type) {
+            const displayKey = getDisplayApiKey();
             let text = '';
             switch(type) {
                 case 'claude':
                     text = JSON.stringify({
                         "env": {
-                            "ANTHROPIC_AUTH_TOKEN": apiKey,
+                            "ANTHROPIC_AUTH_TOKEN": displayKey,
                             "ANTHROPIC_BASE_URL": baseUrl + "/anthropic",
                             "ANTHROPIC_MODEL": "claude-sonnet-4-5",
                             "ANTHROPIC_DEFAULT_HAIKU_MODEL": "gemini-3-flash",
@@ -770,22 +800,22 @@ var toolsPageHTML = `<!DOCTYPE html>
                     }, null, 2);
                     break;
                 case 'codex':
-                    text = JSON.stringify({"OPENAI_API_KEY": apiKey}, null, 2);
+                    text = JSON.stringify({"OPENAI_API_KEY": displayKey}, null, 2);
                     break;
                 case 'gemini':
-                    text = 'OPENAI_API_KEY=' + apiKey + '\nOPENAI_BASE_URL=' + baseUrl + '/v1';
+                    text = 'OPENAI_API_KEY=' + displayKey + '\nOPENAI_BASE_URL=' + baseUrl + '/v1';
                     break;
                 case 'genai':
-                    text = 'from google import genai\n\nclient = genai.Client(api_key="' + apiKey + '", http_options={"base_url": "' + baseUrl + '/genai"})';
+                    text = 'from google import genai\n\nclient = genai.Client(api_key="' + displayKey + '", http_options={"base_url": "' + baseUrl + '/genai"})';
                     break;
                 case 'zed':
-                    text = JSON.stringify({"language_models": {"openai": {"api_url": baseUrl + "/v1", "api_key": apiKey}}}, null, 2);
+                    text = JSON.stringify({"language_models": {"openai": {"api_url": baseUrl + "/v1", "api_key": displayKey}}}, null, 2);
                     break;
                 case 'openai':
-                    text = 'Base URL: ' + baseUrl + '/v1\nAPI Key: ' + apiKey;
+                    text = 'Base URL: ' + baseUrl + '/v1\nAPI Key: ' + displayKey;
                     break;
                 case 'shell':
-                    text = 'export ANTHROPIC_BASE_URL=' + baseUrl + '/anthropic\nexport ANTHROPIC_API_KEY=' + apiKey + '\nexport OPENAI_BASE_URL=' + baseUrl + '/v1\nexport OPENAI_API_KEY=' + apiKey;
+                    text = 'export ANTHROPIC_BASE_URL=' + baseUrl + '/anthropic\nexport ANTHROPIC_API_KEY=' + displayKey + '\nexport OPENAI_BASE_URL=' + baseUrl + '/v1\nexport OPENAI_API_KEY=' + displayKey;
                     break;
             }
             navigator.clipboard.writeText(text);

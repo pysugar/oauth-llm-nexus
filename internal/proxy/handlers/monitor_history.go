@@ -162,6 +162,19 @@ var monitorHistoryHTML = `<!DOCTYPE html>
         let currentPage = 1;
         let totalPages = 1;
         let searchQuery = '';
+        
+        // Always mask sensitive data (emails)
+        function maskEmail(email) {
+            if (!email) return '-';
+            const parts = email.split('@');
+            if (parts.length !== 2) return 'u***r@example.com';
+            const local = parts[0];
+            const domain = parts[1];
+            const maskedLocal = local.charAt(0) + '***' + (local.length > 1 ? local.charAt(local.length - 1) : '');
+            const domainParts = domain.split('.');
+            const maskedDomain = domainParts[0].charAt(0) + '***' + '.' + (domainParts[1] || 'com');
+            return maskedLocal + '@' + maskedDomain;
+        }
 
         async function loadLogs(page = 1) {
             currentPage = page;
@@ -206,13 +219,13 @@ var monitorHistoryHTML = `<!DOCTYPE html>
                 const isSuccess = log.status >= 200 && log.status < 400;
                 const badgeClass = isSuccess ? 'badge-success' : (log.status === 429 ? 'badge-warning' : 'badge-error');
                 const time = new Date(log.timestamp).toLocaleString();
-                const account = log.account_email ? log.account_email.replace(/(.{3}).*(@.*)/, '$1***$2') : '-';
+                const account = maskEmail(log.account_email);
                 
                 html += '<tr onclick="showDetail(' + idx + ')">';
                 html += '<td><span class="badge ' + badgeClass + '">' + log.status + '</span></td>';
                 html += '<td><strong>' + log.method + '</strong></td>';
                 html += '<td><div class="model">' + (log.model || '-') + '</div></td>';
-                html += '<td class="account">' + account + '</td>';
+                html += '<td class="account" title="' + (log.account_email || '') + '">' + account + '</td>';
                 html += '<td>' + log.url + '</td>';
                 
                 html += '<td class="right tokens">';
@@ -270,7 +283,7 @@ var monitorHistoryHTML = `<!DOCTYPE html>
             html += '</div>';
             
             html += '<div class="detail-grid" style="grid-template-columns: repeat(3, 1fr);">';
-            html += '<div class="detail-item"><label>Account</label><div class="value">' + (log.account_email || '-') + '</div></div>';
+            html += '<div class="detail-item"><label>Account</label><div class="value" style="cursor:help" title="' + (log.account_email || '') + '">' + maskEmail(log.account_email) + '</div></div>';
             html += '<div class="detail-item"><label>Input Tokens</label><div class="value">' + (log.input_tokens || 0) + '</div></div>';
             html += '<div class="detail-item"><label>Output Tokens</label><div class="value">' + (log.output_tokens || 0) + '</div></div>';
             html += '</div>';

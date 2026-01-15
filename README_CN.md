@@ -2,7 +2,7 @@
 
 [![Release](https://img.shields.io/github/v/release/pysugar/oauth-llm-nexus)](https://github.com/pysugar/oauth-llm-nexus/releases)
 [![Go](https://img.shields.io/badge/Go-1.24+-00ADD8?logo=go)](https://go.dev)
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-Sustainable%20Use-green.svg)](LICENSE)
 
 **OAuth-LLM-Nexus** 是一个强大的轻量级代理服务器，它能够将标准 LLM 客户端（OpenAI、Anthropic、Google GenAI）与 Google 内部的 "Cloud Code" API (Gemini) 连接起来。让你使用 Google 账号的免费配额来驱动你喜欢的 AI 工具，如 Claude Code、Cursor、通用 OpenAI 客户端等。
 
@@ -14,8 +14,10 @@
     -   **Google GenAI 兼容**：`/genai/v1beta/models`（支持官方 Google SDK）
 -   **智能模型映射**：通过 Dashboard 配置客户端模型名到后端模型的路由。
 -   **账号池管理**：链接多个 Google 账号以池化配额，提升限制。
+-   **用户级配额路由**：使用 `X-Nexus-Account` 请求头将请求路由到指定账号，实现配额隔离。
 -   **自动故障转移**：当一个账号触发速率限制 (429) 时，自动切换到下一个可用账号。
 -   **仪表盘**：内置 Web 仪表盘，管理账号、模型路由、查看使用情况和获取 API Key。
+-   **请求监控**：实时请求监控，包含详细日志、延迟追踪和错误分析。
 -   **安全性**：API Key 认证保护客户端访问。
 -   **Homebrew 支持**：通过 `brew tap` 轻松安装，支持服务管理。
 
@@ -23,17 +25,15 @@
 
 ## 🖼️ 界面预览
 
-<p align="center">
-  <img src="docs/preview_01.png" width="600" alt="Dashboard 总览" />
-</p>
+### 仪表盘总览
+**账号管理、API Key（默认脱敏）、模型路由**
+![Dashboard 演示](docs/dashboard_fluent.webp)
 
-<p align="center">
-  <img src="docs/preview_02.png" width="600" alt="Config Inspector - 本地发现" />
-</p>
+### 请求监控
+**实时请求历史与隐私脱敏**
+![Monitor 演示](docs/monitor_fluent.webp)
 
-<p align="center">
-  <img src="docs/preview_03.png" width="600" alt="Config Inspector - 配置参考" />
-</p>
+> **🔒 隐私保护**：所有敏感信息（邮箱和 API Key）**默认脱敏显示**。鼠标悬停可查看完整内容。
 
 ## 🚀 安装
 
@@ -237,6 +237,30 @@ routes:
 
 不在路由表中的模型会直接透传（如原生 Gemini 模型）。
 
+## 🎯 用户级配额路由
+
+默认情况下，所有请求使用 **Primary（主账号）** 的配额。你可以使用 `X-Nexus-Account` 请求头将特定请求路由到不同账号：
+
+```bash
+# 通过邮箱指定账号
+curl -X POST http://localhost:8086/v1/chat/completions \
+  -H "Authorization: Bearer sk-xxx" \
+  -H "X-Nexus-Account: user@example.com" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "gpt-4o", "messages": [{"role": "user", "content": "你好"}]}'
+```
+
+**使用场景**：
+- **团队配额隔离**：为不同团队成员分配不同账号
+- **项目级路由**：为不同项目使用独立账号  
+- **速率限制管理**：跨多个账号分散高并发工作负载
+
+| 请求头 | 值 | 描述 |
+|:-------|:------|:------------|
+| `X-Nexus-Account` | 邮箱或账号 ID | 路由到指定账号而非主账号 |
+
+> **注意**：指定的账号必须已在 Dashboard 中链接且处于活跃状态。如果找不到，请求将返回 401 Unauthorized。
+
 ## 🏗️ 架构
 
 ```mermaid
@@ -291,9 +315,21 @@ brew services restart oauth-llm-nexus
 | `POST /v1/chat/completions` | OpenAI | 聊天补全 |
 | `GET /v1/models` | OpenAI | 列出模型 |
 | `POST /anthropic/v1/messages` | Anthropic | Messages API |
+| `GET /anthropic/v1/models` | Anthropic | 列出 Claude 模型 |
 | `POST /genai/v1beta/models/{model}:generateContent` | GenAI | 生成内容 |
+| `POST /genai/v1beta/models/{model}:streamGenerateContent` | GenAI | 流式生成内容 |
+| `GET /genai/v1beta/models` | GenAI | 列出可用模型 |
 | `GET /api/accounts` | 内部 | 列出已链接账号 |
 | `GET /api/model-routes` | 内部 | 列出模型路由 |
+| `GET /monitor` | 内部 | 请求监控面板 |
+
+### 请求头
+
+| 请求头 | 必需 | 描述 |
+|:-------|:---------|:------------|
+| `Authorization` | 是 | API key，格式 `Bearer sk-xxx` |
+| `X-Nexus-Account` | 否 | 通过邮箱或 ID 路由到指定账号 |
+| `X-Request-ID` | 否 | 自定义请求 ID 用于追踪 |
 
 ## 🤝 贡献
 
@@ -301,4 +337,4 @@ brew services restart oauth-llm-nexus
 
 ## 📄 许可证
 
-[Apache License 2.0](LICENSE)
+[Sustainable Use License](LICENSE) - 仅供教育和研究用途。详见 LICENSE 文件。

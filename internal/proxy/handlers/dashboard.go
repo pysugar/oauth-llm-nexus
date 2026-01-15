@@ -246,8 +246,7 @@ var dashboardHTML = `<!DOCTYPE html>
             <div class="flex justify-between items-center mb-2">
                 <h3 class="text-sm font-semibold text-gray-400">🔑 API Key</h3>
                 <div class="flex gap-2">
-                    <button onclick="toggleAPIKey()" id="toggle-key-btn" class="text-xs bg-gray-600 hover:bg-gray-500 px-3 py-1 rounded">👁️ Show</button>
-                    <button onclick="copyAPIKey()" class="text-xs bg-gray-600 hover:bg-gray-500 px-3 py-1 rounded">📋 Copy</button>
+                    <button onclick="copyAPIKey()" class="text-xs bg-blue-600 hover:bg-blue-500 px-3 py-1 rounded">📋 Copy</button>
                     <button onclick="regenerateAPIKey()" class="text-xs bg-red-600 hover:bg-red-500 px-3 py-1 rounded">🔄 Regenerate</button>
                 </div>
             </div>
@@ -368,6 +367,19 @@ var dashboardHTML = `<!DOCTYPE html>
     </div>
 
     <script>
+        // Always mask sensitive data (emails, API keys)
+        function maskEmail(email) {
+            if (!email) return '-';
+            const parts = email.split('@');
+            if (parts.length !== 2) return 'u***r@example.com';
+            const local = parts[0];
+            const domain = parts[1];
+            const maskedLocal = local.charAt(0) + '***' + (local.length > 1 ? local.charAt(local.length - 1) : '');
+            const domainParts = domain.split('.');
+            const maskedDomain = domainParts[0].charAt(0) + '***' + '.' + (domainParts[1] || 'com');
+            return maskedLocal + '@' + maskedDomain;
+        }
+        
         function getTierDisplay(tierStr) {
             const tier = (tierStr || 'FREE').toUpperCase();
             if (tier.includes('ULTRA')) {
@@ -447,7 +459,7 @@ var dashboardHTML = `<!DOCTYPE html>
             const providerIcon = acc.provider === 'google' ? '<span title="Antigravity (Google)">🚀</span>' : '<span>🔗</span>';
             html += '<div class="px-4 py-3 flex justify-between items-center border-b border-gray-700">';
             html += '<div class="flex items-center gap-2 flex-wrap">';
-            html += providerIcon + '<span class="font-medium text-white">' + acc.email + '</span>' + primaryBadge;
+            html += providerIcon + '<span class="font-medium text-white cursor-help" title="' + acc.email + '">' + maskEmail(acc.email) + '</span>' + primaryBadge;
             html += '<span class="text-xs ' + tokenColor + '">Token: ' + tokenStatus + '</span></div>';
             html += '<div class="flex items-center gap-2">';
             html += '<span class="px-2 py-1 rounded text-xs font-bold text-white ' + tier.color + '">' + tier.tier + '</span>';
@@ -564,8 +576,9 @@ var dashboardHTML = `<!DOCTYPE html>
                     const data = await res.json();
                     fullAPIKey = data.api_key || '';
                     if (fullAPIKey) {
-                        const masked = fullAPIKey.slice(0, 7) + '****' + fullAPIKey.slice(-4);
-                        document.getElementById('api-key-display').textContent = masked;
+                        // Always display masked version
+                        const displayKey = fullAPIKey.slice(0, 7) + '****' + fullAPIKey.slice(-4);
+                        document.getElementById('api-key-display').textContent = displayKey;
                         document.getElementById('api-key-display').style.display = 'inline';
                         document.getElementById('api-key-masked').style.display = 'none';
                     } else {
@@ -573,22 +586,6 @@ var dashboardHTML = `<!DOCTYPE html>
                     }
                 }
             } catch (e) { console.error(e); }
-        }
-
-        function toggleAPIKey() {
-            const display = document.getElementById('api-key-display');
-            const btn = document.getElementById('toggle-key-btn');
-            if (!fullAPIKey) return;
-
-            apiKeyVisible = !apiKeyVisible;
-            if (apiKeyVisible) {
-                display.textContent = fullAPIKey;
-                btn.textContent = '🙈 Hide';
-            } else {
-                const masked = fullAPIKey.slice(0, 7) + '****' + fullAPIKey.slice(-4);
-                display.textContent = masked;
-                btn.textContent = '👁️ Show';
-            }
         }
 
         async function copyAPIKey() {

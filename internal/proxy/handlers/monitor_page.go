@@ -159,7 +159,8 @@ var monitorPageHTML = `<!DOCTYPE html>
         </div>
 
         <div class="footer">
-            <a href="/">Dashboard</a> • <a href="/monitor/history">Full History</a> • <a href="/tools">Config Inspector</a> • <span style="color:#cbd5e1;font-weight:bold;">{{VERSION}}</span>
+            <a href="/">Dashboard</a> • <a href="/monitor/history">Full History</a> • <a href="/tools">Config Inspector</a> • 
+            <span style="color:#cbd5e1;font-weight:bold;">{{VERSION}}</span>
         </div>
     </div>
 
@@ -177,6 +178,19 @@ var monitorPageHTML = `<!DOCTYPE html>
     <script>
         let isLogging = false;
         let logsData = [];
+        
+        // Always mask sensitive data (emails)
+        function maskEmail(email) {
+            if (!email) return '-';
+            const parts = email.split('@');
+            if (parts.length !== 2) return 'u***r@example.com';
+            const local = parts[0];
+            const domain = parts[1];
+            const maskedLocal = local.charAt(0) + '***' + (local.length > 1 ? local.charAt(local.length - 1) : '');
+            const domainParts = domain.split('.');
+            const maskedDomain = domainParts[0].charAt(0) + '***' + '.' + (domainParts[1] || 'com');
+            return maskedLocal + '@' + maskedDomain;
+        }
 
         async function loadStatus() {
             try {
@@ -257,7 +271,7 @@ var monitorPageHTML = `<!DOCTYPE html>
                 const isSuccess = log.status >= 200 && log.status < 400;
                 const badgeClass = isSuccess ? 'badge-success' : (log.status === 429 ? 'badge-warning' : 'badge-error');
                 const time = new Date(log.timestamp).toLocaleTimeString();
-                const account = log.account_email ? log.account_email.replace(/(.{3}).*(@.*)/, '$1***$2') : '-';
+                const account = maskEmail(log.account_email);
                 
                 html += '<tr onclick="showDetail(' + idx + ')">';
                 
@@ -278,7 +292,7 @@ var monitorPageHTML = `<!DOCTYPE html>
                 }
                 html += '</td>';
                 
-                html += '<td class="account">' + account + '</td>';
+                html += '<td class="account" title="' + (log.account_email || '') + '">' + account + '</td>';
                 html += '<td>' + log.url + '</td>';
                 
                 // Tokens
@@ -315,7 +329,7 @@ var monitorPageHTML = `<!DOCTYPE html>
             html += '</div>';
             
             html += '<div class="detail-grid" style="grid-template-columns: repeat(3, 1fr);">';
-            html += '<div class="detail-item"><label>Account</label><div class="value">' + (log.account_email || '-') + '</div></div>';
+            html += '<div class="detail-item"><label>Account</label><div class="value cursor-help" title="' + (log.account_email || '') + '">' + maskEmail(log.account_email) + '</div></div>';
             html += '<div class="detail-item"><label>Input Tokens</label><div class="value">' + (log.input_tokens || 0) + '</div></div>';
             html += '<div class="detail-item"><label>Output Tokens</label><div class="value">' + (log.output_tokens || 0) + '</div></div>';
             html += '</div>';

@@ -2,7 +2,7 @@
 
 [![Release](https://img.shields.io/github/v/release/pysugar/oauth-llm-nexus)](https://github.com/pysugar/oauth-llm-nexus/releases)
 [![Go](https://img.shields.io/badge/Go-1.24+-00ADD8?logo=go)](https://go.dev)
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-Sustainable%20Use-green.svg)](LICENSE)
 
 **OAuth-LLM-Nexus** is a powerful, lightweight proxy server that bridges standard LLM clients (OpenAI, Anthropic, Google GenAI) with Google's internal "Cloud Code" API (Gemini). It allows you to use your Google account's free tier quotas to power your favorite AI tools like Claude Code, Cursor, generic OpenAI clients, and more.
 
@@ -14,8 +14,10 @@
     -   **Google GenAI Compatible**: `/genai/v1beta/models` (Works with official Google SDKs)
 -   **Smart Model Mapping**: Configurable routing from client model names to backend models via Dashboard.
 -   **Account Pool Management**: Link multiple Google accounts to pool quotas and increase limits.
+-   **User-Specific Quota Routing**: Route requests to specific accounts using `X-Nexus-Account` header for quota isolation.
 -   **Automatic Failover**: Automatically switches to the next available account if one hits a rate limit (429).
 -   **Dashboard**: A built-in web dashboard to manage accounts, model routes, view usage, and get your API key.
+-   **Request Monitor**: Real-time request monitoring with detailed logs, latency tracking, and error analysis.
 -   **Secure**: API Key authentication for client access.
 -   **Homebrew Support**: Easy installation via `brew tap` with service management.
 
@@ -23,17 +25,15 @@
 
 ## 🖼️ Preview
 
-<p align="center">
-  <img src="docs/preview_01.png" width="600" alt="Dashboard Overview" />
-</p>
+### Dashboard Overview
+**Account Management, API Key (masked), and Model Routes**
+![Dashboard Overview](docs/dashboard_fluent.webp)
 
-<p align="center">
-  <img src="docs/preview_02.png" width="600" alt="Config Inspector - Local Discovery" />
-</p>
+### Monitor Overview
+**Real-time Request History with Privacy Masking**
+![Monitor Overview](docs/monitor_fluent.webp)
 
-<p align="center">
-  <img src="docs/preview_03.png" width="600" alt="Config Inspector - Config Reference" />
-</p>
+> **🔒 Privacy**: All sensitive information (emails and API keys) are **masked by default**. Hover to reveal full content when needed.
 
 ## 🚀 Installation
 
@@ -237,6 +237,30 @@ routes:
 
 Models not in the routing table are passed through as-is (e.g., native Gemini models).
 
+## 🎯 User-Specific Quota Routing
+
+By default, all requests use the **Primary** account's quota. You can route specific requests to different accounts using the `X-Nexus-Account` header:
+
+```bash
+# Route to a specific account by email
+curl -X POST http://localhost:8086/v1/chat/completions \
+  -H "Authorization: Bearer sk-xxx" \
+  -H "X-Nexus-Account: user@example.com" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "gpt-4o", "messages": [{"role": "user", "content": "Hello"}]}'
+```
+
+**Use Cases**:
+- **Team Quota Isolation**: Assign different team members to different accounts
+- **Project-Based Routing**: Use separate accounts for different projects  
+- **Rate Limit Management**: Distribute high-volume workloads across multiple accounts
+
+| Header | Value | Description |
+|:-------|:------|:------------|
+| `X-Nexus-Account` | Email or Account ID | Routes to specified account instead of Primary |
+
+> **Note**: The specified account must be linked in the Dashboard and active. If not found, the request returns 401 Unauthorized.
+
 ## 🏗️ Architecture
 
 ```mermaid
@@ -291,9 +315,21 @@ If you're running in an air-gapped or firewall-restricted environment:
 | `POST /v1/chat/completions` | OpenAI | Chat completions |
 | `GET /v1/models` | OpenAI | List models |
 | `POST /anthropic/v1/messages` | Anthropic | Messages API |
+| `GET /anthropic/v1/models` | Anthropic | List available Claude models |
 | `POST /genai/v1beta/models/{model}:generateContent` | GenAI | Generate content |
+| `POST /genai/v1beta/models/{model}:streamGenerateContent` | GenAI | Generate content (streaming) |
+| `GET /genai/v1beta/models` | GenAI | List available models |
 | `GET /api/accounts` | Internal | List linked accounts |
 | `GET /api/model-routes` | Internal | List model routes |
+| `GET /monitor` | Internal | Request monitor dashboard |
+
+### Request Headers
+
+| Header | Required | Description |
+|:-------|:---------|:------------|
+| `Authorization` | Yes | API key in format `Bearer sk-xxx` |
+| `X-Nexus-Account` | No | Route to specific account by email or ID |
+| `X-Request-ID` | No | Custom request ID for tracing |
 
 ## 🤝 Contributing
 
@@ -301,4 +337,4 @@ Pull requests are welcome. For major changes, please open an issue first to disc
 
 ## 📄 License
 
-[Apache License 2.0](LICENSE)
+[Sustainable Use License](LICENSE) - For educational and research purposes only. See LICENSE for details.
