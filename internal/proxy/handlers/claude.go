@@ -485,6 +485,7 @@ func handleClaudeStreaming(w http.ResponseWriter, client *upstream.Client, token
 				if textBlockStarted {
 					fmt.Fprintf(w, "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n")
 					flusher.Flush()
+					textBlockStarted = false // Reset to prevent duplicate close at end of stream
 				}
 
 				// Determine tool_use index (0 if no text, 1 if text was present)
