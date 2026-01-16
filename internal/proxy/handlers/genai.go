@@ -17,6 +17,7 @@ import (
 	"github.com/pysugar/oauth-llm-nexus/internal/proxy/monitor"
 	"github.com/pysugar/oauth-llm-nexus/internal/proxy/translator"
 	"github.com/pysugar/oauth-llm-nexus/internal/upstream"
+	"github.com/pysugar/oauth-llm-nexus/internal/util"
 )
 
 // Antigravity systemInstruction - required for premium models (gemini-3-pro, Claude)
@@ -57,7 +58,7 @@ func GenAIHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client) http
 
 		if IsVerbose() {
 			reqBytes, _ := json.MarshalIndent(reqBody, "", "  ")
-			log.Printf("📥 [VERBOSE] [%s] /genai/v1beta Raw request:\n%s", requestId, string(reqBytes))
+			log.Printf("📥 [VERBOSE] [%s] /genai/v1beta Raw request:\n%s", requestId, util.TruncateBytes(reqBytes))
 		}
 
 		// Build Cloud Code API payload (wrapped format)
@@ -95,7 +96,7 @@ func GenAIHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client) http
 		// Verbose: Log Gemini payload before sending
 		if IsVerbose() {
 			geminiPayloadBytes, _ := json.MarshalIndent(payload, "", "  ")
-			log.Printf("📤 [VERBOSE] [%s] /genai/v1beta Gemini Request Payload:\n%s", requestId, string(geminiPayloadBytes))
+			log.Printf("📤 [VERBOSE] [%s] /genai/v1beta Gemini Request Payload:\n%s", requestId, util.TruncateBytes(geminiPayloadBytes))
 		}
 
 		// Use SmartGenerateContent which automatically handles premium models
@@ -120,7 +121,7 @@ func GenAIHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client) http
 				var prettyErr map[string]interface{}
 				json.Unmarshal(body, &prettyErr)
 				prettyBytes, _ := json.MarshalIndent(prettyErr, "", "  ")
-				log.Printf("❌ [VERBOSE] /genai/v1beta Gemini API error (status %d):\n%s", resp.StatusCode, string(prettyBytes))
+				log.Printf("❌ [VERBOSE] /genai/v1beta Gemini API error (status %d):\n%s", resp.StatusCode, util.TruncateBytes(prettyBytes))
 			}
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(resp.StatusCode)
@@ -132,7 +133,7 @@ func GenAIHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client) http
 		var wrapped map[string]interface{}
 		if err := json.Unmarshal(body, &wrapped); err != nil {
 			if IsVerbose() {
-				log.Printf("❌ [VERBOSE] /genai/v1beta Failed to parse response: %v\nRaw: %s", err, string(body))
+				log.Printf("❌ [VERBOSE] /genai/v1beta Failed to parse response: %v\nRaw: %s", err, util.TruncateBytes(body))
 			}
 			w.Header().Set("Content-Type", "application/json")
 			w.Write(body)
@@ -142,14 +143,14 @@ func GenAIHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client) http
 		// Stage 3: Verbose logging for Gemini response
 		if IsVerbose() {
 			prettyBytes, _ := json.MarshalIndent(wrapped, "", "  ")
-			log.Printf("📥 [VERBOSE] Gemini API Response:\n%s", string(prettyBytes))
+			log.Printf("📥 [VERBOSE] Gemini API Response:\n%s", util.TruncateBytes(prettyBytes))
 		}
 
 		if inner, ok := wrapped["response"]; ok {
 			// Stage 4: Verbose logging for final GenAI response
 			if IsVerbose() {
 				innerBytes, _ := json.MarshalIndent(inner, "", "  ")
-				log.Printf("📤 [VERBOSE] /genai/v1beta Final Response:\n%s", string(innerBytes))
+				log.Printf("📤 [VERBOSE] /genai/v1beta Final Response:\n%s", util.TruncateBytes(innerBytes))
 			}
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(inner)
@@ -186,7 +187,7 @@ func GenAIStreamHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client
 		requestId := GetOrGenerateRequestID(r)
 		if IsVerbose() {
 			reqBytes, _ := json.MarshalIndent(reqBody, "", "  ")
-			log.Printf("📥 [VERBOSE] [%s] GenAI stream raw request:\n%s", requestId, string(reqBytes))
+			log.Printf("📥 [VERBOSE] [%s] GenAI stream raw request:\n%s", requestId, util.TruncateBytes(reqBytes))
 		}
 
 		payload := map[string]interface{}{
@@ -217,7 +218,7 @@ func GenAIStreamHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client
 		// Verbose: Log Gemini payload before sending
 		if IsVerbose() {
 			geminiPayloadBytes, _ := json.MarshalIndent(payload, "", "  ")
-			log.Printf("📤 [VERBOSE] [%s] /genai/v1beta Gemini Stream Request Payload:\n%s", requestId, string(geminiPayloadBytes))
+			log.Printf("📤 [VERBOSE] [%s] /genai/v1beta Gemini Stream Request Payload:\n%s", requestId, util.TruncateBytes(geminiPayloadBytes))
 		}
 
 		// Use SmartStreamGenerateContent which automatically handles premium models
@@ -233,7 +234,7 @@ func GenAIStreamHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)
 			if IsVerbose() {
-				log.Printf("❌ [VERBOSE] [%s] /genai/v1beta Streaming upstream error (status %d):\n%s", requestId, resp.StatusCode, string(body))
+				log.Printf("❌ [VERBOSE] [%s] /genai/v1beta Streaming upstream error (status %d):\n%s", requestId, resp.StatusCode, util.TruncateBytes(body))
 			}
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(resp.StatusCode)
@@ -264,9 +265,9 @@ func GenAIStreamHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client
 					break
 				}
 
-				// Verbose: log raw streaming chunk
+				// Verbose: log raw streaming chunk (truncated)
 				if IsVerbose() {
-					log.Printf("📦 [VERBOSE] [%s] /genai/v1beta Stream chunk #%d: %s", requestId, chunkCount+1, data)
+					log.Printf("📦 [VERBOSE] [%s] /genai/v1beta Stream chunk #%d: %s", requestId, chunkCount+1, util.TruncateLog(data, 512))
 				}
 
 				// Parse and unwrap response field

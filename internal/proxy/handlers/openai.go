@@ -16,6 +16,7 @@ import (
 	"github.com/pysugar/oauth-llm-nexus/internal/proxy/mappers"
 	"github.com/pysugar/oauth-llm-nexus/internal/proxy/monitor"
 	"github.com/pysugar/oauth-llm-nexus/internal/upstream"
+	"github.com/pysugar/oauth-llm-nexus/internal/util"
 	"gorm.io/gorm"
 )
 
@@ -42,7 +43,7 @@ func OpenAIChatHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client)
 		// Verbose logging controlled by NEXUS_VERBOSE
 		verbose := IsVerbose()
 		if verbose {
-			log.Printf("📥 [VERBOSE] [%s] /v1/chat/completions Raw request:\n%s", requestId, string(bodyBytes))
+			log.Printf("📥 [VERBOSE] [%s] /v1/chat/completions Raw request:\n%s", requestId, util.TruncateBytes(bodyBytes))
 		}
 
 		var req mappers.OpenAIChatRequest
@@ -73,7 +74,7 @@ func OpenAIChatHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client)
 		// Verbose: Log Gemini payload before sending
 		if verbose {
 			geminiPayloadBytes, _ := json.MarshalIndent(payload, "", "  ")
-			log.Printf("📤 [VERBOSE] [%s] /v1/chat/completions Gemini Request Payload:\n%s", requestId, string(geminiPayloadBytes))
+			log.Printf("📤 [VERBOSE] [%s] /v1/chat/completions Gemini Request Payload:\n%s", requestId, util.TruncateBytes(geminiPayloadBytes))
 		}
 
 		if req.Stream {
@@ -105,7 +106,7 @@ func handleOpenAINonStreaming(w http.ResponseWriter, client *upstream.Client, to
 
 	if resp.StatusCode != http.StatusOK {
 		if verbose {
-			log.Printf("❌ [VERBOSE] [%s] /v1/chat/completions Gemini API error (status %d):\n%s", requestId, resp.StatusCode, string(body))
+			log.Printf("❌ [VERBOSE] [%s] /v1/chat/completions Gemini API error (status %d):\n%s", requestId, resp.StatusCode, util.TruncateBytes(body))
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(resp.StatusCode)
@@ -118,7 +119,7 @@ func handleOpenAINonStreaming(w http.ResponseWriter, client *upstream.Client, to
 		var prettyBody map[string]interface{}
 		json.Unmarshal(body, &prettyBody)
 		prettyBytes, _ := json.MarshalIndent(prettyBody, "", "  ")
-		log.Printf("📥 [VERBOSE] /v1/chat/completions Gemini API Response:\n%s", string(prettyBytes))
+		log.Printf("📥 [VERBOSE] /v1/chat/completions Gemini API Response:\n%s", util.TruncateBytes(prettyBytes))
 	}
 
 	var wrapped map[string]interface{}
@@ -170,7 +171,7 @@ func handleOpenAINonStreaming(w http.ResponseWriter, client *upstream.Client, to
 		var prettyResp map[string]interface{}
 		json.Unmarshal(openaiResp, &prettyResp)
 		prettyBytes, _ := json.MarshalIndent(prettyResp, "", "  ")
-		log.Printf("📤 [VERBOSE] [%s] /v1/chat/completions Final Response:\n%s", requestId, string(prettyBytes))
+		log.Printf("📤 [VERBOSE] [%s] /v1/chat/completions Final Response:\n%s", requestId, util.TruncateBytes(prettyBytes))
 		// Warn if response appears empty
 		if len(openaiResp) < 100 {
 			log.Printf("⚠️ [VERBOSE] [%s] Response is suspiciously short (%d bytes) - possible empty content", requestId, len(openaiResp))
@@ -194,7 +195,7 @@ func handleOpenAIStreaming(w http.ResponseWriter, client *upstream.Client, token
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		if IsVerbose() {
-			log.Printf("❌ [VERBOSE] [%s] /v1/chat/completions Streaming upstream error (status %d):\n%s", requestId, resp.StatusCode, string(body))
+			log.Printf("❌ [VERBOSE] [%s] /v1/chat/completions Streaming upstream error (status %d):\n%s", requestId, resp.StatusCode, util.TruncateBytes(body))
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(resp.StatusCode)
@@ -225,9 +226,9 @@ func handleOpenAIStreaming(w http.ResponseWriter, client *upstream.Client, token
 				break
 			}
 
-			// Verbose: log raw streaming chunk
+			// Verbose: log raw streaming chunk (truncated for large chunks)
 			if IsVerbose() {
-				log.Printf("📦 [VERBOSE] [%s] /v1/chat/completions Stream chunk #%d: %s", requestId, chunkCount+1, data)
+				log.Printf("📦 [VERBOSE] [%s] /v1/chat/completions Stream chunk #%d: %s", requestId, chunkCount+1, util.TruncateLog(data, 512))
 			}
 
 			// Parse and unwrap response field
@@ -256,9 +257,9 @@ func handleOpenAIStreaming(w http.ResponseWriter, client *upstream.Client, token
 				continue
 			}
 
-			// Verbose: log converted chunk
+			// Verbose: log converted chunk (truncated)
 			if IsVerbose() {
-				log.Printf("📤 [VERBOSE] [%s] /v1/chat/completions Converted chunk: %s", requestId, string(openaiChunk))
+				log.Printf("📤 [VERBOSE] [%s] /v1/chat/completions Converted chunk: %s", requestId, util.TruncateLog(string(openaiChunk), 512))
 			}
 
 			fmt.Fprintf(w, "data: %s\n\n", openaiChunk)

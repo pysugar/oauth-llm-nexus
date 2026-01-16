@@ -16,6 +16,7 @@ import (
 	"github.com/pysugar/oauth-llm-nexus/internal/proxy/mappers"
 	"github.com/pysugar/oauth-llm-nexus/internal/proxy/monitor"
 	"github.com/pysugar/oauth-llm-nexus/internal/upstream"
+	"github.com/pysugar/oauth-llm-nexus/internal/util"
 	"gorm.io/gorm"
 )
 
@@ -58,7 +59,7 @@ func ClaudeMessagesHandler(tokenMgr *token.Manager, upstreamClient *upstream.Cli
 		// Stage 1: Verbose logging for raw Claude request
 		if IsVerbose() {
 			reqBytes, _ := json.MarshalIndent(rawReq, "", "  ")
-			log.Printf("📥 [VERBOSE] [%s] /anthropic/v1/messages Raw request:\n%s", requestId, string(reqBytes))
+			log.Printf("📥 [VERBOSE] [%s] /anthropic/v1/messages Raw request:\n%s", requestId, util.TruncateBytes(reqBytes))
 		}
 
 		// Build Gemini request directly (flexible approach)
@@ -308,7 +309,7 @@ func ClaudeMessagesHandler(tokenMgr *token.Manager, upstreamClient *upstream.Cli
 		// Verbose: Log Gemini payload before sending
 		if IsVerbose() {
 			geminiPayloadBytes, _ := json.MarshalIndent(payload, "", "  ")
-			log.Printf("📤 [VERBOSE] [%s] /anthropic/v1/messages Gemini Request Payload:\n%s", requestId, string(geminiPayloadBytes))
+			log.Printf("📤 [VERBOSE] [%s] /anthropic/v1/messages Gemini Request Payload:\n%s", requestId, util.TruncateBytes(geminiPayloadBytes))
 		}
 
 		if stream {
@@ -341,7 +342,7 @@ func handleClaudeNonStreaming(w http.ResponseWriter, client *upstream.Client, to
 			var prettyErr map[string]interface{}
 			json.Unmarshal(body, &prettyErr)
 			prettyBytes, _ := json.MarshalIndent(prettyErr, "", "  ")
-			log.Printf("❌ [VERBOSE] [%s] /anthropic/v1/messages Gemini API error (status %d):\n%s", requestId, resp.StatusCode, string(prettyBytes))
+			log.Printf("❌ [VERBOSE] [%s] /anthropic/v1/messages Gemini API error (status %d):\n%s", requestId, resp.StatusCode, util.TruncateBytes(prettyBytes))
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(resp.StatusCode)
@@ -363,7 +364,7 @@ func handleClaudeNonStreaming(w http.ResponseWriter, client *upstream.Client, to
 	// Stage 3: Verbose logging for Gemini response
 	if IsVerbose() {
 		prettyBytes, _ := json.MarshalIndent(wrapped, "", "  ")
-		log.Printf("📥 [VERBOSE] [%s] Gemini API Response:\n%s", requestId, string(prettyBytes))
+		log.Printf("📥 [VERBOSE] [%s] Gemini API Response:\n%s", requestId, util.TruncateBytes(prettyBytes))
 	}
 
 	claudeResp, err := mappers.GeminiToClaude(geminiResp, model)
@@ -377,7 +378,7 @@ func handleClaudeNonStreaming(w http.ResponseWriter, client *upstream.Client, to
 
 	// Stage 4: Verbose logging for final Claude response
 	if IsVerbose() {
-		log.Printf("📤 [VERBOSE] [%s] /anthropic/v1/messages Final Response:\n%s", requestId, string(claudeResp))
+		log.Printf("📤 [VERBOSE] [%s] /anthropic/v1/messages Final Response:\n%s", requestId, util.TruncateBytes(claudeResp))
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -397,7 +398,7 @@ func handleClaudeStreaming(w http.ResponseWriter, client *upstream.Client, token
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		if IsVerbose() {
-			log.Printf("❌ [VERBOSE] /anthropic/v1/messages Streaming upstream error (status %d):\n%s", resp.StatusCode, string(body))
+			log.Printf("❌ [VERBOSE] /anthropic/v1/messages Streaming upstream error (status %d):\n%s", resp.StatusCode, util.TruncateBytes(body))
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(resp.StatusCode)
@@ -431,6 +432,10 @@ func handleClaudeStreaming(w http.ResponseWriter, client *upstream.Client, token
 	textBlockStarted := false // Whether current text block is open
 	hasToolUse := false       // Whether any tool_use was sent (for stop_reason)
 
+	// Tool call observability: track IDs for summary log
+	toolUseCount := 0
+	toolUseIDs := []string{}
+
 	// Increase scanner buffer to handle large SSE frames (8MB limit)
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
@@ -444,9 +449,9 @@ func handleClaudeStreaming(w http.ResponseWriter, client *upstream.Client, token
 				break
 			}
 
-			// Verbose: log raw streaming chunk
+			// Verbose: log raw streaming chunk (truncated for large chunks)
 			if IsVerbose() {
-				log.Printf("📦 [VERBOSE] [%s] /anthropic/v1/messages Stream chunk #%d: %s", requestId, chunkCount+1, data)
+				log.Printf("📦 [VERBOSE] [%s] /anthropic/v1/messages Stream chunk #%d: %s", requestId, chunkCount+1, util.TruncateLog(data, 512))
 			}
 
 			// Parse and unwrap response field
@@ -492,6 +497,12 @@ func handleClaudeStreaming(w http.ResponseWriter, client *upstream.Client, token
 				hasToolUse = true
 				toolIndex := contentIndex // Use current contentIndex for tool_use
 
+				// Tool call observability: track IDs
+				toolUseCount++
+				if id, ok := funcCall["id"].(string); ok {
+					toolUseIDs = append(toolUseIDs, id)
+				}
+
 				// Send tool_use content_block_start
 				toolUseStart := fmt.Sprintf(`{"type":"content_block_start","index":%d,"content_block":{"type":"tool_use","id":"%s","name":"%s","input":{}}}`,
 					toolIndex, funcCall["id"], funcCall["name"])
@@ -526,6 +537,10 @@ func handleClaudeStreaming(w http.ResponseWriter, client *upstream.Client, token
 			log.Printf("⚠️ [VERBOSE] [%s] /anthropic/v1/messages Streaming completed with 0 chunks - client received empty response!", requestId)
 		} else {
 			log.Printf("✅ [VERBOSE] [%s] /anthropic/v1/messages Streaming completed: %d chunks sent", requestId, chunkCount)
+		}
+		// Tool call summary for observability
+		if toolUseCount > 0 {
+			log.Printf("🔧 [VERBOSE] [%s] Tool call summary: %d tool_use blocks, IDs: %v", requestId, toolUseCount, toolUseIDs)
 		}
 	}
 
