@@ -42,6 +42,14 @@ func ClaudeMessagesHandler(tokenMgr *token.Manager, upstreamClient *upstream.Cli
 		messages, _ := rawReq["messages"].([]interface{})
 		stream, _ := rawReq["stream"].(bool)
 
+		// Normalize messages: split mixed tool_result + text messages into separate messages
+		// Anthropic API requires tool_result messages to not mix with other content types
+		originalLen := len(messages)
+		messages = normalizeClaudeMessages(messages)
+		if len(messages) != originalLen {
+			log.Printf("🔧 [%s] Messages normalized: %d -> %d", rawModel, originalLen, len(messages))
+		}
+
 		log.Printf("📨 Claude request: model=%s messages=%d stream=%v", model, len(messages), stream)
 
 		// Generate requestId using common helper
@@ -141,15 +149,23 @@ func ClaudeMessagesHandler(tokenMgr *token.Manager, upstreamClient *upstream.Cli
 				continue
 			}
 			role, _ := m["role"].(string)
+			geminiRole := role
 			if role == "assistant" {
-				role = "model"
+				geminiRole = "model"
 			}
 
-			var parts []map[string]interface{}
+			// Separate parts by type for proper ordering:
+			// - For model/assistant: text/thinking FIRST, then functionCall LAST
+			// - For user: functionResponse in SEPARATE message from text
+			// This is critical for Cloud Code API's Claude backend validation
+			var functionCallParts []map[string]interface{}
+			var functionResponseParts []map[string]interface{}
+			var textParts []map[string]interface{}
+
 			content := m["content"]
 			switch c := content.(type) {
 			case string:
-				parts = append(parts, map[string]interface{}{"text": c})
+				textParts = append(textParts, map[string]interface{}{"text": c})
 			case []interface{}:
 				// Array of content blocks
 				for _, block := range c {
@@ -158,11 +174,11 @@ func ClaudeMessagesHandler(tokenMgr *token.Manager, upstreamClient *upstream.Cli
 						switch blockType {
 						case "text":
 							if text, ok := b["text"].(string); ok {
-								parts = append(parts, map[string]interface{}{"text": text})
+								textParts = append(textParts, map[string]interface{}{"text": text})
 							}
 						case "thinking":
 							if thinking, ok := b["thinking"].(string); ok {
-								parts = append(parts, map[string]interface{}{
+								textParts = append(textParts, map[string]interface{}{
 									"text":    thinking,
 									"thought": true,
 								})
@@ -173,7 +189,7 @@ func ClaudeMessagesHandler(tokenMgr *token.Manager, upstreamClient *upstream.Cli
 							name, _ := b["name"].(string)
 							id, _ := b["id"].(string)
 							input := b["input"]
-							parts = append(parts, map[string]interface{}{
+							functionCallParts = append(functionCallParts, map[string]interface{}{
 								"thoughtSignature": "skip_thought_signature_validator",
 								"functionCall": map[string]interface{}{
 									"id":   id,
@@ -204,7 +220,7 @@ func ClaudeMessagesHandler(tokenMgr *token.Manager, upstreamClient *upstream.Cli
 								responseResult = fmt.Sprintf("%v", resultContent)
 							}
 
-							parts = append(parts, map[string]interface{}{
+							functionResponseParts = append(functionResponseParts, map[string]interface{}{
 								"functionResponse": map[string]interface{}{
 									"id":   toolUseId,
 									"name": funcName,
@@ -217,11 +233,44 @@ func ClaudeMessagesHandler(tokenMgr *token.Manager, upstreamClient *upstream.Cli
 					}
 				}
 			}
-			if len(parts) > 0 {
+
+			// Build Gemini messages based on role and content types
+			if role == "assistant" {
+				// For model/assistant messages: text/thinking FIRST, then functionCall LAST
+				// This ensures Cloud Code API can correctly map tool_use -> tool_result
+				allParts := append(textParts, functionCallParts...)
+				if len(allParts) > 0 {
+					geminiContents = append(geminiContents, map[string]interface{}{
+						"role":  geminiRole,
+						"parts": allParts,
+					})
+				}
+				if len(functionCallParts) > 0 && len(textParts) > 0 {
+					log.Printf("🔧 Reordered model message: %d text + %d functionCall (functionCall last)",
+						len(textParts), len(functionCallParts))
+				}
+			} else if role == "user" && len(functionResponseParts) > 0 && len(textParts) > 0 {
+				// For user messages with mixed functionResponse and text:
+				// Split into separate messages: functionResponse FIRST, then text
 				geminiContents = append(geminiContents, map[string]interface{}{
-					"role":  role,
-					"parts": parts,
+					"role":  geminiRole,
+					"parts": functionResponseParts,
 				})
+				geminiContents = append(geminiContents, map[string]interface{}{
+					"role":  geminiRole,
+					"parts": textParts,
+				})
+				log.Printf("🔧 Split user message: %d functionResponse + %d text",
+					len(functionResponseParts), len(textParts))
+			} else {
+				// Normal case: combine all parts
+				allParts := append(append(functionResponseParts, textParts...), functionCallParts...)
+				if len(allParts) > 0 {
+					geminiContents = append(geminiContents, map[string]interface{}{
+						"role":  geminiRole,
+						"parts": allParts,
+					})
+				}
 			}
 		}
 
@@ -763,4 +812,69 @@ func cleanSchemaForGemini(schema map[string]interface{}) map[string]interface{} 
 	}
 
 	return cleaned
+}
+
+// normalizeClaudeMessages splits user messages that mix tool_result with other content types.
+// Anthropic API requires that when an assistant message contains tool_use, the following
+// user message must contain ONLY tool_result blocks, not mixed with text or other content.
+// This function splits such mixed messages into separate messages to comply with the API spec.
+func normalizeClaudeMessages(messages []interface{}) []interface{} {
+	var normalized []interface{}
+
+	for _, msg := range messages {
+		m, ok := msg.(map[string]interface{})
+		if !ok {
+			normalized = append(normalized, msg)
+			continue
+		}
+
+		role, _ := m["role"].(string)
+		if role != "user" {
+			normalized = append(normalized, msg)
+			continue
+		}
+
+		content, ok := m["content"].([]interface{})
+		if !ok {
+			normalized = append(normalized, msg)
+			continue
+		}
+
+		// Separate tool_result blocks from other content types
+		var toolResults, others []interface{}
+		for _, block := range content {
+			b, ok := block.(map[string]interface{})
+			if !ok {
+				others = append(others, block)
+				continue
+			}
+			blockType, _ := b["type"].(string)
+			if blockType == "tool_result" {
+				toolResults = append(toolResults, block)
+			} else {
+				others = append(others, block)
+			}
+		}
+
+		// If message contains both tool_result and other content, split into separate messages
+		if len(toolResults) > 0 && len(others) > 0 {
+			// First: message with only tool_result blocks
+			normalized = append(normalized, map[string]interface{}{
+				"role":    "user",
+				"content": toolResults,
+			})
+			// Second: message with other content (text, images, etc.)
+			normalized = append(normalized, map[string]interface{}{
+				"role":    "user",
+				"content": others,
+			})
+			log.Printf("🔧 Normalized user message: split %d tool_result + %d other blocks into 2 messages",
+				len(toolResults), len(others))
+		} else {
+			// No split needed, keep original message
+			normalized = append(normalized, msg)
+		}
+	}
+
+	return normalized
 }
