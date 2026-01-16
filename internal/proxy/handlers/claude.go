@@ -737,8 +737,9 @@ func ClaudeMessagesHandlerWithMonitor(tokenMgr *token.Manager, upstreamClient *u
 	}
 }
 
-// cleanSchemaForGemini recursively removes JSON Schema fields not supported by Gemini API.
-// Gemini doesn't support: $schema, exclusiveMinimum, exclusiveMaximum, and some other JSON Schema 7 fields.
+// cleanSchemaForGemini recursively removes JSON Schema fields not supported by Gemini API
+// and Claude API's JSON Schema draft 2020-12 requirements.
+// This handles: $schema, exclusiveMinimum, exclusiveMaximum, and other unsupported fields.
 func cleanSchemaForGemini(schema map[string]interface{}) map[string]interface{} {
 	if schema == nil {
 		return nil
@@ -747,7 +748,8 @@ func cleanSchemaForGemini(schema map[string]interface{}) map[string]interface{} 
 	// Create a copy to avoid modifying the original
 	cleaned := make(map[string]interface{})
 
-	// Fields not supported by Gemini API
+	// Fields not supported by Gemini API and/or Claude API (JSON Schema draft 2020-12)
+	// Claude rejects 'default', 'examples', 'format' in VALIDATED mode
 	unsupportedFields := map[string]bool{
 		"$schema":           true,
 		"exclusiveMinimum":  true,
@@ -767,6 +769,20 @@ func cleanSchemaForGemini(schema map[string]interface{}) map[string]interface{} 
 		"anyOf":             true,
 		"oneOf":             true,
 		"not":               true,
+		// Additional fields that Claude API rejects
+		"default":    true,
+		"examples":   true,
+		"format":     true,
+		"minLength":  true,
+		"maxLength":  true,
+		"minItems":   true,
+		"maxItems":   true,
+		"pattern":    true,
+		"const":      true,
+		"deprecated": true,
+		"readOnly":   true,
+		"writeOnly":  true,
+		"$comment":   true,
 	}
 
 	for key, value := range schema {

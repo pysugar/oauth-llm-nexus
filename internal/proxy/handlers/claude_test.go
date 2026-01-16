@@ -121,6 +121,23 @@ func TestCleanSchemaForGemini(t *testing.T) {
 			},
 		},
 		{
+			name: "removes Claude-rejected fields",
+			input: map[string]interface{}{
+				"type":       "string",
+				"default":    "test",
+				"examples":   []interface{}{"a", "b"},
+				"format":     "email",
+				"minLength":  float64(1),
+				"maxLength":  float64(100),
+				"pattern":    "^[a-z]+$",
+				"deprecated": true,
+				"$comment":   "internal note",
+			},
+			expected: map[string]interface{}{
+				"type": "string",
+			},
+		},
+		{
 			name:     "handles nil input",
 			input:    nil,
 			expected: nil,
