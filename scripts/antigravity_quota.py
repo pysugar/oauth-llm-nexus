@@ -9,7 +9,6 @@ Antigravity 配额查询脚本
     uv run -- python scripts/antigravity_quota.py --json    # JSON 输出
     uv run -- python scripts/antigravity_quota.py --raw     # 原始 API 响应
 
-参考: https://github.com/jlcodes99/vscode-antigravity-cockpit
 """
 
 import argparse
@@ -24,10 +23,6 @@ from pathlib import Path
 from typing import Any
 
 import requests
-
-# =============================================================================
-# OAuth 配置 (来自 vscode-antigravity-cockpit)
-# =============================================================================
 
 OAUTH_CLIENT_ID = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com"
 OAUTH_CLIENT_SECRET = "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"
