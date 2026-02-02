@@ -25,7 +25,8 @@ var BaseURLs = []string{
 
 const (
 	// UserAgent mimics Antigravity's user agent (must match windows/amd64 for compatibility)
-	UserAgent = "antigravity/1.11.9 windows/amd64"
+	// Version should match the latest from https://antigravity-auto-updater-974169037036.us-central1.run.app
+	UserAgent = "antigravity/1.15.8 windows/amd64"
 
 	// SystemInstruction required for premium models (gemini-3-pro, Claude)
 	// This is a required identity for the Cloud Code API, not a bypass
