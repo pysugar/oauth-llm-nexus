@@ -552,10 +552,39 @@ var dashboardHTML = `<!DOCTYPE html>
             }
         }
 
+        // Clipboard helper for non-HTTPS environments
+        function copyToClipboard(text, successMsg) {
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(text).then(() => {
+                    if (successMsg) document.getElementById('status').textContent = successMsg;
+                }).catch(err => {
+                    fallbackCopyText(text, successMsg);
+                });
+            } else {
+                fallbackCopyText(text, successMsg);
+            }
+        }
+
+        function fallbackCopyText(text, successMsg) {
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            textarea.style.position = 'fixed';
+            textarea.style.opacity = '0';
+            document.body.appendChild(textarea);
+            textarea.focus();
+            textarea.select();
+            try {
+                document.execCommand('copy');
+                if (successMsg) document.getElementById('status').textContent = successMsg;
+            } catch (err) {
+                alert('Copy failed. Please copy manually: ' + text);
+            }
+            document.body.removeChild(textarea);
+        }
+
         function copyEndpoint() {
             const url = window.location.protocol + '//' + window.location.host + '/v1';
-            navigator.clipboard.writeText(url);
-            document.getElementById('status').textContent = 'Copied: ' + url;
+            copyToClipboard(url, 'Copied: ' + url);
         }
 
         function showAddAccountModal() {
@@ -591,7 +620,7 @@ var dashboardHTML = `<!DOCTYPE html>
 
         async function copyAPIKey() {
             if (fullAPIKey && fullAPIKey !== '') {
-                navigator.clipboard.writeText(fullAPIKey);
+                copyToClipboard(fullAPIKey, 'API Key copied!');
                 alert('API Key copied to clipboard!');
             }
         }
@@ -797,6 +826,9 @@ var dashboardHTML = `<!DOCTYPE html>
                 if (logsRes.ok) {
                     const data = await logsRes.json();
                     const tbody = document.getElementById('request-logs-tbody');
+                    
+                    // Skip if tbody doesn't exist (on main dashboard vs full monitor page)
+                    if (!tbody) return;
                     
                     if (!data.logs || data.logs.length === 0) {
                         tbody.innerHTML = '<tr><td colspan="6" class="text-center py-4 text-gray-500">No logs yet. Enable logging to start recording.</td></tr>';
