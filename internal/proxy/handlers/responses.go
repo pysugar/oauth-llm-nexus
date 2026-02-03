@@ -445,6 +445,7 @@ func ConvertChatCompletionToResponsesWithAnnotations(chatResp map[string]interfa
 func OpenAIResponsesHandler(database *gorm.DB, tokenMgr *token.Manager, upstreamClient *upstream.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		verbose := IsVerbose()
+		requestId := GetOrGenerateRequestID(r)
 
 		// 1. Read and parse request body
 		bodyBytes, err := io.ReadAll(r.Body)
@@ -467,6 +468,17 @@ func OpenAIResponsesHandler(database *gorm.DB, tokenMgr *token.Manager, upstream
 			log.Printf("📥 [VERBOSE] /v1/responses Original Request:\n%s", string(bodyBytes))
 		}
 
+		// 2. Check provider routing - Codex models use passthrough
+		targetModel, provider := db.ResolveModelWithProvider(req.Model)
+		log.Printf("🗺️ /v1/responses Model routing: %s -> %s (provider: %s)", req.Model, targetModel, provider)
+
+		if provider == "codex" {
+			// Codex: direct passthrough - no conversion needed
+			handleCodexResponsesPassthrough(w, bodyBytes, targetModel, requestId)
+			return
+		}
+
+		// Google Cloud Code flow (existing behavior)
 		// 2. Convert to Chat Completions format
 		chatReq := ConvertResponsesToChatCompletion(req)
 
@@ -475,9 +487,8 @@ func OpenAIResponsesHandler(database *gorm.DB, tokenMgr *token.Manager, upstream
 			log.Printf("🔄 [VERBOSE] Converted to Chat Completions format:\n%s", string(chatReqBytes))
 		}
 
-		// 3. Apply model routing
-		targetModel := db.ResolveModel(chatReq.Model, "google")
-		log.Printf("🗺️ /v1/responses Model routing: %s -> %s", chatReq.Model, targetModel)
+		// 3. Apply model routing for Google flow (already resolved above)
+		log.Printf("🗺️ /v1/responses Google flow: %s -> %s", chatReq.Model, targetModel)
 
 		// 4. Get token and project ID (support X-Nexus-Account header for account selection)
 		var cachedToken *token.CachedToken
@@ -511,11 +522,6 @@ func OpenAIResponsesHandler(database *gorm.DB, tokenMgr *token.Manager, upstream
 		json.Unmarshal(payloadBytes, &payload)
 
 		// Add Cloud Code API required fields
-		// Use client-provided X-Request-ID if present, otherwise generate new one
-		requestId := r.Header.Get("X-Request-ID")
-		if requestId == "" {
-			requestId = "agent-" + uuid.New().String()
-		}
 		payload["userAgent"] = "antigravity"
 		payload["requestType"] = "agent" // Restored per Antigravity-Manager reference
 		payload["requestId"] = requestId

@@ -69,22 +69,23 @@ routes:
     target: gemini-3-flash
 
   # ============================================
-  # OpenAI/Codex Models -> Google Cloud Code
+  # OpenAI/Codex Models -> Native Codex API
   # ============================================
   
-  # Codex Series (2026)
+  # Codex Series (2026) - Route to native Codex provider
+  # Uses ~/.codex/auth.json for authentication
   - client: gpt-5.2-codex
-    provider: google
-    target: cclaude-opus-4-5-thinking
+    provider: codex
+    target: gpt-5.2-codex
   - client: gpt-5.1-codex-max
-    provider: google
-    target: claude-opus-4-5-thinking
+    provider: codex
+    target: gpt-5.1-codex-max
   - client: gpt-5.1-codex-mini
-    provider: google
-    target: claude-sonnet-4-5
+    provider: codex
+    target: gpt-5.1-codex-mini
   - client: gpt-5.2
-    provider: google
-    target: gemini-3-pro-high
+    provider: codex
+    target: gpt-5.2
   
   # GPT-4o Series
   - client: gpt-4o

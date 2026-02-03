@@ -23,14 +23,7 @@ import (
 // OpenAIChatHandler handles /v1/chat/completions
 func OpenAIChatHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Get token using common helper
-		cachedToken, err := GetTokenFromRequest(r, tokenMgr)
-		if err != nil {
-			writeOpenAIError(w, "No valid token available: "+err.Error(), http.StatusUnauthorized)
-			return
-		}
-
-		// Parse request
+		// Parse request first to get model name
 		bodyBytes, err := io.ReadAll(r.Body)
 		if err != nil {
 			writeOpenAIError(w, "Failed to read request body", http.StatusBadRequest)
@@ -53,34 +46,52 @@ func OpenAIChatHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client)
 			return
 		}
 
-		// Resolve model mapping
-		targetModel := db.ResolveModel(req.Model, "google")
-		log.Printf("🗺️ OpenAI model routing: %s -> %s", req.Model, targetModel)
+		// Resolve model mapping WITH provider
+		targetModel, provider := db.ResolveModelWithProvider(req.Model)
+		log.Printf("🗺️ OpenAI model routing: %s -> %s (provider: %s)", req.Model, targetModel, provider)
 
-		// Convert to Gemini format
-		// We pass the resolved target model to the mapper
-		geminiPayload := mappers.OpenAIToGemini(req, targetModel, cachedToken.ProjectID)
+		// Route based on provider
+		switch provider {
+		case "codex":
+			// Route to Codex handler - no Google token needed
+			var chatReqMap map[string]interface{}
+			json.Unmarshal(bodyBytes, &chatReqMap)
+			chatReqMap["model"] = targetModel // Use resolved target model
+			handleCodexChatRequest(w, chatReqMap, requestId)
+			return
 
-		// Convert to map and add missing Cloud Code API fields
-		payloadBytes, _ := json.Marshal(geminiPayload)
-		var payload map[string]interface{}
-		json.Unmarshal(payloadBytes, &payload)
+		default:
+			// Google Cloud Code flow (existing behavior)
+			cachedToken, err := GetTokenFromRequest(r, tokenMgr)
+			if err != nil {
+				writeOpenAIError(w, "No valid token available: "+err.Error(), http.StatusUnauthorized)
+				return
+			}
 
-		// Add Cloud Code API required fields
-		payload["userAgent"] = "antigravity"
-		payload["requestType"] = "agent" // Restored per Antigravity-Manager reference
-		payload["requestId"] = requestId
+			// Convert to Gemini format
+			geminiPayload := mappers.OpenAIToGemini(req, targetModel, cachedToken.ProjectID)
 
-		// Verbose: Log Gemini payload before sending
-		if verbose {
-			geminiPayloadBytes, _ := json.MarshalIndent(payload, "", "  ")
-			log.Printf("📤 [VERBOSE] [%s] /v1/chat/completions Gemini Request Payload:\n%s", requestId, util.TruncateBytes(geminiPayloadBytes))
-		}
+			// Convert to map and add missing Cloud Code API fields
+			payloadBytes, _ := json.Marshal(geminiPayload)
+			var payload map[string]interface{}
+			json.Unmarshal(payloadBytes, &payload)
 
-		if req.Stream {
-			handleOpenAIStreaming(w, upstreamClient, cachedToken.AccessToken, payload, req.Model, requestId)
-		} else {
-			handleOpenAINonStreaming(w, upstreamClient, cachedToken.AccessToken, payload, req.Model, requestId)
+			// Add Cloud Code API required fields
+			payload["userAgent"] = "antigravity"
+			payload["requestType"] = "agent" // Restored per Antigravity-Manager reference
+			payload["requestId"] = requestId
+
+			// Verbose: Log Gemini payload before sending
+			if verbose {
+				geminiPayloadBytes, _ := json.MarshalIndent(payload, "", "  ")
+				log.Printf("📤 [VERBOSE] [%s] /v1/chat/completions Gemini Request Payload:\n%s", requestId, util.TruncateBytes(geminiPayloadBytes))
+			}
+
+			if req.Stream {
+				handleOpenAIStreaming(w, upstreamClient, cachedToken.AccessToken, payload, req.Model, requestId)
+			} else {
+				handleOpenAINonStreaming(w, upstreamClient, cachedToken.AccessToken, payload, req.Model, requestId)
+			}
 		}
 	}
 }

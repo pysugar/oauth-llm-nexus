@@ -20,7 +20,9 @@ import (
 // modelRouteCache is an in-memory cache for fast model lookups
 // Key format: "clientModel:targetProvider" -> "targetModel"
 var (
-	modelRouteCache     = make(map[string]string)
+	modelRouteCache = make(map[string]string)
+	// providerRouteCache maps clientModel -> provider for quick provider lookup
+	providerRouteCache  = make(map[string]string)
 	modelRouteCacheLock sync.RWMutex
 )
 
@@ -43,7 +45,7 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 
 	// Ensure model routes are seeded from YAML if empty
 	ensureModelRoutes(db)
-	
+
 	// Ensure default model configurations (OpenAI/Anthropic)
 	ensureDefaultModels(db)
 
@@ -54,13 +56,13 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 func ensureAPIKey(db *gorm.DB) {
 	var config models.Config
 	result := db.Where("key = ?", "api_key").First(&config)
-	
+
 	if result.Error != nil {
 		// Generate new API key: sk-<32 hex chars>
 		keyBytes := make([]byte, 16)
 		rand.Read(keyBytes)
 		apiKey := "sk-" + hex.EncodeToString(keyBytes)
-		
+
 		db.Create(&models.Config{
 			Key:   "api_key",
 			Value: apiKey,
@@ -81,7 +83,7 @@ func RegenerateAPIKey(db *gorm.DB) string {
 	keyBytes := make([]byte, 16)
 	rand.Read(keyBytes)
 	apiKey := "sk-" + hex.EncodeToString(keyBytes)
-	
+
 	db.Model(&models.Config{}).Where("key = ?", "api_key").Update("value", apiKey)
 	log.Printf("🔑 Regenerated API key: %s", apiKey)
 	return apiKey
@@ -105,7 +107,7 @@ type YAMLConfig struct {
 func ensureModelRoutes(db *gorm.DB) {
 	var count int64
 	db.Model(&models.ModelRoute{}).Count(&count)
-	
+
 	if count > 0 {
 		// Already has data, just load cache
 		loadModelRouteCache(db)
@@ -142,7 +144,7 @@ func ensureModelRoutes(db *gorm.DB) {
 	if data == nil {
 		remoteURL := "https://raw.githubusercontent.com/pysugar/oauth-llm-nexus/refs/heads/main/config/model_routes.yaml"
 		log.Printf("📥 Fetching default model routes from: %s", remoteURL)
-		
+
 		client := &http.Client{Timeout: 10 * time.Second}
 		resp, err := client.Get(remoteURL)
 		if err == nil && resp.StatusCode == http.StatusOK {
@@ -196,9 +198,14 @@ func loadModelRouteCache(db *gorm.DB) {
 	defer modelRouteCacheLock.Unlock()
 
 	modelRouteCache = make(map[string]string)
+	providerRouteCache = make(map[string]string)
 	for _, r := range routes {
 		key := r.ClientModel + ":" + r.TargetProvider
 		modelRouteCache[key] = r.TargetModel
+		// Also cache clientModel -> provider mapping (first wins)
+		if _, exists := providerRouteCache[r.ClientModel]; !exists {
+			providerRouteCache[r.ClientModel] = r.TargetProvider
+		}
 		log.Printf("  - %s -> %s (%s)", r.ClientModel, r.TargetModel, r.TargetProvider)
 	}
 	log.Printf("📋 Loaded %d model routes into cache", len(routes))
@@ -222,6 +229,26 @@ func ResolveModel(clientModel, targetProvider string) string {
 	}
 	// Passthrough: no mapping found, use client model directly
 	return clientModel
+}
+
+// ResolveModelWithProvider returns (targetModel, provider) for a given client model
+// Lookup is based on clientModel only - provider is determined from route config
+// If no mapping exists, returns (clientModel, "google") as default passthrough
+func ResolveModelWithProvider(clientModel string) (targetModel, provider string) {
+	modelRouteCacheLock.RLock()
+	defer modelRouteCacheLock.RUnlock()
+
+	// First find the provider for this client model
+	if prov, ok := providerRouteCache[clientModel]; ok {
+		key := clientModel + ":" + prov
+		if target, ok := modelRouteCache[key]; ok {
+			log.Printf("🗺️ Model routing: %s -> %s (provider: %s)", clientModel, target, prov)
+			return target, prov
+		}
+	}
+
+	// No mapping found, passthrough with default provider
+	return clientModel, "google"
 }
 
 // GetAllModelRoutes returns all routes from database

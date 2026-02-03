@@ -33,6 +33,13 @@ func main() {
 	tokenManager := token.NewManager(database)
 	tokenManager.StartRefreshLoop()
 
+	// Initialize Codex provider (optional, won't fail if auth.json missing)
+	if err := handlers.InitCodexProvider(""); err != nil {
+		log.Printf("⚠️ Codex provider not available: %v", err)
+	} else {
+		log.Println("✅ Codex provider initialized")
+	}
+
 	// Create router
 	r := chi.NewRouter()
 	r.Use(chimiddleware.Logger)
@@ -136,6 +143,7 @@ func main() {
 		r.Post("/chat/completions", handlers.OpenAIChatHandlerWithMonitor(tokenManager, upstreamClient, proxyMonitor))
 		r.Get("/models", handlers.OpenAIModelsListHandler(database))
 		r.Post("/responses", handlers.OpenAIResponsesHandler(database, tokenManager, upstreamClient))
+		r.Get("/codex/quota", handlers.CodexQuotaHandler())
 	})
 
 	// Anthropic-compatible API
