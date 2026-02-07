@@ -12,6 +12,7 @@
     -   **OpenAI 兼容**：`/v1/chat/completions`（支持 Cursor、Open WebUI 等）
     -   **Anthropic 兼容**：`/anthropic/v1/messages`（支持 Claude Code、Aider 等）
     -   **Google GenAI 兼容**：`/genai/v1beta/models`（支持官方 Google SDK）
+    -   **Gemini API-Key 兼容（OpenClaw）**：`/v1beta/models/*`，透明转发到 Vertex
 -   **智能模型映射**：通过 Dashboard 配置客户端模型名到后端模型的路由。
 -   **账号池管理**：链接多个 Google 账号以池化配额，提升限制。
 -   **用户级配额路由**：使用 `X-Nexus-Account` 请求头将请求路由到指定账号，实现配额隔离。
@@ -22,6 +23,8 @@
 -   **Homebrew 支持**：通过 `brew tap` 轻松安装，支持服务管理。
 
 📚 **快速入门**：[Claude Code 配置指南](docs/CLAUDE_CODE_SETUP.md) | [English](README.md) | [中文](README_CN.md)
+
+📌 **OpenClaw 集成 SOP**：[docs/openclaw-integration-sop.md](docs/openclaw-integration-sop.md)
 
 ## 🖼️ 界面预览
 
@@ -114,6 +117,9 @@ docker-compose up -d
 | `NEXUS_MODE` | - | 设置为 `release` 启用生产模式（默认端口改为 8086） |
 | `NEXUS_ADMIN_PASSWORD` | - | 可选密码，用于保护 Dashboard 和 API 端点 |
 | `NEXUS_VERBOSE` | - | 设置为 `1` 或 `true` 启用详细的请求/响应日志 |
+| `NEXUS_VERTEX_API_KEY` | - | 启用 Gemini 兼容 Vertex 透明代理（`/v1beta/models/*`） |
+| `NEXUS_VERTEX_BASE_URL` | `https://aiplatform.googleapis.com` | Vertex 上游基地址覆盖 |
+| `NEXUS_VERTEX_PROXY_TIMEOUT` | `5m` | Vertex 兼容代理上游超时 |
 
 **示例：带密码保护的局域网共享**
 ```bash
@@ -220,6 +226,18 @@ response = client.models.generate_content(
 )
 print(response.text)
 ```
+
+**OpenClaw（通过 Nexus 使用 google provider）**：
+```bash
+# OpenClaw 运行环境：
+# GEMINI_API_KEY 需要填写 Nexus API key（sk-...），不是 Vertex 真正 key
+export GEMINI_API_KEY="sk-your-nexus-key"
+
+# OpenClaw 配置中：
+# models.providers.google.baseUrl = "http://127.0.0.1:8080"
+```
+
+完整步骤见：[docs/openclaw-integration-sop.md](docs/openclaw-integration-sop.md)
 
 ## 🗺️ 模型映射
 
@@ -339,6 +357,9 @@ brew services restart oauth-llm-nexus
 | `POST /genai/v1beta/models/{model}:generateContent` | GenAI | 生成内容 |
 | `POST /genai/v1beta/models/{model}:streamGenerateContent` | GenAI | 流式生成内容 |
 | `GET /genai/v1beta/models` | GenAI | 列出可用模型 |
+| `POST /v1beta/models/{model}:generateContent` | Gemini Compat | 透明代理到 Vertex `generateContent` |
+| `POST /v1beta/models/{model}:streamGenerateContent` | Gemini Compat | 透明代理到 Vertex `streamGenerateContent` |
+| `POST /v1beta/models/{model}:countTokens` | Gemini Compat | 透明代理到 Vertex `countTokens` |
 | `GET /api/accounts` | 内部 | 列出已链接账号 |
 | `GET /api/model-routes` | 内部 | 列出模型路由 |
 | `GET /monitor` | 内部 | 请求监控面板 |

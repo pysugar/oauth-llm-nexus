@@ -12,6 +12,7 @@
     -   **OpenAI Compatible**: `/v1/chat/completions` (Works with Cursor, Open WebUI, etc.)
     -   **Anthropic Compatible**: `/anthropic/v1/messages` (Works with Claude Code, Aider, etc.)
     -   **Google GenAI Compatible**: `/genai/v1beta/models` (Works with official Google SDKs)
+    -   **Gemini API-Key Compatibility (OpenClaw)**: `/v1beta/models/*` with transparent Vertex upstream proxy
 -   **Smart Model Mapping**: Configurable routing from client model names to backend models via Dashboard.
 -   **Account Pool Management**: Link multiple Google accounts to pool quotas and increase limits.
 -   **User-Specific Quota Routing**: Route requests to specific accounts using `X-Nexus-Account` header for quota isolation.
@@ -22,6 +23,8 @@
 -   **Homebrew Support**: Easy installation via `brew tap` with service management.
 
 📚 **Quick Start Guide**: [Claude Code Setup](docs/CLAUDE_CODE_SETUP.md) | [English README](README.md) | [中文文档](README_CN.md)
+  
+📌 **OpenClaw Integration SOP**: [docs/openclaw-integration-sop.md](docs/openclaw-integration-sop.md)
 
 ## 🖼️ Preview
 
@@ -114,6 +117,9 @@ The server will start on `127.0.0.1:8080` by default (or `:8086` in release mode
 | `NEXUS_MODE` | - | Set to `release` for production (changes default port to 8086) |
 | `NEXUS_ADMIN_PASSWORD` | - | Optional password to protect Dashboard and API endpoints |
 | `NEXUS_VERBOSE` | - | Set to `1` or `true` to enable detailed request/response logging |
+| `NEXUS_VERTEX_API_KEY` | - | Enable transparent Gemini-compatible Vertex proxy (`/v1beta/models/*`) |
+| `NEXUS_VERTEX_BASE_URL` | `https://aiplatform.googleapis.com` | Vertex upstream base URL override |
+| `NEXUS_VERTEX_PROXY_TIMEOUT` | `5m` | Upstream timeout for Vertex compatibility proxy |
 
 **Example: LAN Access with Password Protection**
 ```bash
@@ -220,6 +226,18 @@ response = client.models.generate_content(
 )
 print(response.text)
 ```
+
+**OpenClaw (google provider via Nexus proxy)**:
+```bash
+# In OpenClaw runtime env:
+# GEMINI_API_KEY must be Nexus API key (sk-...), not real Vertex key
+export GEMINI_API_KEY="sk-your-nexus-key"
+
+# In OpenClaw config:
+# models.providers.google.baseUrl = "http://127.0.0.1:8080"
+```
+
+See full SOP: [docs/openclaw-integration-sop.md](docs/openclaw-integration-sop.md)
 
 ## 🗺️ Model Mapping
 
@@ -339,6 +357,9 @@ If you're running in an air-gapped or firewall-restricted environment:
 | `POST /genai/v1beta/models/{model}:generateContent` | GenAI | Generate content |
 | `POST /genai/v1beta/models/{model}:streamGenerateContent` | GenAI | Generate content (streaming) |
 | `GET /genai/v1beta/models` | GenAI | List available models |
+| `POST /v1beta/models/{model}:generateContent` | Gemini Compat | Transparent proxy to Vertex `generateContent` |
+| `POST /v1beta/models/{model}:streamGenerateContent` | Gemini Compat | Transparent proxy to Vertex `streamGenerateContent` |
+| `POST /v1beta/models/{model}:countTokens` | Gemini Compat | Transparent proxy to Vertex `countTokens` |
 | `GET /api/accounts` | Internal | List linked accounts |
 | `GET /api/model-routes` | Internal | List model routes |
 | `GET /monitor` | Internal | Request monitor dashboard |

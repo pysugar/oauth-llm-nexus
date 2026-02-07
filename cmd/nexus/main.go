@@ -40,6 +40,14 @@ func main() {
 		log.Println("✅ Codex provider initialized")
 	}
 
+	// Initialize Gemini-compatible Vertex key proxy (auto-enabled when NEXUS_VERTEX_API_KEY is set)
+	geminiCompatEnabled := handlers.InitGeminiCompatProviderFromEnv()
+	if geminiCompatEnabled {
+		log.Println("✅ Gemini compatibility proxy enabled (/v1beta/models/*)")
+	} else {
+		log.Println("ℹ️ Gemini compatibility proxy disabled (set NEXUS_VERTEX_API_KEY to enable)")
+	}
+
 	// Create router
 	r := chi.NewRouter()
 	r.Use(chimiddleware.Logger)
@@ -165,6 +173,17 @@ func main() {
 		})
 	})
 
+	// Gemini-compatible API for OpenClaw:
+	// /v1beta/models/{model}:generateContent
+	// /v1beta/models/{model}:streamGenerateContent
+	// /v1beta/models/{model}:countTokens
+	if geminiCompatEnabled {
+		r.Route("/v1beta", func(r chi.Router) {
+			r.Use(middleware.APIKeyAuth(database))
+			r.Post("/models/*", handlers.GeminiCompatProxyHandler())
+		})
+	}
+
 	// Start server
 	host := os.Getenv("HOST")
 	if host == "" {
@@ -190,6 +209,9 @@ func main() {
 	log.Printf("🔌 OpenAI API: http://%s/v1", displayURL)
 	log.Printf("🔌 Anthropic API: http://%s/anthropic/v1", displayURL)
 	log.Printf("🔌 GenAI API: http://%s/genai/v1beta", displayURL)
+	if geminiCompatEnabled {
+		log.Printf("🔌 Gemini Compat API: http://%s/v1beta/models/{model}:<action>", displayURL)
+	}
 
 	if err := http.ListenAndServe(addr, r); err != nil {
 		log.Fatalf("Server failed: %v", err)

@@ -1,0 +1,133 @@
+package handlers
+
+import (
+	"bytes"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/pysugar/oauth-llm-nexus/internal/upstream/vertexkey"
+)
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func TestParseGeminiCompatModelAction(t *testing.T) {
+	tests := []struct {
+		path   string
+		model  string
+		action string
+		ok     bool
+	}{
+		{
+			path:   "/v1beta/models/gemini-2.5-flash-lite:generateContent",
+			model:  "gemini-2.5-flash-lite",
+			action: "generateContent",
+			ok:     true,
+		},
+		{
+			path:   "/v1beta/models/gemini-3-flash-preview:streamGenerateContent",
+			model:  "gemini-3-flash-preview",
+			action: "streamGenerateContent",
+			ok:     true,
+		},
+		{
+			path:   "/v1beta/models/google/gemini-3-pro-preview:countTokens",
+			model:  "google/gemini-3-pro-preview",
+			action: "countTokens",
+			ok:     true,
+		},
+		{
+			path: "/v1beta/models/gemini-3-flash-preview:files",
+			ok:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		model, action, ok := parseGeminiCompatModelAction(tt.path)
+		if ok != tt.ok {
+			t.Fatalf("parseGeminiCompatModelAction(%q) ok = %v, want %v", tt.path, ok, tt.ok)
+		}
+		if model != tt.model {
+			t.Fatalf("parseGeminiCompatModelAction(%q) model = %q, want %q", tt.path, model, tt.model)
+		}
+		if action != tt.action {
+			t.Fatalf("parseGeminiCompatModelAction(%q) action = %q, want %q", tt.path, action, tt.action)
+		}
+	}
+}
+
+func TestGeminiCompatProxyHandler_Disabled(t *testing.T) {
+	oldProvider := GeminiCompatProvider
+	GeminiCompatProvider = nil
+	defer func() { GeminiCompatProvider = oldProvider }()
+
+	req := httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-2.5-flash-lite:generateContent", nil)
+	w := httptest.NewRecorder()
+	GeminiCompatProxyHandler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("Expected status 503, got %d", w.Code)
+	}
+}
+
+func TestGeminiCompatProxyHandler_Passthrough(t *testing.T) {
+	var gotPath string
+	var gotQueryKey string
+	var gotBody []byte
+
+	client := &http.Client{
+		Timeout: time.Minute,
+		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			gotPath = r.URL.Path
+			gotQueryKey = r.URL.Query().Get("key")
+			gotBody, _ = io.ReadAll(r.Body)
+			return &http.Response{
+				StatusCode: http.StatusAccepted,
+				Header: http.Header{
+					"Content-Type": []string{"application/json"},
+				},
+				Body: io.NopCloser(bytes.NewBufferString(`{"countTokensResult":{"totalTokens":42}}`)),
+			}, nil
+		}),
+	}
+
+	oldProvider := GeminiCompatProvider
+	GeminiCompatProvider = vertexkey.NewProviderWithClient("server-key", "https://aiplatform.googleapis.com", time.Minute, client)
+	defer func() { GeminiCompatProvider = oldProvider }()
+
+	reqBody := `{"contents":[{"role":"user","parts":[{"text":"hello"}]}]}`
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/v1beta/models/gemini-2.5-flash-lite:countTokens?key=client-key",
+		strings.NewReader(reqBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer client-token")
+	req.Header.Set("X-Goog-Api-Key", "client-key")
+
+	w := httptest.NewRecorder()
+	GeminiCompatProxyHandler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("Expected status 202, got %d", w.Code)
+	}
+	if w.Body.String() != `{"countTokensResult":{"totalTokens":42}}` {
+		t.Fatalf("Unexpected response body: %s", w.Body.String())
+	}
+	if gotPath != "/v1/publishers/google/models/gemini-2.5-flash-lite:countTokens" {
+		t.Fatalf("Unexpected upstream path: %s", gotPath)
+	}
+	if gotQueryKey != "server-key" {
+		t.Fatalf("Expected upstream key=server-key, got %q", gotQueryKey)
+	}
+	if string(gotBody) != reqBody {
+		t.Fatalf("Unexpected forwarded body: %s", string(gotBody))
+	}
+}
