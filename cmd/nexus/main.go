@@ -33,6 +33,10 @@ func main() {
 	tokenManager := token.NewManager(database)
 	tokenManager.StartRefreshLoop()
 
+	if google.IsUsingDefaultOAuthCredentials() {
+		log.Printf("⚠️ OAuth is using built-in default client credentials. Set GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET for stricter credential governance.")
+	}
+
 	// Initialize Codex provider (optional, won't fail if auth.json missing)
 	if err := handlers.InitCodexProvider(""); err != nil {
 		log.Printf("⚠️ Codex provider not available: %v", err)

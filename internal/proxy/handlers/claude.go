@@ -430,6 +430,7 @@ func handleClaudeStreaming(w http.ResponseWriter, client *upstream.Client, token
 	// Track content blocks with proper indexing (inspired by CLIProxyAPI's ResponseIndex)
 	contentIndex := 0         // Increments for each content block
 	textBlockStarted := false // Whether current text block is open
+	textBlockIndex := -1      // Index of currently open text block
 	hasToolUse := false       // Whether any tool_use was sent (for stop_reason)
 
 	// Tool call observability: track IDs for summary log
@@ -439,6 +440,7 @@ func handleClaudeStreaming(w http.ResponseWriter, client *upstream.Client, token
 	// Increase scanner buffer to handle large SSE frames (8MB limit)
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+	safetyChecker := NewStreamSafetyChecker()
 
 	chunkCount := 0
 	for scanner.Scan() {
@@ -446,6 +448,12 @@ func handleClaudeStreaming(w http.ResponseWriter, client *upstream.Client, token
 		if strings.HasPrefix(line, "data: ") {
 			data := strings.TrimPrefix(line, "data: ")
 			if data == "[DONE]" {
+				break
+			}
+			if abort, reason := safetyChecker.CheckChunk([]byte(data)); abort {
+				log.Printf("⚠️ [%s] /anthropic/v1/messages Stream aborted by safety checker: %s", requestId, reason)
+				fmt.Fprintf(w, "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"api_error\",\"message\":\"stream aborted by safety checker\"}}\n\n")
+				flusher.Flush()
 				break
 			}
 
@@ -476,10 +484,9 @@ func handleClaudeStreaming(w http.ResponseWriter, client *upstream.Client, token
 					fmt.Fprintf(w, "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":%d,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n", contentIndex)
 					flusher.Flush()
 					textBlockStarted = true
+					textBlockIndex = contentIndex
 				}
-				delta := &mappers.ClaudeDelta{Type: "text_delta", Text: text}
-				deltaEvent, _ := mappers.CreateClaudeStreamEvent("content_block_delta", delta)
-				fmt.Fprintf(w, "event: content_block_delta\ndata: %s\n\n", deltaEvent)
+				fmt.Fprintf(w, "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":%d,\"delta\":{\"type\":\"text_delta\",\"text\":%q}}\n\n", textBlockIndex, text)
 				flusher.Flush()
 				chunkCount++
 			}
@@ -488,10 +495,11 @@ func handleClaudeStreaming(w http.ResponseWriter, client *upstream.Client, token
 			if funcCall := extractFunctionCallFromGemini(geminiResp); funcCall != nil {
 				// Close text block if it was started (BEFORE determining toolIndex)
 				if textBlockStarted {
-					fmt.Fprintf(w, "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":%d}\n\n", contentIndex)
+					fmt.Fprintf(w, "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":%d}\n\n", textBlockIndex)
 					flusher.Flush()
 					contentIndex++ // Increment AFTER closing text block
 					textBlockStarted = false
+					textBlockIndex = -1
 				}
 
 				hasToolUse = true
@@ -546,8 +554,10 @@ func handleClaudeStreaming(w http.ResponseWriter, client *upstream.Client, token
 
 	// Only send text block stop if we started one and haven't closed it
 	if textBlockStarted {
-		fmt.Fprintf(w, "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":%d}\n\n", contentIndex)
+		fmt.Fprintf(w, "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":%d}\n\n", textBlockIndex)
 		flusher.Flush()
+		contentIndex++
+		textBlockIndex = -1
 	}
 
 	// Determine stop_reason based on content (fix: use dedicated tracking variables)

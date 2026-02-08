@@ -2,6 +2,7 @@ package google
 
 import (
 	"os"
+	"strings"
 
 	"golang.org/x/oauth2"
 	googleOAuth "golang.org/x/oauth2/google"
@@ -42,4 +43,11 @@ func GetOAuthConfig(redirectURL string) *oauth2.Config {
 		Scopes:       Scopes,
 		Endpoint:     googleOAuth.Endpoint,
 	}
+}
+
+// IsUsingDefaultOAuthCredentials returns true when either credential is using built-in defaults.
+func IsUsingDefaultOAuthCredentials() bool {
+	clientID := strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_ID"))
+	clientSecret := strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_SECRET"))
+	return clientID == "" || clientSecret == ""
 }

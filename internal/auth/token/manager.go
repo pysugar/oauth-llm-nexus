@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -47,6 +48,8 @@ func (m *Manager) loadAllTokens() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	// Full rebuild keeps cache consistent with DB active set.
+	m.cache = make(map[string]*CachedToken, len(accounts))
 	for _, acc := range accounts {
 		m.cache[acc.ID] = &CachedToken{
 			AccessToken: acc.AccessToken,
@@ -253,16 +256,21 @@ func (m *Manager) refreshToken(accountID string) {
 	if err != nil {
 		log.Printf("❌ Refresh token failed for %s: %v", account.Email, err)
 
-		// Mark account as inactive - refresh token is likely revoked
-		account.IsActive = false
-		m.db.Save(&account)
+		if isPermanentRefreshError(err) {
+			// Permanent auth failures should deactivate account and require re-login.
+			account.IsActive = false
+			m.db.Save(&account)
 
-		// Remove from cache
-		m.mu.Lock()
-		delete(m.cache, accountID)
-		m.mu.Unlock()
+			m.mu.Lock()
+			delete(m.cache, accountID)
+			m.mu.Unlock()
 
-		log.Printf("🔒 Account %s marked as inactive. Please re-login.", account.Email)
+			log.Printf("🔒 Account %s marked as inactive. Please re-login.", account.Email)
+			return
+		}
+
+		// Transient failure: keep account active and retry later.
+		log.Printf("⏳ Transient refresh failure for %s, account remains active", account.Email)
 		return
 	}
 
@@ -309,4 +317,24 @@ func extractProjectID(metadata string) string {
 		return pid
 	}
 	return "bamboo-precept-lgxtn"
+}
+
+func isPermanentRefreshError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	permanentMarkers := []string{
+		"invalid_grant",
+		"invalid_client",
+		"unauthorized_client",
+		"token has been expired or revoked",
+		"revoked",
+	}
+	for _, marker := range permanentMarkers {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
 }

@@ -24,14 +24,23 @@ var BaseURLs = []string{
 }
 
 const (
-	// UserAgent mimics Antigravity's user agent (must match windows/amd64 for compatibility)
-	// Version should match the latest from https://antigravity-auto-updater-974169037036.us-central1.run.app
-	UserAgent = "antigravity/1.15.8 windows/amd64"
+	// DefaultUserAgent mimics Antigravity's user agent (must match windows/amd64 for compatibility).
+	// Version should match the latest from https://antigravity-auto-updater-974169037036.us-central1.run.app.
+	DefaultUserAgent = "antigravity/1.15.8 windows/amd64"
 
 	// SystemInstruction required for premium models (gemini-3-pro, Claude)
 	// This is a required identity for the Cloud Code API, not a bypass
 	antigravitySystemInstruction = "You are Antigravity, a powerful agentic AI coding assistant designed by the Google Deepmind team working on Advanced Agentic Coding.You are pair programming with a USER to solve their coding task. The task may require creating a new codebase, modifying or debugging an existing codebase, or simply answering a question.**Absolute paths only****Proactiveness**"
 )
+
+var UserAgent = configuredUserAgent()
+
+func configuredUserAgent() string {
+	if v := strings.TrimSpace(os.Getenv("NEXUS_ANTIGRAVITY_USER_AGENT")); v != "" {
+		return v
+	}
+	return DefaultUserAgent
+}
 
 // oh-my-opencode compatible headers
 var ClientMetadata = map[string]string{
@@ -511,7 +520,6 @@ func EnsureRequestFormat(payload map[string]interface{}) {
 // doRequestWithFallback tries all endpoints, falling back on 429/5xx errors
 func (c *Client) doRequestWithFallback(method, queryString, accessToken string, payload interface{}) (*http.Response, error) {
 	var lastErr error
-	var lastResp *http.Response
 
 	// Ensure request format for map payloads
 	if payloadMap, ok := payload.(map[string]interface{}); ok {
@@ -544,9 +552,14 @@ func (c *Client) doRequestWithFallback(method, queryString, accessToken string, 
 		// Check if we should try next endpoint (429, 403 SUBSCRIPTION_REQUIRED, or 5xx)
 		// 403 is added because autopush endpoint may require subscription but prod/daily work
 		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusForbidden || resp.StatusCode >= 500 {
+			if i == len(BaseURLs)-1 {
+				// Last endpoint: return response so caller can consume the upstream error body.
+				return resp, nil
+			}
+
 			log.Printf("⚠️ Endpoint %d returned %d, trying next...", i+1, resp.StatusCode)
-			lastResp = resp
 			lastErr = fmt.Errorf("endpoint %d returned %d", i+1, resp.StatusCode)
+			_ = resp.Body.Close()
 			continue
 		}
 
@@ -555,9 +568,6 @@ func (c *Client) doRequestWithFallback(method, queryString, accessToken string, 
 	}
 
 	// All endpoints failed
-	if lastResp != nil {
-		return lastResp, nil // Return last response so caller can read error body
-	}
 	return nil, lastErr
 }
 

@@ -253,6 +253,7 @@ func GenAIStreamHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client
 		// Increase scanner buffer to handle large SSE frames (8MB limit)
 		scanner := bufio.NewScanner(resp.Body)
 		scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+		safetyChecker := NewStreamSafetyChecker()
 
 		chunkCount := 0
 		for scanner.Scan() {
@@ -263,6 +264,12 @@ func GenAIStreamHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client
 					fmt.Fprintf(w, "data: [DONE]\n\n")
 					flusher.Flush()
 					break
+				}
+				if abort, reason := safetyChecker.CheckChunk([]byte(data)); abort {
+					log.Printf("⚠️ [%s] /genai/v1beta Stream aborted by safety checker: %s", requestId, reason)
+					fmt.Fprintf(w, "data: [DONE]\n\n")
+					flusher.Flush()
+					return
 				}
 
 				// Verbose: log raw streaming chunk (truncated)
@@ -516,17 +523,19 @@ func GenAIStreamHandlerWithMonitor(tokenMgr *token.Manager, upstreamClient *upst
 		accountEmail := GetAccountEmail(r, tokenMgr)
 
 		// For streaming, we can't easily capture the full response
-		baseHandler(w, r)
+		sw := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
+		baseHandler(sw, r)
 
 		// Log the request (response body will be empty for streams)
 		pm.LogRequest(models.RequestLog{
 			Method:       r.Method,
 			URL:          r.URL.Path,
-			Status:       200, // Assume success for streams
+			Status:       sw.statusCode,
 			Duration:     time.Since(startTime).Milliseconds(),
 			Model:        rawModel,
 			MappedModel:  db.ResolveModel(rawModel, "google"),
 			AccountEmail: accountEmail,
+			Error:        streamStatusError(sw.statusCode),
 			RequestBody:  string(bodyBytes),
 			ResponseBody: "[streaming response]",
 		})

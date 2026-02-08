@@ -9,10 +9,11 @@
 ## ✨ 特性
 
 -   **多协议支持**：
-    -   **OpenAI 兼容**：`/v1/chat/completions`（支持 Cursor、Open WebUI 等）
+    -   **OpenAI 兼容**：`/v1/chat/completions`、`/v1/responses`（支持 Cursor、Open WebUI 等）
     -   **Anthropic 兼容**：`/anthropic/v1/messages`（支持 Claude Code、Aider 等）
     -   **Google GenAI 兼容**：`/genai/v1beta/models`（支持官方 Google SDK）
     -   **Gemini API-Key 兼容（OpenClaw）**：`/v1beta/models/*`，透明转发到 Vertex
+    -   **Codex 适配（provider=codex）**：对外提供 OpenAI 风格 `/v1/chat/completions` 与 `/v1/responses`，采用 stream-first 策略
 -   **智能模型映射**：通过 Dashboard 配置客户端模型名到后端模型的路由。
 -   **账号池管理**：链接多个 Google 账号以池化配额，提升限制。
 -   **用户级配额路由**：使用 `X-Nexus-Account` 请求头将请求路由到指定账号，实现配额隔离。
@@ -117,6 +118,7 @@ docker-compose up -d
 | `NEXUS_MODE` | - | 设置为 `release` 启用生产模式（默认端口改为 8086） |
 | `NEXUS_ADMIN_PASSWORD` | - | 可选密码，用于保护 Dashboard 和 API 端点 |
 | `NEXUS_VERBOSE` | - | 设置为 `1` 或 `true` 启用详细的请求/响应日志 |
+| `NEXUS_ANTIGRAVITY_USER_AGENT` | `antigravity/1.15.8 windows/amd64` | 覆盖上游 Antigravity User-Agent |
 | `NEXUS_VERTEX_API_KEY` | - | 启用 Gemini 兼容 Vertex 透明代理（`/v1beta/models/*`） |
 | `NEXUS_VERTEX_BASE_URL` | `https://aiplatform.googleapis.com` | Vertex 上游基地址覆盖 |
 | `NEXUS_VERTEX_PROXY_TIMEOUT` | `5m` | Vertex 兼容代理上游超时 |
@@ -135,6 +137,14 @@ export NEXUS_ADMIN_PASSWORD=mysecret
 NEXUS_VERBOSE=1 ./nexus
 # 日志将包含完整的请求体和 API 响应内容
 ```
+
+### 协议兼容说明（重要）
+
+-   **Codex 路径采用 stream-first**：当 `provider=codex` 时，优先保证流式兼容能力。
+-   **Codex `/v1/responses` 行为**：底层是 responses 流式上游，建议客户端使用流式模式。当前实现中即使 `stream=false`，codex 也可能返回 SSE。
+-   **Codex 参数过滤**：为避免上游 4xx，代理会过滤上游不支持参数（例如 `temperature`、`top_p`、`max_output_tokens`）。
+-   **过滤透明化**：被过滤参数会通过响应头 `X-Nexus-Codex-Filtered-Params` 返回。
+-   **Gemini-3 搜索**：在 Google antigravity upstream 下，Gemini-3 系列搜索按“明确不支持”处理（见 `docs/gemini-search-support.md`）。
 
 ### 🔐 仪表盘安全
 
@@ -351,7 +361,9 @@ brew services restart oauth-llm-nexus
 |:---------|:---------|:------------|
 | `GET /` | - | 仪表盘 UI |
 | `POST /v1/chat/completions` | OpenAI | 聊天补全 |
+| `POST /v1/responses` | OpenAI | Responses API |
 | `GET /v1/models` | OpenAI | 列出模型 |
+| `GET /v1/codex/quota` | OpenAI | Codex 配额与账号信息 |
 | `POST /anthropic/v1/messages` | Anthropic | Messages API |
 | `GET /anthropic/v1/models` | Anthropic | 列出 Claude 模型 |
 | `POST /genai/v1beta/models/{model}:generateContent` | GenAI | 生成内容 |

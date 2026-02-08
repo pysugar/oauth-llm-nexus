@@ -1,11 +1,15 @@
 package handlers
 
 import (
+	"bufio"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/pysugar/oauth-llm-nexus/internal/auth/token"
@@ -82,15 +86,24 @@ type ResponsesContent struct {
 
 // OpenAIResponsesResponse represents /v1/responses response (OpenAI spec)
 type OpenAIResponsesResponse struct {
-	ID        string                `json:"id"`         // "resp_xxx" format
-	Object    string                `json:"object"`     // "response"
-	Status    string                `json:"status"`     // "completed", "in_progress", "failed"
-	CreatedAt int64                 `json:"created_at"` // Unix timestamp
-	Model     string                `json:"model"`
-	Output    []ResponsesOutputItem `json:"output"`
-	Usage     *ResponsesUsage       `json:"usage,omitempty"`
-	Error     *ResponsesError       `json:"error,omitempty"`
+	ID                 string                 `json:"id"`         // "resp_xxx" format
+	Object             string                 `json:"object"`     // "response"
+	Status             string                 `json:"status"`     // "completed", "in_progress", "failed"
+	CreatedAt          int64                  `json:"created_at"` // Unix timestamp
+	Model              string                 `json:"model"`
+	Output             []ResponsesOutputItem  `json:"output"`
+	PreviousResponseID string                 `json:"previous_response_id,omitempty"`
+	Metadata           map[string]interface{} `json:"metadata,omitempty"`
+	Usage              *ResponsesUsage        `json:"usage,omitempty"`
+	Error              *ResponsesError        `json:"error,omitempty"`
 }
+
+type responsesCompatContext struct {
+	Conversation       string
+	PreviousResponseID string
+}
+
+const responsesCompatRequestIDSeparator = "__ctx__"
 
 // ResponsesOutputItem represents an item in the output array
 type ResponsesOutputItem struct {
@@ -245,17 +258,67 @@ func parseResponsesContent(content json.RawMessage) string {
 	// Try parsing as array of content items
 	var contentItems []ResponsesContent
 	if err := json.Unmarshal(content, &contentItems); err == nil {
+		return responsesContentItemsToText(contentItems)
+	}
+
+	// Fallback parser to support flexible input_image.image_url object format.
+	var rawItems []map[string]interface{}
+	if err := json.Unmarshal(content, &rawItems); err == nil {
 		var textParts []string
-		for _, item := range contentItems {
-			if item.Type == "input_text" || item.Type == "text" {
-				textParts = append(textParts, item.Text)
+		for _, item := range rawItems {
+			itemType, _ := item["type"].(string)
+			switch itemType {
+			case "input_text", "text", "output_text":
+				if text, ok := item["text"].(string); ok && strings.TrimSpace(text) != "" {
+					textParts = append(textParts, text)
+				}
+			case "input_image":
+				if imageURL, ok := extractInputImageURL(item["image_url"]); ok {
+					textParts = append(textParts, "[input_image] "+imageURL)
+				}
+			case "input_file":
+				if fileID, ok := item["file_id"].(string); ok && strings.TrimSpace(fileID) != "" {
+					textParts = append(textParts, "[input_file] "+fileID)
+				}
 			}
-			// TODO: Handle input_image, input_file in future
 		}
 		return strings.Join(textParts, "\n")
 	}
 
 	return ""
+}
+
+func extractInputImageURL(v interface{}) (string, bool) {
+	if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+		return s, true
+	}
+	if obj, ok := v.(map[string]interface{}); ok {
+		if u, ok := obj["url"].(string); ok && strings.TrimSpace(u) != "" {
+			return u, true
+		}
+	}
+	return "", false
+}
+
+func responsesContentItemsToText(contentItems []ResponsesContent) string {
+	var textParts []string
+	for _, item := range contentItems {
+		switch item.Type {
+		case "input_text", "text", "output_text":
+			if strings.TrimSpace(item.Text) != "" {
+				textParts = append(textParts, item.Text)
+			}
+		case "input_image":
+			if strings.TrimSpace(item.ImageURL) != "" {
+				textParts = append(textParts, "[input_image] "+item.ImageURL)
+			}
+		case "input_file":
+			if strings.TrimSpace(item.FileID) != "" {
+				textParts = append(textParts, "[input_file] "+item.FileID)
+			}
+		}
+	}
+	return strings.Join(textParts, "\n")
 }
 
 // ConvertChatCompletionToResponses converts Chat Completions response to Responses format
@@ -521,10 +584,14 @@ func OpenAIResponsesHandler(database *gorm.DB, tokenMgr *token.Manager, upstream
 		var payload map[string]interface{}
 		json.Unmarshal(payloadBytes, &payload)
 
-		// Add Cloud Code API required fields
-		payload["userAgent"] = "antigravity"
-		payload["requestType"] = "agent" // Restored per Antigravity-Manager reference
-		payload["requestId"] = requestId
+		// Add Cloud Code API required fields and keep compatibility metadata explicit.
+		compatCtx, smuggled := applyResponsesUpstreamFields(payload, requestId, req)
+		if smuggled {
+			w.Header().Set("X-Nexus-Responses-Compat", "request_id_smuggled")
+			if verbose {
+				log.Printf("ℹ️ [%s] /v1/responses Encoded compatibility fields into requestId", requestId)
+			}
+		}
 
 		// Verbose: Log Gemini payload
 		if verbose {
@@ -534,8 +601,7 @@ func OpenAIResponsesHandler(database *gorm.DB, tokenMgr *token.Manager, upstream
 
 		// 7. Handle streaming vs non-streaming
 		if req.Stream {
-			// TODO: Implement streaming for Responses API
-			handleOpenAIStreaming(w, upstreamClient, cachedToken.AccessToken, payload, targetModel, requestId)
+			handleResponsesStreaming(w, upstreamClient, cachedToken.AccessToken, payload, chatReq.Model, requestId, compatCtx)
 		} else {
 			// Non-streaming: Get response from upstream
 			resp, err := upstreamClient.GenerateContent(cachedToken.AccessToken, payload)
@@ -612,6 +678,7 @@ func OpenAIResponsesHandler(database *gorm.DB, tokenMgr *token.Manager, upstream
 
 			// Convert Chat Completions to Responses API format
 			responsesResp := ConvertChatCompletionToResponsesWithAnnotations(chatCompletionResp, annotations)
+			applyResponsesCompatToResponse(&responsesResp, compatCtx)
 
 			// Verbose: Log final Responses API response
 			if verbose {
@@ -623,5 +690,259 @@ func OpenAIResponsesHandler(database *gorm.DB, tokenMgr *token.Manager, upstream
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(responsesResp)
 		}
+	}
+}
+
+func handleResponsesStreaming(w http.ResponseWriter, client *upstream.Client, token string, payload map[string]interface{}, model string, requestId string, compatCtx responsesCompatContext) {
+	resp, err := client.SmartStreamGenerateContent(token, payload)
+	if err != nil {
+		writeOpenAIError(w, "Upstream error: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(resp.StatusCode)
+		_, _ = w.Write(body)
+		return
+	}
+
+	SetSSEHeaders(w)
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeOpenAIError(w, "Streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	respID := "resp_" + uuid.New().String()[:12]
+	itemID := "item_" + uuid.New().String()[:8]
+	created := time.Now().Unix()
+	fullText := strings.Builder{}
+	var latestUsage *ResponsesUsage
+
+	createdEvent := map[string]interface{}{
+		"type": "response.created",
+		"response": map[string]interface{}{
+			"id":         respID,
+			"object":     "response",
+			"status":     "in_progress",
+			"created_at": created,
+			"model":      model,
+		},
+	}
+	applyResponsesCompatToMap(createdEvent["response"].(map[string]interface{}), compatCtx)
+	if b, err := json.Marshal(createdEvent); err == nil {
+		fmt.Fprintf(w, "data: %s\n\n", b)
+		flusher.Flush()
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+	safetyChecker := NewStreamSafetyChecker()
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := strings.TrimPrefix(line, "data: ")
+		if data == "[DONE]" {
+			break
+		}
+		if abort, reason := safetyChecker.CheckChunk([]byte(data)); abort {
+			log.Printf("⚠️ [%s] /v1/responses Stream aborted by safety checker: %s", requestId, reason)
+			break
+		}
+
+		var wrapped map[string]interface{}
+		if err := json.Unmarshal([]byte(data), &wrapped); err != nil {
+			continue
+		}
+
+		geminiResp, ok := wrapped["response"].(map[string]interface{})
+		if !ok {
+			geminiResp = wrapped
+		}
+
+		text := extractTextFromGemini(geminiResp)
+		if text != "" {
+			fullText.WriteString(text)
+			deltaEvent := map[string]interface{}{
+				"type":          "response.output_text.delta",
+				"response_id":   respID,
+				"item_id":       itemID,
+				"output_index":  0,
+				"content_index": 0,
+				"delta":         text,
+			}
+			if b, err := json.Marshal(deltaEvent); err == nil {
+				fmt.Fprintf(w, "data: %s\n\n", b)
+				flusher.Flush()
+			}
+		}
+
+		if usage := extractResponsesUsageFromGemini(geminiResp); usage != nil {
+			latestUsage = usage
+		}
+	}
+
+	outputDoneEvent := map[string]interface{}{
+		"type":          "response.output_text.done",
+		"response_id":   respID,
+		"item_id":       itemID,
+		"output_index":  0,
+		"content_index": 0,
+		"text":          fullText.String(),
+	}
+	if b, err := json.Marshal(outputDoneEvent); err == nil {
+		fmt.Fprintf(w, "data: %s\n\n", b)
+		flusher.Flush()
+	}
+
+	completedResponse := map[string]interface{}{
+		"id":         respID,
+		"object":     "response",
+		"status":     "completed",
+		"created_at": created,
+		"model":      model,
+		"output": []map[string]interface{}{
+			{
+				"id":     itemID,
+				"type":   "message",
+				"role":   "assistant",
+				"status": "completed",
+				"content": []map[string]interface{}{
+					{
+						"type": "output_text",
+						"text": fullText.String(),
+					},
+				},
+			},
+		},
+	}
+	if latestUsage != nil {
+		completedResponse["usage"] = latestUsage
+	}
+	applyResponsesCompatToMap(completedResponse, compatCtx)
+
+	completedEvent := map[string]interface{}{
+		"type":     "response.completed",
+		"response": completedResponse,
+	}
+	if b, err := json.Marshal(completedEvent); err == nil {
+		fmt.Fprintf(w, "data: %s\n\n", b)
+		flusher.Flush()
+	}
+	fmt.Fprintf(w, "data: [DONE]\n\n")
+	flusher.Flush()
+}
+
+func extractResponsesUsageFromGemini(geminiResp map[string]interface{}) *ResponsesUsage {
+	usageMeta, ok := geminiResp["usageMetadata"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	usage := &ResponsesUsage{}
+	if v, ok := usageMeta["promptTokenCount"].(float64); ok {
+		usage.PromptTokens = int(v)
+	}
+	if v, ok := usageMeta["candidatesTokenCount"].(float64); ok {
+		usage.CompletionTokens = int(v)
+	}
+	if v, ok := usageMeta["totalTokenCount"].(float64); ok {
+		usage.TotalTokens = int(v)
+	} else {
+		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+	}
+	return usage
+}
+
+func applyResponsesUpstreamFields(payload map[string]interface{}, requestID string, req OpenAIResponsesRequest) (responsesCompatContext, bool) {
+	payload["userAgent"] = "antigravity"
+	payload["requestType"] = "agent"
+
+	compatCtx := responsesCompatContext{
+		Conversation:       strings.TrimSpace(req.Conversation),
+		PreviousResponseID: strings.TrimSpace(req.PreviousResponseID),
+	}
+	encodedRequestID, encoded := encodeResponsesCompatRequestID(requestID, compatCtx)
+	payload["requestId"] = encodedRequestID
+
+	return compatCtx, encoded
+}
+
+func encodeResponsesCompatRequestID(baseRequestID string, compatCtx responsesCompatContext) (string, bool) {
+	if compatCtx.Conversation == "" && compatCtx.PreviousResponseID == "" {
+		return baseRequestID, false
+	}
+
+	raw := map[string]string{
+		"c": compatCtx.Conversation,
+		"p": compatCtx.PreviousResponseID,
+	}
+	body, err := json.Marshal(raw)
+	if err != nil {
+		return baseRequestID, false
+	}
+
+	encoded := base64.RawURLEncoding.EncodeToString(body)
+	smuggled := baseRequestID + responsesCompatRequestIDSeparator + encoded
+	// Keep requestId bounded for upstream compatibility.
+	if len(smuggled) > 240 {
+		return baseRequestID, false
+	}
+	return smuggled, true
+}
+
+func decodeResponsesCompatRequestID(requestID string) responsesCompatContext {
+	parts := strings.SplitN(requestID, responsesCompatRequestIDSeparator, 2)
+	if len(parts) != 2 {
+		return responsesCompatContext{}
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return responsesCompatContext{}
+	}
+	var decoded map[string]string
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return responsesCompatContext{}
+	}
+	return responsesCompatContext{
+		Conversation:       strings.TrimSpace(decoded["c"]),
+		PreviousResponseID: strings.TrimSpace(decoded["p"]),
+	}
+}
+
+func applyResponsesCompatToResponse(resp *OpenAIResponsesResponse, compatCtx responsesCompatContext) {
+	if resp == nil {
+		return
+	}
+	if compatCtx.PreviousResponseID != "" {
+		resp.PreviousResponseID = compatCtx.PreviousResponseID
+	}
+	if compatCtx.Conversation != "" {
+		if resp.Metadata == nil {
+			resp.Metadata = make(map[string]interface{})
+		}
+		resp.Metadata["conversation"] = compatCtx.Conversation
+	}
+}
+
+func applyResponsesCompatToMap(resp map[string]interface{}, compatCtx responsesCompatContext) {
+	if resp == nil {
+		return
+	}
+	if compatCtx.PreviousResponseID != "" {
+		resp["previous_response_id"] = compatCtx.PreviousResponseID
+	}
+	if compatCtx.Conversation != "" {
+		meta, _ := resp["metadata"].(map[string]interface{})
+		if meta == nil {
+			meta = make(map[string]interface{})
+		}
+		meta["conversation"] = compatCtx.Conversation
+		resp["metadata"] = meta
 	}
 }

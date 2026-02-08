@@ -225,6 +225,7 @@ func handleOpenAIStreaming(w http.ResponseWriter, client *upstream.Client, token
 	// Increase scanner buffer to handle large SSE frames (8MB limit)
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+	safetyChecker := NewStreamSafetyChecker()
 
 	chunkCount := 0
 	for scanner.Scan() {
@@ -235,6 +236,12 @@ func handleOpenAIStreaming(w http.ResponseWriter, client *upstream.Client, token
 				fmt.Fprintf(w, "data: [DONE]\n\n")
 				flusher.Flush()
 				break
+			}
+			if abort, reason := safetyChecker.CheckChunk([]byte(data)); abort {
+				log.Printf("⚠️ [%s] /v1/chat/completions Stream aborted by safety checker: %s", requestId, reason)
+				fmt.Fprintf(w, "data: [DONE]\n\n")
+				flusher.Flush()
+				return
 			}
 
 			// Verbose: log raw streaming chunk (truncated for large chunks)
@@ -369,18 +376,20 @@ func OpenAIChatHandlerWithMonitor(tokenMgr *token.Manager, upstreamClient *upstr
 		accountEmail := GetAccountEmail(r, tokenMgr)
 
 		// For streaming requests, we can't wrap the response writer
-		// Just call base handler and log basic info
+		// Capture actual HTTP status without buffering streaming body.
 		if req.Stream {
-			baseHandler(w, r)
+			sw := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
+			baseHandler(sw, r)
 
 			pm.LogRequest(models.RequestLog{
 				Method:       r.Method,
 				URL:          r.URL.Path,
-				Status:       200, // Assume success for streams
+				Status:       sw.statusCode,
 				Duration:     time.Since(startTime).Milliseconds(),
 				Model:        req.Model,
 				MappedModel:  db.ResolveModel(req.Model, "google"),
 				AccountEmail: accountEmail,
+				Error:        streamStatusError(sw.statusCode),
 				RequestBody:  string(bodyBytes),
 				ResponseBody: "[streaming response]",
 			})
@@ -464,4 +473,34 @@ func (r *responseRecorder) Flush() {
 	if flusher, ok := r.ResponseWriter.(http.Flusher); ok {
 		flusher.Flush()
 	}
+}
+
+type statusRecorder struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func (s *statusRecorder) WriteHeader(code int) {
+	s.statusCode = code
+	s.ResponseWriter.WriteHeader(code)
+}
+
+func (s *statusRecorder) Write(b []byte) (int, error) {
+	if s.statusCode == 0 {
+		s.statusCode = http.StatusOK
+	}
+	return s.ResponseWriter.Write(b)
+}
+
+func (s *statusRecorder) Flush() {
+	if flusher, ok := s.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func streamStatusError(statusCode int) string {
+	if statusCode >= 200 && statusCode < 400 {
+		return ""
+	}
+	return http.StatusText(statusCode)
 }

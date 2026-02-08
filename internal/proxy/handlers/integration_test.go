@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -21,24 +20,21 @@ import (
 // utilizing the credentials found in the local nexus.db.
 // It is skipped if nexus.db is missing or has no primary account.
 func TestProxyIntegration_SystemRole(t *testing.T) {
+	if os.Getenv("NEXUS_RUN_INTEGRATION") != "1" {
+		t.Skip("set NEXUS_RUN_INTEGRATION=1 to run integration tests")
+	}
+
 	// 1. Locate nexus.db
-	wd, _ := os.Getwd()
-	// Try multiple paths: current dir, parent dir, or project root
 	dbPaths := []string{
 		"nexus.db",
 		"../../../nexus.db", // if running from inside internal/proxy/handlers
 		"../../../../nexus.db",
 	}
-	
+
 	var dbPath string
 	for _, p := range dbPaths {
-		path := filepath.Join(wd, p)
-		// Clean the path if it's absolute, otherwise Resolve it
-		if !filepath.IsAbs(p) {
-			path = p // Use relative path for Open check simplicity or rely on relative to CWD
-		}
-		if _, err := os.Stat(path); err == nil {
-			dbPath = path
+		if _, err := os.Stat(p); err == nil {
+			dbPath = p
 			break
 		}
 	}
@@ -58,15 +54,15 @@ func TestProxyIntegration_SystemRole(t *testing.T) {
 	if err := database.Where("is_primary = ?", true).First(&account).Error; err != nil {
 		t.Skip("⚠️ No primary account found in nexus.db. Skipping integration test.")
 	}
-	
+
 	t.Logf("🚀 Running integration test with Account: %s (Project: %s)", account.Email, account.ID)
 
 	// 4. Setup Dependencies
 	tokenMgr := token.NewManager(database)
 	// We need to ensure the token manager has loaded the token into cache
 	// In a real app, StartRefreshLoop does this, but here we can just ensure it's loaded via GetPrimary
-	// However, GetPrimary loads from DB on demand if not cached. 
-	
+	// However, GetPrimary loads from DB on demand if not cached.
+
 	upstreamClient := upstream.NewClient()
 	handler := OpenAIChatHandler(tokenMgr, upstreamClient)
 
@@ -79,12 +75,12 @@ func TestProxyIntegration_SystemRole(t *testing.T) {
 		},
 		Temperature: float64Ptr(0.1),
 	}
-	
+
 	bodyBytes, _ := json.Marshal(reqBody)
 	req := httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewBuffer(bodyBytes))
 	req.Header.Set("Content-Type", "application/json")
 	// Use the mock API key or rely on implicit primary account
-	req.Header.Set("Authorization", "Bearer sk-test-key") 
+	req.Header.Set("Authorization", "Bearer sk-test-key")
 
 	rec := httptest.NewRecorder()
 
@@ -114,7 +110,7 @@ func TestProxyIntegration_SystemRole(t *testing.T) {
 	if content == "" {
 		t.Error("Response content is empty")
 	}
-	
+
 	// We expect the system instruction to guide the output
 	// Note: Short prompts might be ignored or hallucinated, but "Always reply with..." is strong.
 	// We won't fail hard on content mismatch to avoid flakiness, but we log it.

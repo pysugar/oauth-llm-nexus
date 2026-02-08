@@ -12,14 +12,23 @@ import (
 	"github.com/pysugar/oauth-llm-nexus/internal/upstream/codex"
 )
 
+type codexProvider interface {
+	StreamResponses(payload map[string]interface{}) (*http.Response, error)
+	GetQuota() *codex.QuotaInfo
+}
+
 // CodexProvider is a global Codex provider instance
 // Initialized at startup, may be nil if auth.json is not available
-var CodexProvider *codex.Provider
+var CodexProvider codexProvider
 
 // InitCodexProvider initializes the global Codex provider
 func InitCodexProvider(authPath string) error {
-	CodexProvider = codex.NewProvider(authPath)
-	return CodexProvider.Init()
+	provider := codex.NewProvider(authPath)
+	if err := provider.Init(); err != nil {
+		return err
+	}
+	CodexProvider = provider
+	return nil
 }
 
 // handleCodexChatRequest handles Chat Completions requests for Codex models
@@ -231,11 +240,10 @@ func handleCodexResponsesPassthrough(w http.ResponseWriter, bodyBytes []byte, ta
 	payload["stream"] = true
 	payload["store"] = false
 	payload["parallel_tool_calls"] = true
-	delete(payload, "max_output_tokens")
-	delete(payload, "max_completion_tokens")
-	delete(payload, "temperature")
-	delete(payload, "top_p")
-	delete(payload, "service_tier")
+	filteredParams := filterUnsupportedCodexParams(payload)
+	if len(filteredParams) > 0 {
+		w.Header().Set("X-Nexus-Codex-Filtered-Params", strings.Join(filteredParams, ","))
+	}
 
 	// Call Codex API
 	resp, err := CodexProvider.StreamResponses(payload)
@@ -286,6 +294,24 @@ func handleCodexResponsesPassthrough(w http.ResponseWriter, bodyBytes []byte, ta
 	}
 
 	log.Printf("✅ [%s] Codex /responses passthrough completed: %d events", requestId, eventCount)
+}
+
+func filterUnsupportedCodexParams(payload map[string]interface{}) []string {
+	unsupported := []string{
+		"max_output_tokens",
+		"max_completion_tokens",
+		"temperature",
+		"top_p",
+		"service_tier",
+	}
+	filtered := make([]string, 0, len(unsupported))
+	for _, key := range unsupported {
+		if _, exists := payload[key]; exists {
+			delete(payload, key)
+			filtered = append(filtered, key)
+		}
+	}
+	return filtered
 }
 
 // normalizeCodexInput normalizes the input field to Codex's required format:

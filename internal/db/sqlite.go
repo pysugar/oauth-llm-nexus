@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -67,7 +68,7 @@ func ensureAPIKey(db *gorm.DB) {
 			Key:   "api_key",
 			Value: apiKey,
 		})
-		log.Printf("🔑 Generated new API key: %s", apiKey)
+		log.Printf("🔑 Generated new API key: %s", formatSensitiveAPIKey(apiKey))
 	}
 }
 
@@ -85,7 +86,7 @@ func RegenerateAPIKey(db *gorm.DB) string {
 	apiKey := "sk-" + hex.EncodeToString(keyBytes)
 
 	db.Model(&models.Config{}).Where("key = ?", "api_key").Update("value", apiKey)
-	log.Printf("🔑 Regenerated API key: %s", apiKey)
+	log.Printf("🔑 Regenerated API key: %s", formatSensitiveAPIKey(apiKey))
 	return apiKey
 }
 
@@ -192,7 +193,9 @@ func ensureModelRoutes(db *gorm.DB) {
 // Cache key format: "clientModel:targetProvider"
 func loadModelRouteCache(db *gorm.DB) {
 	var routes []models.ModelRoute
-	db.Where("is_active = ?", true).Find(&routes)
+	db.Where("is_active = ?", true).
+		Order("client_model asc, target_provider asc, id asc").
+		Find(&routes)
 
 	modelRouteCacheLock.Lock()
 	defer modelRouteCacheLock.Unlock()
@@ -209,6 +212,21 @@ func loadModelRouteCache(db *gorm.DB) {
 		log.Printf("  - %s -> %s (%s)", r.ClientModel, r.TargetModel, r.TargetProvider)
 	}
 	log.Printf("📋 Loaded %d model routes into cache", len(routes))
+}
+
+func formatSensitiveAPIKey(apiKey string) string {
+	if !sensitiveLoggingEnabled() {
+		return apiKey
+	}
+	if len(apiKey) <= 10 {
+		return "***"
+	}
+	return apiKey[:6] + strings.Repeat("*", len(apiKey)-10) + apiKey[len(apiKey)-4:]
+}
+
+func sensitiveLoggingEnabled() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("NEXUS_MASK_SENSITIVE")))
+	return v == "1" || v == "true" || v == "yes"
 }
 
 // GetModelRoute returns the target model for a given client model and target provider
