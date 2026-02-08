@@ -6,7 +6,10 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/pysugar/oauth-llm-nexus/internal/db/models"
+	"github.com/pysugar/oauth-llm-nexus/internal/proxy/monitor"
 	"github.com/pysugar/oauth-llm-nexus/internal/upstream/vertexkey"
 )
 
@@ -63,6 +66,74 @@ func GeminiCompatProxyHandler() http.HandlerFunc {
 		if err := vertexkey.CopyResponse(w, resp); err != nil {
 			log.Printf("❌ Gemini compat response copy error: model=%s action=%s err=%v", model, action, err)
 		}
+	}
+}
+
+// GeminiCompatProxyHandlerWithMonitor wraps GeminiCompatProxyHandler with request logging.
+func GeminiCompatProxyHandlerWithMonitor(pm *monitor.ProxyMonitor) http.HandlerFunc {
+	baseHandler := GeminiCompatProxyHandler()
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !pm.IsEnabled() {
+			baseHandler(w, r)
+			return
+		}
+
+		startTime := time.Now()
+		model, action, _ := parseGeminiCompatModelAction(r.URL.Path)
+
+		bodyBytes, _ := io.ReadAll(r.Body)
+		r.Body = io.NopCloser(strings.NewReader(string(bodyBytes)))
+
+		// Stream actions should avoid buffering full response body in memory.
+		if action == "streamGenerateContent" {
+			sw := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
+			baseHandler(sw, r)
+			pm.LogRequest(models.RequestLog{
+				Method:       r.Method,
+				URL:          r.URL.Path,
+				Status:       sw.statusCode,
+				Duration:     time.Since(startTime).Milliseconds(),
+				Provider:     "vertex",
+				Model:        model,
+				MappedModel:  model,
+				Error:        streamStatusError(sw.statusCode),
+				RequestBody:  string(bodyBytes),
+				ResponseBody: "[streaming response]",
+			})
+			return
+		}
+
+		rec := &responseRecorder{ResponseWriter: w, statusCode: http.StatusOK}
+		baseHandler(rec, r)
+
+		respBody := rec.body.String()
+		var errorMsg string
+		if rec.statusCode >= http.StatusBadRequest {
+			var errResp struct {
+				Error struct {
+					Message string `json:"message"`
+				} `json:"error"`
+			}
+			if json.Unmarshal([]byte(respBody), &errResp) == nil && errResp.Error.Message != "" {
+				errorMsg = errResp.Error.Message
+			} else if len(respBody) < 500 {
+				errorMsg = respBody
+			}
+		}
+
+		pm.LogRequest(models.RequestLog{
+			Method:       r.Method,
+			URL:          r.URL.Path,
+			Status:       rec.statusCode,
+			Duration:     time.Since(startTime).Milliseconds(),
+			Provider:     "vertex",
+			Model:        model,
+			MappedModel:  model,
+			Error:        errorMsg,
+			RequestBody:  string(bodyBytes),
+			ResponseBody: respBody,
+		})
 	}
 }
 

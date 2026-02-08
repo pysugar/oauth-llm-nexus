@@ -401,6 +401,52 @@ func GenAIModelsListHandler(tokenMgr *token.Manager, upstreamClient *upstream.Cl
 	}
 }
 
+// GenAIModelsListHandlerWithMonitor wraps GenAIModelsListHandler with request logging.
+func GenAIModelsListHandlerWithMonitor(tokenMgr *token.Manager, upstreamClient *upstream.Client, pm *monitor.ProxyMonitor) http.HandlerFunc {
+	baseHandler := GenAIModelsListHandler(tokenMgr, upstreamClient)
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !pm.IsEnabled() {
+			baseHandler(w, r)
+			return
+		}
+
+		startTime := time.Now()
+		accountEmail := GetAccountEmail(r, tokenMgr)
+
+		rec := &responseRecorder{ResponseWriter: w, statusCode: http.StatusOK}
+		baseHandler(rec, r)
+
+		var errorMsg string
+		respBody := rec.body.String()
+		if rec.statusCode >= http.StatusBadRequest {
+			var errResp struct {
+				Error struct {
+					Message string `json:"message"`
+				} `json:"error"`
+			}
+			if json.Unmarshal([]byte(respBody), &errResp) == nil && errResp.Error.Message != "" {
+				errorMsg = errResp.Error.Message
+			} else if len(respBody) < 500 {
+				errorMsg = respBody
+			}
+		}
+
+		pm.LogRequest(models.RequestLog{
+			Method:       r.Method,
+			URL:          r.URL.Path,
+			Status:       rec.statusCode,
+			Duration:     time.Since(startTime).Milliseconds(),
+			Provider:     "google",
+			Model:        "models.list",
+			MappedModel:  "models.list",
+			AccountEmail: accountEmail,
+			Error:        errorMsg,
+			ResponseBody: respBody,
+		})
+	}
+}
+
 func writeStaticGenAIModels(w http.ResponseWriter) {
 	models := []map[string]interface{}{
 		{
@@ -490,6 +536,7 @@ func GenAIHandlerWithMonitor(tokenMgr *token.Manager, upstreamClient *upstream.C
 			URL:          r.URL.Path,
 			Status:       rec.statusCode,
 			Duration:     time.Since(startTime).Milliseconds(),
+			Provider:     "google",
 			Model:        rawModel,
 			MappedModel:  db.ResolveModel(rawModel, "google"),
 			AccountEmail: accountEmail,
@@ -532,6 +579,7 @@ func GenAIStreamHandlerWithMonitor(tokenMgr *token.Manager, upstreamClient *upst
 			URL:          r.URL.Path,
 			Status:       sw.statusCode,
 			Duration:     time.Since(startTime).Milliseconds(),
+			Provider:     "google",
 			Model:        rawModel,
 			MappedModel:  db.ResolveModel(rawModel, "google"),
 			AccountEmail: accountEmail,

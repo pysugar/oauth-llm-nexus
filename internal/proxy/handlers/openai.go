@@ -371,6 +371,7 @@ func OpenAIChatHandlerWithMonitor(tokenMgr *token.Manager, upstreamClient *upstr
 			Stream bool   `json:"stream"`
 		}
 		json.Unmarshal(bodyBytes, &req)
+		targetModel, provider := db.ResolveModelWithProvider(req.Model)
 
 		// Get account email using common helper
 		accountEmail := GetAccountEmail(r, tokenMgr)
@@ -386,8 +387,9 @@ func OpenAIChatHandlerWithMonitor(tokenMgr *token.Manager, upstreamClient *upstr
 				URL:          r.URL.Path,
 				Status:       sw.statusCode,
 				Duration:     time.Since(startTime).Milliseconds(),
+				Provider:     provider,
 				Model:        req.Model,
-				MappedModel:  db.ResolveModel(req.Model, "google"),
+				MappedModel:  targetModel,
 				AccountEmail: accountEmail,
 				Error:        streamStatusError(sw.statusCode),
 				RequestBody:  string(bodyBytes),
@@ -438,8 +440,9 @@ func OpenAIChatHandlerWithMonitor(tokenMgr *token.Manager, upstreamClient *upstr
 			URL:          r.URL.Path,
 			Status:       rec.statusCode,
 			Duration:     time.Since(startTime).Milliseconds(),
+			Provider:     provider,
 			Model:        req.Model,
-			MappedModel:  db.ResolveModel(req.Model, "google"),
+			MappedModel:  targetModel,
 			AccountEmail: accountEmail,
 			Error:        errorMsg,
 			InputTokens:  inputTokens,

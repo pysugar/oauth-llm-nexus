@@ -14,7 +14,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/pysugar/oauth-llm-nexus/internal/auth/token"
 	"github.com/pysugar/oauth-llm-nexus/internal/db"
+	"github.com/pysugar/oauth-llm-nexus/internal/db/models"
 	"github.com/pysugar/oauth-llm-nexus/internal/proxy/mappers"
+	"github.com/pysugar/oauth-llm-nexus/internal/proxy/monitor"
 	"github.com/pysugar/oauth-llm-nexus/internal/upstream"
 	"gorm.io/gorm"
 )
@@ -690,6 +692,96 @@ func OpenAIResponsesHandler(database *gorm.DB, tokenMgr *token.Manager, upstream
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(responsesResp)
 		}
+	}
+}
+
+// OpenAIResponsesHandlerWithMonitor wraps OpenAIResponsesHandler with request logging.
+func OpenAIResponsesHandlerWithMonitor(database *gorm.DB, tokenMgr *token.Manager, upstreamClient *upstream.Client, pm *monitor.ProxyMonitor) http.HandlerFunc {
+	baseHandler := OpenAIResponsesHandler(database, tokenMgr, upstreamClient)
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !pm.IsEnabled() {
+			baseHandler(w, r)
+			return
+		}
+
+		startTime := time.Now()
+
+		bodyBytes, _ := io.ReadAll(r.Body)
+		r.Body = io.NopCloser(strings.NewReader(string(bodyBytes)))
+
+		var req OpenAIResponsesRequest
+		_ = json.Unmarshal(bodyBytes, &req)
+
+		targetModel, provider := db.ResolveModelWithProvider(req.Model)
+		accountEmail := GetAccountEmail(r, tokenMgr)
+
+		if req.Stream {
+			sw := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
+			baseHandler(sw, r)
+
+			pm.LogRequest(models.RequestLog{
+				Method:       r.Method,
+				URL:          r.URL.Path,
+				Status:       sw.statusCode,
+				Duration:     time.Since(startTime).Milliseconds(),
+				Provider:     provider,
+				Model:        req.Model,
+				MappedModel:  targetModel,
+				AccountEmail: accountEmail,
+				Error:        streamStatusError(sw.statusCode),
+				RequestBody:  string(bodyBytes),
+				ResponseBody: "[streaming response]",
+			})
+			return
+		}
+
+		rec := &responseRecorder{ResponseWriter: w, statusCode: http.StatusOK}
+		baseHandler(rec, r)
+
+		var inputTokens, outputTokens int
+		var errorMsg string
+		respBody := rec.body.String()
+
+		if rec.statusCode >= 200 && rec.statusCode < 400 {
+			var resp struct {
+				Usage struct {
+					PromptTokens     int `json:"prompt_tokens"`
+					CompletionTokens int `json:"completion_tokens"`
+				} `json:"usage"`
+			}
+			if json.Unmarshal([]byte(respBody), &resp) == nil {
+				inputTokens = resp.Usage.PromptTokens
+				outputTokens = resp.Usage.CompletionTokens
+			}
+		} else {
+			var errResp struct {
+				Error struct {
+					Message string `json:"message"`
+				} `json:"error"`
+			}
+			if json.Unmarshal([]byte(respBody), &errResp) == nil && errResp.Error.Message != "" {
+				errorMsg = errResp.Error.Message
+			} else if len(respBody) < 500 {
+				errorMsg = respBody
+			}
+		}
+
+		pm.LogRequest(models.RequestLog{
+			Method:       r.Method,
+			URL:          r.URL.Path,
+			Status:       rec.statusCode,
+			Duration:     time.Since(startTime).Milliseconds(),
+			Provider:     provider,
+			Model:        req.Model,
+			MappedModel:  targetModel,
+			AccountEmail: accountEmail,
+			Error:        errorMsg,
+			InputTokens:  inputTokens,
+			OutputTokens: outputTokens,
+			RequestBody:  string(bodyBytes),
+			ResponseBody: respBody,
+		})
 	}
 }
 

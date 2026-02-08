@@ -8,6 +8,7 @@ type RequestLog struct {
 	URL          string `json:"url"`
 	Status       int    `json:"status"`
 	Duration     int64  `json:"duration"` // milliseconds
+	Provider     string `gorm:"index" json:"provider,omitempty"`
 	Model        string `gorm:"index" json:"model,omitempty"`
 	MappedModel  string `json:"mapped_model,omitempty"`
 	AccountEmail string `json:"account_email,omitempty"`

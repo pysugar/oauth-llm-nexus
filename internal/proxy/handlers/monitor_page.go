@@ -145,6 +145,7 @@ var monitorPageHTML = `<!DOCTYPE html>
                         <th>Status</th>
                         <th>Method</th>
                         <th>Model</th>
+                        <th>Provider</th>
                         <th>Account</th>
                         <th>Path</th>
                         <th class="right">Tokens</th>
@@ -153,7 +154,7 @@ var monitorPageHTML = `<!DOCTYPE html>
                     </tr>
                 </thead>
                 <tbody id="logs-tbody">
-                    <tr><td colspan="8" class="empty">No logs yet. Click "Start Recording" to begin.</td></tr>
+                    <tr><td colspan="9" class="empty">No logs yet. Click "Start Recording" to begin.</td></tr>
                 </tbody>
             </table>
         </div>
@@ -262,7 +263,7 @@ var monitorPageHTML = `<!DOCTYPE html>
             const tbody = document.getElementById('logs-tbody');
             
             if (logsData.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="8" class="empty">No logs yet. Click "Start Recording" to begin.</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="9" class="empty">No logs yet. Click "Start Recording" to begin.</td></tr>';
                 return;
             }
             
@@ -291,6 +292,8 @@ var monitorPageHTML = `<!DOCTYPE html>
                     html += '<div class="model-mapped">→ ' + log.mapped_model + '</div>';
                 }
                 html += '</td>';
+
+                html += '<td><span class="badge badge-warning">' + (log.provider || '-') + '</span></td>';
                 
                 html += '<td class="account" title="' + (log.account_email || '') + '">' + account + '</td>';
                 html += '<td>' + log.url + '</td>';
@@ -321,10 +324,11 @@ var monitorPageHTML = `<!DOCTYPE html>
             const log = logsData[idx];
             const isSuccess = log.status >= 200 && log.status < 400;
             
-            let html = '<div class="detail-grid">';
+            let html = '<div class="detail-grid" style="grid-template-columns: repeat(5, 1fr);">';
             html += '<div class="detail-item"><label>Status</label><div class="value ' + (isSuccess ? 'success' : 'error') + '">' + log.status + '</div></div>';
             html += '<div class="detail-item"><label>Duration</label><div class="value">' + log.duration + 'ms</div></div>';
             html += '<div class="detail-item"><label>Model</label><div class="value" style="color:#60a5fa">' + (log.model || '-') + '</div></div>';
+            html += '<div class="detail-item"><label>Provider</label><div class="value" style="color:#fbbf24">' + (log.provider || '-') + '</div></div>';
             html += '<div class="detail-item"><label>Mapped To</label><div class="value" style="color:#4ade80">' + (log.mapped_model || '-') + '</div></div>';
             html += '</div>';
             
