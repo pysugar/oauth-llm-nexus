@@ -9,10 +9,11 @@
 ## ✨ Features
 
 -   **Multi-Protocol Support**:
-    -   **OpenAI Compatible**: `/v1/chat/completions` (Works with Cursor, Open WebUI, etc.)
+    -   **OpenAI Compatible**: `/v1/chat/completions`, `/v1/responses` (Works with Cursor, Open WebUI, etc.)
     -   **Anthropic Compatible**: `/anthropic/v1/messages` (Works with Claude Code, Aider, etc.)
     -   **Google GenAI Compatible**: `/genai/v1beta/models` (Works with official Google SDKs)
     -   **Gemini API-Key Compatibility (OpenClaw)**: `/v1beta/models/*` with transparent Vertex upstream proxy
+    -   **Codex Adapter (provider=codex)**: OpenAI-facing `/v1/chat/completions` and `/v1/responses` with stream-first behavior
 -   **Smart Model Mapping**: Configurable routing from client model names to backend models via Dashboard.
 -   **Account Pool Management**: Link multiple Google accounts to pool quotas and increase limits.
 -   **User-Specific Quota Routing**: Route requests to specific accounts using `X-Nexus-Account` header for quota isolation.
@@ -117,6 +118,7 @@ The server will start on `127.0.0.1:8080` by default (or `:8086` in release mode
 | `NEXUS_MODE` | - | Set to `release` for production (changes default port to 8086) |
 | `NEXUS_ADMIN_PASSWORD` | - | Optional password to protect Dashboard and API endpoints |
 | `NEXUS_VERBOSE` | - | Set to `1` or `true` to enable detailed request/response logging |
+| `NEXUS_ANTIGRAVITY_USER_AGENT` | `antigravity/1.15.8 windows/amd64` | Override upstream Antigravity user agent |
 | `NEXUS_VERTEX_API_KEY` | - | Enable transparent Gemini-compatible Vertex proxy (`/v1beta/models/*`) |
 | `NEXUS_VERTEX_BASE_URL` | `https://aiplatform.googleapis.com` | Vertex upstream base URL override |
 | `NEXUS_VERTEX_PROXY_TIMEOUT` | `5m` | Upstream timeout for Vertex compatibility proxy |
@@ -135,6 +137,14 @@ export NEXUS_ADMIN_PASSWORD=mysecret
 NEXUS_VERBOSE=1 ./nexus
 # Logs will include full request bodies and API responses
 ```
+
+### Protocol Compatibility Notes
+
+-   **Codex is stream-first by design**: for `provider=codex`, streaming is the primary compatibility target.
+-   **Codex `/v1/responses` behavior**: upstream is responses-stream based; clients should enable streaming. In current implementation, codex responses may still return SSE even when `stream=false`.
+-   **Codex parameter filtering**: unsupported parameters (for example `temperature`, `top_p`, `max_output_tokens`) are filtered before upstream forwarding to avoid upstream 4xx errors.
+-   **Filtering transparency**: filtered keys are exposed via `X-Nexus-Codex-Filtered-Params` response header.
+-   **Gemini-3 web search**: for Google antigravity upstream, Gemini-3 family search is treated as unsupported by design (see `docs/gemini-search-support.md`).
 
 ### 🔐 Dashboard Security
 
@@ -351,7 +361,9 @@ If you're running in an air-gapped or firewall-restricted environment:
 |:---------|:---------|:------------|
 | `GET /` | - | Dashboard UI |
 | `POST /v1/chat/completions` | OpenAI | Chat completions |
+| `POST /v1/responses` | OpenAI | Responses API |
 | `GET /v1/models` | OpenAI | List models |
+| `GET /v1/codex/quota` | OpenAI | Codex quota and account information |
 | `POST /anthropic/v1/messages` | Anthropic | Messages API |
 | `GET /anthropic/v1/models` | Anthropic | List available Claude models |
 | `POST /genai/v1beta/models/{model}:generateContent` | GenAI | Generate content |

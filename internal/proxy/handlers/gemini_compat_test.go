@@ -131,3 +131,51 @@ func TestGeminiCompatProxyHandler_Passthrough(t *testing.T) {
 		t.Fatalf("Unexpected forwarded body: %s", string(gotBody))
 	}
 }
+
+func TestGeminiCompatProxyHandler_StreamProxyMode(t *testing.T) {
+	var gotPath string
+
+	client := &http.Client{
+		Timeout: time.Minute,
+		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			gotPath = r.URL.Path
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header: http.Header{
+					"Content-Type": []string{"text/event-stream"},
+				},
+				Body: io.NopCloser(bytes.NewBufferString(
+					"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"hi\"}]}}]}\n\n" +
+						"data: [DONE]\n\n",
+				)),
+			}, nil
+		}),
+	}
+
+	oldProvider := GeminiCompatProvider
+	GeminiCompatProvider = vertexkey.NewProviderWithClient("server-key", "https://aiplatform.googleapis.com", time.Minute, client)
+	defer func() { GeminiCompatProvider = oldProvider }()
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/v1beta/models/gemini-2.5-flash-lite:streamGenerateContent",
+		strings.NewReader(`{"contents":[{"role":"user","parts":[{"text":"hello"}]}]}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	GeminiCompatProxyHandler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "text/event-stream") {
+		t.Fatalf("expected text/event-stream content type, got %q", ct)
+	}
+	if !strings.Contains(w.Body.String(), "data: [DONE]") {
+		t.Fatalf("expected streamed DONE marker, got %s", w.Body.String())
+	}
+	if gotPath != "/v1/publishers/google/models/gemini-2.5-flash-lite:streamGenerateContent" {
+		t.Fatalf("unexpected upstream stream path: %s", gotPath)
+	}
+}

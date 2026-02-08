@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -162,10 +164,17 @@ func GetAPIKeyHandler(db *gorm.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var config models.Config
 		db.Where("key = ?", "api_key").First(&config)
+		apiKey := config.Value
+		masked := false
+		if shouldMaskSensitiveData() {
+			apiKey = maskAPIKey(apiKey)
+			masked = true
+		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{
-			"api_key": config.Value,
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"api_key": apiKey,
+			"masked":  masked,
 		})
 	}
 }
@@ -178,13 +187,32 @@ func RegenerateAPIKeyHandler(db *gorm.DB) http.HandlerFunc {
 		apiKey := "sk-" + hex.EncodeToString(keyBytes)
 
 		db.Model(&models.Config{}).Where("key = ?", "api_key").Update("value", apiKey)
-		log.Printf("🔑 Regenerated API key: %s", apiKey)
+		log.Printf("🔑 Regenerated API key: %s", maskAPIKey(apiKey))
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{
-			"api_key": apiKey,
+		displayKey := apiKey
+		masked := false
+		if shouldMaskSensitiveData() {
+			displayKey = maskAPIKey(apiKey)
+			masked = true
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"api_key": displayKey,
+			"masked":  masked,
 		})
 	}
+}
+
+func shouldMaskSensitiveData() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("NEXUS_MASK_SENSITIVE")))
+	return v == "1" || v == "true" || v == "yes"
+}
+
+func maskAPIKey(apiKey string) string {
+	if len(apiKey) <= 10 {
+		return "***"
+	}
+	return apiKey[:6] + strings.Repeat("*", len(apiKey)-10) + apiKey[len(apiKey)-4:]
 }
 
 var dashboardHTML = `<!DOCTYPE html>

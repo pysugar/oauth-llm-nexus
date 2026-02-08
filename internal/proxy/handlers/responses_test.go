@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -111,5 +113,118 @@ func TestConvertChatCompletionToResponses_WithUsage(t *testing.T) {
 	}
 	if resp.Usage.CompletionTokens != 5 {
 		t.Errorf("Expected completion_tokens 5, got %d", resp.Usage.CompletionTokens)
+	}
+}
+
+func TestParseResponsesContent_WithImageAndFile(t *testing.T) {
+	raw := json.RawMessage(`[
+		{"type":"input_text","text":"hello"},
+		{"type":"input_image","image_url":{"url":"https://example.com/a.png"}},
+		{"type":"input_file","file_id":"file_123"}
+	]`)
+
+	got := parseResponsesContent(raw)
+	if !strings.Contains(got, "hello") {
+		t.Fatalf("expected text content, got %q", got)
+	}
+	if !strings.Contains(got, "[input_image] https://example.com/a.png") {
+		t.Fatalf("expected image placeholder, got %q", got)
+	}
+	if !strings.Contains(got, "[input_file] file_123") {
+		t.Fatalf("expected file placeholder, got %q", got)
+	}
+}
+
+func TestExtractResponsesUsageFromGemini(t *testing.T) {
+	geminiResp := map[string]interface{}{
+		"usageMetadata": map[string]interface{}{
+			"promptTokenCount":     float64(12),
+			"candidatesTokenCount": float64(8),
+		},
+	}
+
+	usage := extractResponsesUsageFromGemini(geminiResp)
+	if usage == nil {
+		t.Fatal("expected usage to be extracted")
+	}
+	if usage.PromptTokens != 12 || usage.CompletionTokens != 8 || usage.TotalTokens != 20 {
+		t.Fatalf("unexpected usage: %+v", usage)
+	}
+}
+
+func TestApplyResponsesUpstreamFields_EncodesCompatFieldsIntoRequestID(t *testing.T) {
+	payload := map[string]interface{}{}
+	req := OpenAIResponsesRequest{
+		Conversation:       "conv-1",
+		PreviousResponseID: "resp-1",
+	}
+
+	compatCtx, encoded := applyResponsesUpstreamFields(payload, "req-1", req)
+	if !encoded {
+		t.Fatal("expected requestId to be encoded with compatibility context")
+	}
+	if payload["userAgent"] != "antigravity" {
+		t.Fatalf("expected userAgent=antigravity, got %v", payload["userAgent"])
+	}
+	if payload["requestType"] != "agent" {
+		t.Fatalf("expected requestType=agent, got %v", payload["requestType"])
+	}
+	requestID, _ := payload["requestId"].(string)
+	if requestID == "" || requestID == "req-1" {
+		t.Fatalf("expected encoded requestId, got %v", payload["requestId"])
+	}
+	decoded := decodeResponsesCompatRequestID(requestID)
+	if decoded.Conversation != "conv-1" || decoded.PreviousResponseID != "resp-1" {
+		t.Fatalf("unexpected decoded context: %+v", decoded)
+	}
+	if _, ok := payload["conversation"]; ok {
+		t.Fatal("conversation should not be forwarded to Google upstream payload")
+	}
+	if _, ok := payload["previous_response_id"]; ok {
+		t.Fatal("previous_response_id should not be forwarded to Google upstream payload")
+	}
+	if compatCtx.Conversation != "conv-1" || compatCtx.PreviousResponseID != "resp-1" {
+		t.Fatalf("unexpected compat context: %+v", compatCtx)
+	}
+}
+
+func TestApplyResponsesCompatToResponse_RestoresFields(t *testing.T) {
+	resp := &OpenAIResponsesResponse{
+		ID:     "resp_test",
+		Object: "response",
+		Status: "completed",
+	}
+	compatCtx := responsesCompatContext{
+		Conversation:       "conv-restored",
+		PreviousResponseID: "resp-prev",
+	}
+
+	applyResponsesCompatToResponse(resp, compatCtx)
+
+	if resp.PreviousResponseID != "resp-prev" {
+		t.Fatalf("expected previous_response_id restored, got %q", resp.PreviousResponseID)
+	}
+	if resp.Metadata == nil || resp.Metadata["conversation"] != "conv-restored" {
+		t.Fatalf("expected metadata.conversation restored, got %#v", resp.Metadata)
+	}
+}
+
+func TestApplyResponsesCompatToMap_RestoresFields(t *testing.T) {
+	respMap := map[string]interface{}{
+		"id": "resp_test",
+	}
+	compatCtx := responsesCompatContext{
+		Conversation:       "conv-map",
+		PreviousResponseID: "resp-prev-map",
+	}
+
+	applyResponsesCompatToMap(respMap, compatCtx)
+
+	if respMap["previous_response_id"] != "resp-prev-map" {
+		t.Fatalf("expected previous_response_id in map, got %#v", respMap["previous_response_id"])
+	}
+	meta, _ := respMap["metadata"].(map[string]interface{})
+	if meta == nil || meta["conversation"] != "conv-map" {
+		t.Fatalf("expected metadata.conversation in map, got %#v", respMap["metadata"])
 	}
 }
