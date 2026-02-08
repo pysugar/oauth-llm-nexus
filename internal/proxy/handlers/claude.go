@@ -748,6 +748,7 @@ func ClaudeMessagesHandlerWithMonitor(tokenMgr *token.Manager, upstreamClient *u
 			URL:          r.URL.Path,
 			Status:       rec.statusCode,
 			Duration:     time.Since(startTime).Milliseconds(),
+			Provider:     "google",
 			Model:        req.Model,
 			MappedModel:  db.ResolveModel(req.Model, "google"),
 			AccountEmail: accountEmail,

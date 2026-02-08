@@ -160,8 +160,8 @@ func (pm *ProxyMonitor) GetLogsWithPagination(page, pageSize int, search string)
 	// Apply search filter
 	if search != "" {
 		searchPattern := "%" + search + "%"
-		query = query.Where("model LIKE ? OR url LIKE ? OR account_email LIKE ? OR error LIKE ?",
-			searchPattern, searchPattern, searchPattern, searchPattern)
+		query = query.Where("model LIKE ? OR provider LIKE ? OR url LIKE ? OR account_email LIKE ? OR error LIKE ?",
+			searchPattern, searchPattern, searchPattern, searchPattern, searchPattern)
 	}
 
 	// Count total

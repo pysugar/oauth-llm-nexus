@@ -107,10 +107,12 @@ func main() {
 		r.Get("/accounts/{id}/models", handlers.AccountModelsHandler(tokenManager, upstreamClient))
 		r.Post("/accounts/{id}/promote", handlers.SetPrimaryAccountHandler(database, tokenManager))
 		r.Post("/accounts/{id}/refresh", handlers.RefreshAccountHandler(tokenManager))
+		r.Post("/accounts/{id}/active", handlers.UpdateAccountActiveHandler(database, tokenManager))
 
 		// API Key management
 		r.Get("/config/apikey", handlers.GetAPIKeyHandler(database))
 		r.Post("/config/apikey/regenerate", handlers.RegenerateAPIKeyHandler(database))
+		r.Get("/support-status", handlers.SupportStatusHandler())
 
 		// Model Routes management
 		r.Get("/model-routes", handlers.ModelRoutesHandler(database))
@@ -126,7 +128,7 @@ func main() {
 		r.Post("/refresh", handlers.RefreshHandler(tokenManager))
 
 		// Test endpoint
-		r.Get("/test", handlers.TestHandler(tokenManager, upstreamClient))
+		r.Get("/test", handlers.TestHandler(database, tokenManager, upstreamClient, proxyMonitor))
 
 		// Discovery
 		r.Get("/discovery/scan", handlers.DiscoveryScanHandler())
@@ -154,7 +156,7 @@ func main() {
 		r.Use(middleware.APIKeyAuth(database))
 		r.Post("/chat/completions", handlers.OpenAIChatHandlerWithMonitor(tokenManager, upstreamClient, proxyMonitor))
 		r.Get("/models", handlers.OpenAIModelsListHandler(database))
-		r.Post("/responses", handlers.OpenAIResponsesHandler(database, tokenManager, upstreamClient))
+		r.Post("/responses", handlers.OpenAIResponsesHandlerWithMonitor(database, tokenManager, upstreamClient, proxyMonitor))
 		r.Get("/codex/quota", handlers.CodexQuotaHandler())
 	})
 
@@ -171,7 +173,7 @@ func main() {
 	r.Route("/genai", func(r chi.Router) {
 		r.Use(middleware.APIKeyAuth(database))
 		r.Route("/v1beta/models", func(r chi.Router) {
-			r.Get("/", handlers.GenAIModelsListHandler(tokenManager, upstreamClient))
+			r.Get("/", handlers.GenAIModelsListHandlerWithMonitor(tokenManager, upstreamClient, proxyMonitor))
 			r.Post("/{model}:generateContent", handlers.GenAIHandlerWithMonitor(tokenManager, upstreamClient, proxyMonitor))
 			r.Post("/{model}:streamGenerateContent", handlers.GenAIStreamHandlerWithMonitor(tokenManager, upstreamClient, proxyMonitor))
 		})
@@ -184,7 +186,7 @@ func main() {
 	if geminiCompatEnabled {
 		r.Route("/v1beta", func(r chi.Router) {
 			r.Use(middleware.APIKeyAuth(database))
-			r.Post("/models/*", handlers.GeminiCompatProxyHandler())
+			r.Post("/models/*", handlers.GeminiCompatProxyHandlerWithMonitor(proxyMonitor))
 		})
 	}
 

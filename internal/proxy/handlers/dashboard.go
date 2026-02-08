@@ -116,7 +116,9 @@ func SetPrimaryAccountHandler(database *gorm.DB, tokenMgr *token.Manager) http.H
 				return err
 			}
 			// 2. Promote target account
-			result := tx.Model(&models.Account{}).Where("id = ?", id).Update("is_primary", true)
+			result := tx.Model(&models.Account{}).
+				Where("id = ?", id).
+				Updates(map[string]interface{}{"is_primary": true, "is_active": true})
 			if result.Error != nil {
 				return result.Error
 			}
@@ -136,6 +138,42 @@ func SetPrimaryAccountHandler(database *gorm.DB, tokenMgr *token.Manager) http.H
 
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"status":"ok"}`))
+	}
+}
+
+// UpdateAccountActiveHandler updates is_active for a specific account
+func UpdateAccountActiveHandler(database *gorm.DB, tokenMgr *token.Manager) http.HandlerFunc {
+	type request struct {
+		IsActive bool `json:"is_active"`
+	}
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+
+		var req request
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		result := database.Model(&models.Account{}).Where("id = ?", id).Update("is_active", req.IsActive)
+		if result.Error != nil {
+			http.Error(w, "Failed to update account state", http.StatusInternalServerError)
+			return
+		}
+		if result.RowsAffected == 0 {
+			http.Error(w, "Account not found", http.StatusNotFound)
+			return
+		}
+
+		// Reload token cache to reflect account activation changes
+		tokenMgr.ReloadAllTokens()
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":    "ok",
+			"is_active": req.IsActive,
+		})
 	}
 }
 
@@ -215,6 +253,20 @@ func maskAPIKey(apiKey string) string {
 	return apiKey[:6] + strings.Repeat("*", len(apiKey)-10) + apiKey[len(apiKey)-4:]
 }
 
+// SupportStatusHandler returns current support status for optional providers/features.
+func SupportStatusHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		vertexEnabled := GeminiCompatProvider != nil && GeminiCompatProvider.IsEnabled()
+		codexEnabled := CodexProvider != nil
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"codex_enabled":               codexEnabled,
+			"gemini_vertex_proxy_enabled": vertexEnabled,
+		})
+	}
+}
+
 var dashboardHTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -255,17 +307,28 @@ var dashboardHTML = `<!DOCTYPE html>
 
         <!-- API Endpoints Card -->
         <div class="bg-gray-800 rounded-xl p-4 mb-6">
-            <div class="flex justify-between items-center mb-2">
+            <div class="flex flex-col md:flex-row md:items-center md:justify-between mb-3 gap-2">
                 <h3 class="text-sm font-semibold text-gray-400">🔌 API Endpoints</h3>
-                <div class="flex gap-2">
-                    <button onclick="testAPI()" class="text-xs bg-orange-600 hover:bg-orange-500 px-3 py-1 rounded">🧪 Test</button>
-                    <button onclick="copyEndpoint()" class="text-xs bg-gray-600 hover:bg-gray-500 px-3 py-1 rounded">📋 Copy</button>
+                <div class="flex flex-wrap items-center gap-2 text-xs">
+                    <span id="support-codex" class="px-2 py-1 rounded bg-gray-700 text-gray-300">Codex: Unknown</span>
+                    <span id="support-vertex" class="px-2 py-1 rounded bg-gray-700 text-gray-300">Gemini Vertex Proxy: Unknown</span>
                 </div>
             </div>
-            <div class="grid md:grid-cols-3 gap-2 text-sm">
-                <div class="bg-gray-700/50 rounded p-2"><span class="text-gray-400">OpenAI:</span> <code class="text-green-400">/v1/chat/completions</code></div>
-                <div class="bg-gray-700/50 rounded p-2"><span class="text-gray-400">Claude:</span> <code class="text-blue-400">/anthropic/v1/messages</code></div>
-                <div class="bg-gray-700/50 rounded p-2"><span class="text-gray-400">GenAI:</span> <code class="text-purple-400">/genai/v1beta/models</code></div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead>
+                        <tr class="text-gray-400 text-xs border-b border-gray-700">
+                            <th class="text-left py-2">Protocol</th>
+                            <th class="text-left py-2">Path</th>
+                            <th class="text-left py-2">Model</th>
+                            <th class="text-left py-2">Support</th>
+                            <th class="text-right py-2">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="endpoint-tests-body">
+                        <tr><td colspan="5" class="text-gray-500 py-3">Loading endpoint tests...</td></tr>
+                    </tbody>
+                </table>
             </div>
         </div>
 
@@ -285,13 +348,13 @@ var dashboardHTML = `<!DOCTYPE html>
             <p class="text-xs text-gray-500 mt-2">Use this key with any SDK: <code>api_key="sk-..."</code></p>
         </div>
 
-        <!-- Test Result Panel (shown after clicking Test button) -->
+        <!-- Test Result Panel -->
         <div id="test-panel" class="hidden bg-gray-800 rounded-xl overflow-hidden mb-6">
             <div class="px-4 py-3 border-b border-gray-700 flex justify-between items-center">
                 <h2 class="font-semibold">🧪 Test Result</h2>
                 <button onclick="document.getElementById('test-panel').classList.add('hidden')" class="text-gray-400 hover:text-white">✕</button>
             </div>
-            <pre id="test-result" class="p-3 text-xs overflow-x-auto max-h-48"></pre>
+            <div id="test-result" class="p-3 text-xs overflow-x-auto max-h-64"></div>
         </div>
 
         <!-- Main Content: Linked Accounts -->
@@ -480,6 +543,9 @@ var dashboardHTML = `<!DOCTYPE html>
             const expiresIn = Math.round((expiresAt - new Date()) / 60000);
             const tokenStatus = !acc.is_active ? 'Inactive' : (isValid ? expiresIn + 'm' : 'Expired');
             const tokenColor = acc.is_active ? (isValid ? 'text-green-400' : 'text-yellow-400') : 'text-red-400';
+            const accountStateBadge = acc.is_active
+                ? '<span class="px-2 py-0.5 bg-green-500/20 text-green-400 rounded text-xs">Active</span>'
+                : '<span class="px-2 py-0.5 bg-red-500/20 text-red-300 rounded text-xs">Inactive</span>';
             const primaryBadge = acc.is_primary ? '<span class="ml-2 px-2 py-0.5 bg-yellow-500/20 text-yellow-400 rounded text-xs">⭐ Primary</span>' : '';
             
             let html = '<div class="bg-gray-800 rounded-xl overflow-hidden border border-gray-700 mb-4">';
@@ -488,9 +554,11 @@ var dashboardHTML = `<!DOCTYPE html>
             html += '<div class="px-4 py-3 flex justify-between items-center border-b border-gray-700">';
             html += '<div class="flex items-center gap-2 flex-wrap">';
             html += providerIcon + '<span class="font-medium text-white cursor-help" title="' + acc.email + '">' + maskEmail(acc.email) + '</span>' + primaryBadge;
+            html += accountStateBadge;
             html += '<span class="text-xs ' + tokenColor + '">Token: ' + tokenStatus + '</span></div>';
             html += '<div class="flex items-center gap-2">';
             html += '<span class="px-2 py-1 rounded text-xs font-bold text-white ' + tier.color + '">' + tier.tier + '</span>';
+            html += '<button onclick="toggleAccountActive(\'' + acc.id + '\', ' + (!acc.is_active) + ')" class="text-xs bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded">' + (acc.is_active ? 'Disable' : 'Enable') + '</button>';
             html += '<button onclick="refreshAccount(\'' + acc.id + '\')" class="text-xs bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded">🔄</button>';
             if (!acc.is_primary && acc.is_active) {
                 html += '<button onclick="setPrimary(\'' + acc.id + '\')" class="text-xs bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded">Set Primary</button>';
@@ -535,6 +603,22 @@ var dashboardHTML = `<!DOCTYPE html>
             loadAll();
         }
 
+        async function toggleAccountActive(id, nextState) {
+            try {
+                const res = await fetch('/api/accounts/' + id + '/active', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ is_active: nextState })
+                });
+                if (!res.ok) {
+                    throw new Error('Failed to update account state');
+                }
+                await loadAll();
+            } catch (e) {
+                alert('Failed to update account state: ' + e.message);
+            }
+        }
+
         async function refreshAccount(id) {
             // Find button and update UI
             const btn = document.querySelector('button[onclick="refreshAccount(\'' + id + '\')"]');
@@ -569,15 +653,84 @@ var dashboardHTML = `<!DOCTYPE html>
             await loadAll();
         }
 
-        async function testAPI() {
-            document.getElementById('test-panel').classList.remove('hidden');
-            document.getElementById('test-result').textContent = 'Testing...';
-            try {
-                const res = await fetch('/api/test');
-                document.getElementById('test-result').textContent = JSON.stringify(await res.json(), null, 2);
-            } catch (err) {
-                document.getElementById('test-result').textContent = 'Error: ' + err.message;
+        const endpointTests = [
+            { id: 'openai_chat', protocol: 'OpenAI', path: '/v1/chat/completions', model: 'gemini-3-flash', supportKey: null },
+            { id: 'openai_responses', protocol: 'OpenAI', path: '/v1/responses', model: 'gpt-5.2', supportKey: null },
+            { id: 'anthropic_messages', protocol: 'Anthropic', path: '/anthropic/v1/messages', model: 'claude-sonnet-4-5', supportKey: null },
+            { id: 'genai_generate', protocol: 'GenAI', path: '/genai/v1beta/models/{model}:generateContent', model: 'gemini-3-flash', supportKey: null },
+            { id: 'vertex_generate', protocol: 'Gemini Compat', path: '/v1beta/models/{model}:generateContent', model: 'gemini-3-flash-preview', supportKey: 'gemini_vertex_proxy_enabled' }
+        ];
+
+        let supportStatus = {
+            codex_enabled: false,
+            gemini_vertex_proxy_enabled: false
+        };
+
+        function supportChip(enabled, yesText = 'Enabled', noText = 'Disabled') {
+            if (enabled) {
+                return '<span class="px-2 py-0.5 rounded bg-green-500/20 text-green-400 text-xs">' + yesText + '</span>';
             }
+            return '<span class="px-2 py-0.5 rounded bg-red-500/20 text-red-300 text-xs">' + noText + '</span>';
+        }
+
+        function resolveEndpointPath(item) {
+            return item.path.replace('{model}', item.model);
+        }
+
+        function renderEndpointTests() {
+            const body = document.getElementById('endpoint-tests-body');
+            if (!body) return;
+
+            let html = '';
+            for (const item of endpointTests) {
+                const path = resolveEndpointPath(item);
+                const supported = item.supportKey ? !!supportStatus[item.supportKey] : true;
+                const supportLabel = item.supportKey ? supportChip(supported) : supportChip(true, 'Built-in', 'Built-in');
+
+                html += '<tr class="border-b border-gray-700/50">';
+                html += '<td class="py-2 text-gray-300">' + item.protocol + '</td>';
+                html += '<td class="py-2"><code class="text-blue-300">' + path + '</code></td>';
+                html += '<td class="py-2"><code class="text-green-300">' + item.model + '</code></td>';
+                html += '<td class="py-2">' + supportLabel + '</td>';
+                html += '<td class="py-2 text-right">';
+                html += '<button onclick="testEndpoint(\'' + item.id + '\')" class="text-xs bg-orange-600 hover:bg-orange-500 px-3 py-1 rounded mr-2">🧪 Test</button>';
+                html += '<button onclick="copyEndpointPath(\'' + path + '\')" class="text-xs bg-gray-600 hover:bg-gray-500 px-3 py-1 rounded">📋 Copy</button>';
+                html += '</td>';
+                html += '</tr>';
+            }
+            body.innerHTML = html;
+        }
+
+        async function loadSupportStatus() {
+            try {
+                const res = await fetch('/api/support-status', { cache: 'no-cache' });
+                if (res.ok) {
+                    const data = await res.json();
+                    supportStatus = {
+                        codex_enabled: !!data.codex_enabled,
+                        gemini_vertex_proxy_enabled: !!data.gemini_vertex_proxy_enabled
+                    };
+                }
+            } catch (e) {
+                console.error('Failed to load support status', e);
+            }
+
+            const codexBadge = document.getElementById('support-codex');
+            const vertexBadge = document.getElementById('support-vertex');
+            if (codexBadge) {
+                codexBadge.className = supportStatus.codex_enabled
+                    ? 'px-2 py-1 rounded bg-green-500/20 text-green-400'
+                    : 'px-2 py-1 rounded bg-red-500/20 text-red-300';
+                codexBadge.textContent = 'Codex: ' + (supportStatus.codex_enabled ? 'Enabled' : 'Disabled');
+            }
+            if (vertexBadge) {
+                vertexBadge.className = supportStatus.gemini_vertex_proxy_enabled
+                    ? 'px-2 py-1 rounded bg-green-500/20 text-green-400'
+                    : 'px-2 py-1 rounded bg-red-500/20 text-red-300';
+                vertexBadge.textContent = 'Gemini Vertex Proxy: ' + (supportStatus.gemini_vertex_proxy_enabled ? 'Enabled' : 'Disabled');
+            }
+
+            renderEndpointTests();
         }
 
         // Clipboard helper for non-HTTPS environments
@@ -610,9 +763,69 @@ var dashboardHTML = `<!DOCTYPE html>
             document.body.removeChild(textarea);
         }
 
-        function copyEndpoint() {
-            const url = window.location.protocol + '//' + window.location.host + '/v1';
-            copyToClipboard(url, 'Copied: ' + url);
+        function copyEndpointPath(path) {
+            const fullPath = window.location.protocol + '//' + window.location.host + path;
+            copyToClipboard(fullPath, 'Copied: ' + fullPath);
+        }
+
+        function escapeInlineHtml(str) {
+            return String(str || '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+        }
+
+        async function testEndpoint(endpointId) {
+            document.getElementById('test-panel').classList.remove('hidden');
+            document.getElementById('test-result').innerHTML = '<div class="text-gray-300">Testing ' + endpointId + '...</div>';
+            try {
+                const res = await fetch('/api/test?endpoint=' + encodeURIComponent(endpointId), { cache: 'no-cache' });
+                const data = await res.json();
+                renderTestResult(data);
+            } catch (err) {
+                document.getElementById('test-result').innerHTML =
+                    '<div class="text-red-300">Error: ' + escapeInlineHtml(err.message) + '</div>';
+            }
+        }
+
+        function renderTestResult(result) {
+            const statusColor = result.skipped
+                ? 'text-yellow-300'
+                : (result.success ? 'text-green-400' : 'text-red-300');
+            const statusText = result.skipped
+                ? 'SKIPPED'
+                : (result.success ? 'PASS' : 'FAIL');
+
+            let html = '<div class="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3 text-xs">';
+            html += '<div class="bg-gray-700/50 rounded p-2"><div class="text-gray-400">Endpoint</div><div class="text-white font-semibold">' + escapeInlineHtml(result.endpoint) + '</div></div>';
+            html += '<div class="bg-gray-700/50 rounded p-2"><div class="text-gray-400">Model</div><div class="text-green-300 font-semibold">' + escapeInlineHtml(result.model) + '</div></div>';
+            html += '<div class="bg-gray-700/50 rounded p-2"><div class="text-gray-400">Status</div><div class="' + statusColor + ' font-semibold">' + statusText + ' (HTTP ' + escapeInlineHtml(result.status_code) + ')</div></div>';
+            html += '<div class="bg-gray-700/50 rounded p-2"><div class="text-gray-400">Duration</div><div class="text-white">' + escapeInlineHtml(result.duration_ms) + ' ms</div></div>';
+            html += '<div class="bg-gray-700/50 rounded p-2"><div class="text-gray-400">Content-Type</div><div class="text-blue-300">' + escapeInlineHtml(result.content_type || '-') + '</div></div>';
+            html += '<div class="bg-gray-700/50 rounded p-2"><div class="text-gray-400">Path</div><div class="text-white truncate" title="' + escapeInlineHtml(result.path || '-') + '">' + escapeInlineHtml(result.path || '-') + '</div></div>';
+            html += '</div>';
+
+            if (result.reason) {
+                html += '<div class="mb-3 text-yellow-300">Reason: ' + escapeInlineHtml(result.reason) + '</div>';
+            }
+            if (result.summary) {
+                html += '<div class="mb-2 text-gray-300">Summary: ' + escapeInlineHtml(result.summary) + '</div>';
+            }
+            html += '<div class="text-gray-400 mb-1">Snippet</div>';
+            html += '<pre class="bg-gray-900 rounded p-2 text-[11px] text-cyan-200 whitespace-pre-wrap break-words max-h-72 overflow-y-auto">' + escapeInlineHtml(formatSnippet(result.snippet)) + '</pre>';
+
+            document.getElementById('test-result').innerHTML = html;
+        }
+
+        function formatSnippet(snippet) {
+            const raw = String(snippet || '').trim();
+            if (!raw) return '';
+            try {
+                return JSON.stringify(JSON.parse(raw), null, 2);
+            } catch (e) {
+                return raw;
+            }
         }
 
         function showAddAccountModal() {
@@ -933,6 +1146,7 @@ var dashboardHTML = `<!DOCTYPE html>
         window.addEventListener('load', () => {
             loadAll();
             loadAPIKey();
+            loadSupportStatus();
             loadModelRoutes();
             loadLoggingStatus();
             loadRequestLogs();
