@@ -119,9 +119,7 @@ func handleOpenAINonStreaming(w http.ResponseWriter, client *upstream.Client, to
 		if verbose {
 			log.Printf("❌ [VERBOSE] [%s] /v1/chat/completions Gemini API error (status %d):\n%s", requestId, resp.StatusCode, util.TruncateBytes(body))
 		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(resp.StatusCode)
-		w.Write(body)
+		writeOpenAIUpstreamError(w, resp.StatusCode, body)
 		return
 	}
 
@@ -208,9 +206,7 @@ func handleOpenAIStreaming(w http.ResponseWriter, client *upstream.Client, token
 		if IsVerbose() {
 			log.Printf("❌ [VERBOSE] [%s] /v1/chat/completions Streaming upstream error (status %d):\n%s", requestId, resp.StatusCode, util.TruncateBytes(body))
 		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(resp.StatusCode)
-		w.Write(body)
+		writeOpenAIUpstreamError(w, resp.StatusCode, body)
 		return
 	}
 
@@ -222,72 +218,10 @@ func handleOpenAIStreaming(w http.ResponseWriter, client *upstream.Client, token
 		return
 	}
 
-	// Increase scanner buffer to handle large SSE frames (8MB limit)
-	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
-	safetyChecker := NewStreamSafetyChecker()
-
-	chunkCount := 0
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.HasPrefix(line, "data: ") {
-			data := strings.TrimPrefix(line, "data: ")
-			if data == "[DONE]" {
-				fmt.Fprintf(w, "data: [DONE]\n\n")
-				flusher.Flush()
-				break
-			}
-			if abort, reason := safetyChecker.CheckChunk([]byte(data)); abort {
-				log.Printf("⚠️ [%s] /v1/chat/completions Stream aborted by safety checker: %s", requestId, reason)
-				fmt.Fprintf(w, "data: [DONE]\n\n")
-				flusher.Flush()
-				return
-			}
-
-			// Verbose: log raw streaming chunk (truncated for large chunks)
-			if IsVerbose() {
-				log.Printf("📦 [VERBOSE] [%s] /v1/chat/completions Stream chunk #%d: %s", requestId, chunkCount+1, util.TruncateLog(data, 512))
-			}
-
-			// Parse and unwrap response field
-			var wrapped map[string]interface{}
-			if err := json.Unmarshal([]byte(data), &wrapped); err != nil {
-				if IsVerbose() {
-					log.Printf("⚠️ [VERBOSE] [%s] /v1/chat/completions Stream parse error: %v", requestId, err)
-				}
-				continue
-			}
-
-			geminiResp, ok := wrapped["response"].(map[string]interface{})
-			if !ok {
-				json.Unmarshal([]byte(data), &geminiResp)
-			}
-
-			openaiChunk, err := mappers.GeminiToOpenAI(geminiResp, model, true)
-			if err != nil {
-				if IsVerbose() {
-					log.Printf("⚠️ [VERBOSE] [%s] /v1/chat/completions Stream convert error: %v", requestId, err)
-				}
-				continue
-			}
-
-			if openaiChunk == nil {
-				continue
-			}
-
-			// Verbose: log converted chunk (truncated)
-			if IsVerbose() {
-				log.Printf("📤 [VERBOSE] [%s] /v1/chat/completions Converted chunk: %s", requestId, util.TruncateLog(string(openaiChunk), 512))
-			}
-
-			fmt.Fprintf(w, "data: %s\n\n", openaiChunk)
-			flusher.Flush()
-			chunkCount++
-		}
-	}
+	chunkCount, _, scannerErr := streamOpenAIChatChunks(w, flusher, resp.Body, model, requestId)
 	// Check scanner error after loop (streaming reliability fix)
-	if err := scanner.Err(); err != nil && IsVerbose() {
-		log.Printf("❌ [VERBOSE] [%s] /v1/chat/completions Scanner error: %v", requestId, err)
+	if scannerErr != nil {
+		log.Printf("⚠️ [%s] /v1/chat/completions Scanner error: %v", requestId, scannerErr)
 	}
 	// Summary log for diagnosing empty responses
 	if IsVerbose() {
@@ -297,6 +231,82 @@ func handleOpenAIStreaming(w http.ResponseWriter, client *upstream.Client, token
 			log.Printf("✅ [VERBOSE] [%s] /v1/chat/completions Streaming completed: %d chunks sent", requestId, chunkCount)
 		}
 	}
+}
+
+func streamOpenAIChatChunks(w io.Writer, flusher http.Flusher, stream io.Reader, model string, requestId string) (chunkCount int, doneSent bool, scannerErr error) {
+	scanner := bufio.NewScanner(stream)
+	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+	safetyChecker := NewStreamSafetyChecker()
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := strings.TrimPrefix(line, "data: ")
+		if data == "[DONE]" {
+			fmt.Fprintf(w, "data: [DONE]\n\n")
+			flusher.Flush()
+			doneSent = true
+			break
+		}
+		if abort, reason := safetyChecker.CheckChunk([]byte(data)); abort {
+			log.Printf("⚠️ [%s] /v1/chat/completions Stream aborted by safety checker: %s", requestId, reason)
+			fmt.Fprintf(w, "data: [DONE]\n\n")
+			flusher.Flush()
+			doneSent = true
+			return chunkCount, doneSent, nil
+		}
+
+		// Verbose: log raw streaming chunk (truncated for large chunks)
+		if IsVerbose() {
+			log.Printf("📦 [VERBOSE] [%s] /v1/chat/completions Stream chunk #%d: %s", requestId, chunkCount+1, util.TruncateLog(data, 512))
+		}
+
+		// Parse and unwrap response field
+		var wrapped map[string]interface{}
+		if err := json.Unmarshal([]byte(data), &wrapped); err != nil {
+			if IsVerbose() {
+				log.Printf("⚠️ [VERBOSE] [%s] /v1/chat/completions Stream parse error: %v", requestId, err)
+			}
+			continue
+		}
+
+		geminiResp, ok := wrapped["response"].(map[string]interface{})
+		if !ok {
+			json.Unmarshal([]byte(data), &geminiResp)
+		}
+
+		openaiChunk, err := mappers.GeminiToOpenAI(geminiResp, model, true)
+		if err != nil {
+			if IsVerbose() {
+				log.Printf("⚠️ [VERBOSE] [%s] /v1/chat/completions Stream convert error: %v", requestId, err)
+			}
+			continue
+		}
+
+		if openaiChunk == nil {
+			continue
+		}
+
+		// Verbose: log converted chunk (truncated)
+		if IsVerbose() {
+			log.Printf("📤 [VERBOSE] [%s] /v1/chat/completions Converted chunk: %s", requestId, util.TruncateLog(string(openaiChunk), 512))
+		}
+
+		fmt.Fprintf(w, "data: %s\n\n", openaiChunk)
+		flusher.Flush()
+		chunkCount++
+	}
+
+	scannerErr = scanner.Err()
+	if scannerErr == nil && !doneSent {
+		// Upstream may terminate the stream by EOF without sending [DONE].
+		fmt.Fprintf(w, "data: [DONE]\n\n")
+		flusher.Flush()
+		doneSent = true
+	}
+	return chunkCount, doneSent, scannerErr
 }
 
 func writeOpenAIError(w http.ResponseWriter, message string, status int) {
@@ -309,6 +319,142 @@ func writeOpenAIError(w http.ResponseWriter, message string, status int) {
 			"code":    status,
 		},
 	})
+}
+
+func writeOpenAIUpstreamError(w http.ResponseWriter, status int, upstreamBody []byte) {
+	if status <= 0 {
+		status = http.StatusInternalServerError
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_, _ = w.Write(buildOpenAIUpstreamErrorBody(status, upstreamBody))
+}
+
+func buildOpenAIUpstreamErrorBody(status int, upstreamBody []byte) []byte {
+	if status <= 0 {
+		status = http.StatusInternalServerError
+	}
+
+	message := http.StatusText(status)
+	if strings.TrimSpace(message) == "" {
+		message = "Upstream request failed"
+	}
+	errorCode := interface{}(status)
+
+	var root map[string]interface{}
+	var rootErr map[string]interface{}
+	if json.Unmarshal(upstreamBody, &root) == nil {
+		if nested, ok := root["error"].(map[string]interface{}); ok {
+			rootErr = nested
+		}
+
+		if msg := firstNonEmptyString(
+			valueFromMap(rootErr, "message"),
+			valueFromMap(root, "message"),
+		); msg != "" {
+			message = msg
+		}
+
+		if code, ok := firstErrorCode(
+			valueFromMap(rootErr, "code"),
+			valueFromMap(root, "code"),
+			valueFromMap(rootErr, "status"),
+			valueFromMap(root, "status"),
+		); ok {
+			errorCode = code
+		}
+	} else if trimmed := strings.TrimSpace(string(upstreamBody)); trimmed != "" {
+		message = trimmed
+	}
+
+	payload := map[string]interface{}{
+		"error": map[string]interface{}{
+			"message": message,
+			"type":    openAIErrorTypeFromStatus(status),
+			"code":    errorCode,
+		},
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return []byte(fmt.Sprintf(`{"error":{"message":%q,"type":"server_error","code":"internal_server_error"}}`, message))
+	}
+	return body
+}
+
+func openAIErrorTypeFromStatus(status int) string {
+	switch status {
+	case http.StatusUnauthorized:
+		return "authentication_error"
+	case http.StatusForbidden:
+		return "permission_error"
+	case http.StatusTooManyRequests:
+		return "rate_limit_error"
+	default:
+		if status >= http.StatusInternalServerError {
+			return "server_error"
+		}
+		return "invalid_request_error"
+	}
+}
+
+func valueFromMap(data map[string]interface{}, key string) interface{} {
+	if data == nil {
+		return nil
+	}
+	return data[key]
+}
+
+func firstNonEmptyString(values ...interface{}) string {
+	for _, value := range values {
+		str, ok := value.(string)
+		if !ok {
+			continue
+		}
+		str = strings.TrimSpace(str)
+		if str != "" {
+			return str
+		}
+	}
+	return ""
+}
+
+func firstErrorCode(values ...interface{}) (interface{}, bool) {
+	for _, value := range values {
+		switch v := value.(type) {
+		case nil:
+			continue
+		case string:
+			if strings.TrimSpace(v) != "" {
+				return v, true
+			}
+		case float64:
+			return int(v), true
+		case float32:
+			return int(v), true
+		case int:
+			return v, true
+		case int8:
+			return int(v), true
+		case int16:
+			return int(v), true
+		case int32:
+			return int(v), true
+		case int64:
+			return int(v), true
+		case uint:
+			return int(v), true
+		case uint8:
+			return int(v), true
+		case uint16:
+			return int(v), true
+		case uint32:
+			return int(v), true
+		case uint64:
+			return int(v), true
+		}
+	}
+	return nil, false
 }
 
 // OpenAIModelsListHandler handles /v1/models
