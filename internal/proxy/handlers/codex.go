@@ -278,6 +278,7 @@ func handleCodexResponsesPassthrough(w http.ResponseWriter, bodyBytes []byte, ta
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(nil, 10*1024*1024) // 10MB buffer
 	eventCount := 0
+	doneSent := false
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -289,8 +290,21 @@ func handleCodexResponsesPassthrough(w http.ResponseWriter, bodyBytes []byte, ta
 			fmt.Fprintf(w, "%s\n", line)
 			if strings.HasPrefix(line, "data: ") {
 				eventCount++
+				data := strings.TrimPrefix(line, "data: ")
+				if data == "[DONE]" {
+					doneSent = true
+				}
 			}
 		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		log.Printf("⚠️ [%s] Codex /responses passthrough scanner error: %v", requestId, err)
+	} else if !doneSent {
+		// Ensure downstream contract always receives an explicit stream terminator.
+		fmt.Fprintf(w, "data: [DONE]\n\n")
+		flusher.Flush()
+		doneSent = true
 	}
 
 	log.Printf("✅ [%s] Codex /responses passthrough completed: %d events", requestId, eventCount)
