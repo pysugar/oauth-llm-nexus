@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -226,5 +228,55 @@ func TestApplyResponsesCompatToMap_RestoresFields(t *testing.T) {
 	meta, _ := respMap["metadata"].(map[string]interface{})
 	if meta == nil || meta["conversation"] != "conv-map" {
 		t.Fatalf("expected metadata.conversation in map, got %#v", respMap["metadata"])
+	}
+}
+
+func TestWriteResponsesUpstreamError_NormalizesEnvelope(t *testing.T) {
+	rec := httptest.NewRecorder()
+	upstreamBody := []byte(`{"error":{"code":404,"message":"Requested entity was not found.","status":"NOT_FOUND"}}`)
+
+	writeResponsesUpstreamError(rec, http.StatusNotFound, upstreamBody)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404, got %d", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "application/json") {
+		t.Fatalf("expected application/json content type, got %q", ct)
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("expected json body, got %v (%s)", err, rec.Body.String())
+	}
+	errObj, _ := payload["error"].(map[string]interface{})
+	if errObj == nil {
+		t.Fatalf("expected error object, got %#v", payload)
+	}
+	if msg, _ := errObj["message"].(string); strings.TrimSpace(msg) == "" {
+		t.Fatalf("expected non-empty error.message, got %#v", errObj["message"])
+	}
+	if typ, _ := errObj["type"].(string); typ != "invalid_request_error" {
+		t.Fatalf("expected invalid_request_error type, got %#v", errObj["type"])
+	}
+	if _, ok := errObj["code"]; !ok {
+		t.Fatalf("expected error.code, got %#v", errObj)
+	}
+}
+
+func TestWriteResponsesUpstreamError_UsesStatusFallbackWhenBodyUnreadable(t *testing.T) {
+	rec := httptest.NewRecorder()
+
+	writeResponsesUpstreamError(rec, http.StatusTooManyRequests, []byte("not-json"))
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("expected json body, got %v (%s)", err, rec.Body.String())
+	}
+	errObj, _ := payload["error"].(map[string]interface{})
+	if errObj == nil {
+		t.Fatalf("expected error object, got %#v", payload)
+	}
+	if typ, _ := errObj["type"].(string); typ != "rate_limit_error" {
+		t.Fatalf("expected rate_limit_error, got %#v", errObj["type"])
 	}
 }

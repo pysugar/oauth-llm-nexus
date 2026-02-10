@@ -591,8 +591,10 @@ func OpenAIResponsesHandler(database *gorm.DB, tokenMgr *token.Manager, upstream
 		if smuggled {
 			w.Header().Set("X-Nexus-Responses-Compat", "request_id_smuggled")
 			if verbose {
-				log.Printf("ℹ️ [%s] /v1/responses Encoded compatibility fields into requestId", requestId)
+				log.Printf("ℹ️ [%s] /v1/responses compat.smuggle status=encoded", requestId)
 			}
+		} else if verbose && (compatCtx.Conversation != "" || compatCtx.PreviousResponseID != "") {
+			log.Printf("⚠️ [%s] /v1/responses compat.smuggle status=skipped reason=request_id_encode_failed_or_too_long", requestId)
 		}
 
 		// Verbose: Log Gemini payload
@@ -625,11 +627,9 @@ func OpenAIResponsesHandler(database *gorm.DB, tokenMgr *token.Manager, upstream
 					var prettyErr map[string]interface{}
 					json.Unmarshal(respBodyBytes, &prettyErr)
 					prettyErrBytes, _ := json.MarshalIndent(prettyErr, "", "  ")
-					log.Printf("❌ [VERBOSE] [%s] /v1/responses Gemini API error (status %d):\n%s", requestId, resp.StatusCode, string(prettyErrBytes))
+					log.Printf("❌ [VERBOSE] [%s] /v1/responses upstream.error status=%d body=%s", requestId, resp.StatusCode, string(prettyErrBytes))
 				}
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(resp.StatusCode)
-				w.Write(respBodyBytes)
+				writeResponsesUpstreamError(w, resp.StatusCode, respBodyBytes)
 				return
 			}
 
@@ -795,9 +795,10 @@ func handleResponsesStreaming(w http.ResponseWriter, client *upstream.Client, to
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(resp.StatusCode)
-		_, _ = w.Write(body)
+		if IsVerbose() {
+			log.Printf("❌ [VERBOSE] [%s] /v1/responses stream.preflight_error status=%d", requestId, resp.StatusCode)
+		}
+		writeResponsesUpstreamError(w, resp.StatusCode, body)
 		return
 	}
 
@@ -949,6 +950,11 @@ func extractResponsesUsageFromGemini(geminiResp map[string]interface{}) *Respons
 		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
 	}
 	return usage
+}
+
+func writeResponsesUpstreamError(w http.ResponseWriter, status int, upstreamBody []byte) {
+	// Keep /v1/responses error envelope aligned with OpenAI-compatible handlers.
+	writeOpenAIUpstreamError(w, status, upstreamBody)
 }
 
 func applyResponsesUpstreamFields(payload map[string]interface{}, requestID string, req OpenAIResponsesRequest) (responsesCompatContext, bool) {
