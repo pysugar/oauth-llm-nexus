@@ -144,7 +144,17 @@ NEXUS_VERBOSE=1 ./nexus
 -   **Codex `/v1/responses` 行为**：底层是 responses 流式上游，建议客户端使用流式模式。当前实现中即使 `stream=false`，codex 也可能返回 SSE。
 -   **Codex 参数过滤**：为避免上游 4xx，代理会过滤上游不支持参数（例如 `temperature`、`top_p`、`max_output_tokens`）。
 -   **过滤透明化**：被过滤参数会通过响应头 `X-Nexus-Codex-Filtered-Params` 返回。
+-   **Codex 过滤头语义**：仅当实际发生过滤时才返回 `X-Nexus-Codex-Filtered-Params`；未过滤时该响应头缺省。
+-   **Responses 兼容标记**：`X-Nexus-Responses-Compat: request_id_smuggled` 表示 `conversation` / `previous_response_id` 已编码进 upstream `requestId` 并在最终响应中还原。
+-   **Responses 非 2xx 错误映射**：`/v1/responses` 在 non-stream 与 stream preflight 场景下，都会将 upstream 非 2xx 归一为 OpenAI 风格错误结构（`error.message/type/code`）。
 -   **Gemini-3 搜索**：在 Google antigravity upstream 下，Gemini-3 系列搜索按“明确不支持”处理（见 `docs/gemini-search-support.md`）。
+
+#### Responses 兼容响应头矩阵
+
+| Endpoint | 触发条件 | 响应头 | 含义 |
+| --- | --- | --- | --- |
+| `/v1/responses` | 请求包含 `conversation` 和/或 `previous_response_id`，且 requestId smuggling 成功 | `X-Nexus-Responses-Compat: request_id_smuggled` | 兼容字段通过 upstream `requestId` 透传，并已在 OpenAI 兼容响应中还原 |
+| `/v1/responses` | 无兼容字段，或无需/未走 smuggling | _(无该头)_ | 未使用兼容字段 smuggling 路径 |
 
 ### 🔐 仪表盘安全
 

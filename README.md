@@ -144,7 +144,17 @@ NEXUS_VERBOSE=1 ./nexus
 -   **Codex `/v1/responses` behavior**: upstream is responses-stream based; clients should enable streaming. In current implementation, codex responses may still return SSE even when `stream=false`.
 -   **Codex parameter filtering**: unsupported parameters (for example `temperature`, `top_p`, `max_output_tokens`) are filtered before upstream forwarding to avoid upstream 4xx errors.
 -   **Filtering transparency**: filtered keys are exposed via `X-Nexus-Codex-Filtered-Params` response header.
+-   **Codex filtering header semantics**: `X-Nexus-Codex-Filtered-Params` is present only when filtering actually happens; otherwise this header is omitted.
+-   **Responses compatibility marker**: `X-Nexus-Responses-Compat: request_id_smuggled` indicates that `conversation` / `previous_response_id` were encoded into upstream `requestId` and restored in the final response.
+-   **Responses non-2xx mapping**: `/v1/responses` normalizes upstream non-2xx responses into OpenAI-style envelopes (`error.message/type/code`) for both non-stream and stream preflight paths.
 -   **Gemini-3 web search**: for Google antigravity upstream, Gemini-3 family search is treated as unsupported by design (see `docs/gemini-search-support.md`).
+
+#### Responses Compatibility Header Matrix
+
+| Endpoint | Trigger | Response Header | Meaning |
+| --- | --- | --- | --- |
+| `/v1/responses` | Request includes `conversation` and/or `previous_response_id`, and requestId smuggling succeeds | `X-Nexus-Responses-Compat: request_id_smuggled` | Compatibility fields were transported via upstream `requestId` and restored to OpenAI-compatible response fields |
+| `/v1/responses` | No compatibility fields, or smuggling not required | _(header omitted)_ | No compatibility smuggling path used |
 
 ### 🔐 Dashboard Security
 
