@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,20 @@ type fakeCodexProvider struct {
 	lastPayload map[string]interface{}
 	resp        *http.Response
 	err         error
+}
+
+type failingReaderCodex struct {
+	payload []byte
+	read    bool
+	err     error
+}
+
+func (r *failingReaderCodex) Read(p []byte) (int, error) {
+	if !r.read {
+		r.read = true
+		return copy(p, r.payload), nil
+	}
+	return 0, r.err
 }
 
 func (f *fakeCodexProvider) StreamResponses(payload map[string]interface{}) (*http.Response, error) {
@@ -167,5 +182,151 @@ func TestHandleCodexChatRequest_NonStreaming(t *testing.T) {
 	message, _ := choice["message"].(map[string]interface{})
 	if message["content"] != "Hello world" {
 		t.Fatalf("expected aggregated content, got %v", message["content"])
+	}
+}
+
+func TestStreamCodexToOpenAI_ScannerErrorDoesNotEmitDone(t *testing.T) {
+	reader := &failingReaderCodex{
+		payload: []byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\",\"item_id\":\"item_1\"}\n\n"),
+		err:     errors.New("forced scanner failure"),
+	}
+
+	rec := httptest.NewRecorder()
+	streamCodexToOpenAI(rec, reader, "gpt-5.2-codex", "req-stream-err")
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "chat.completion.chunk") {
+		t.Fatalf("expected at least one streamed chat chunk, got %q", body)
+	}
+	if strings.Contains(body, "data: [DONE]") {
+		t.Fatalf("did not expect done sentinel on scanner error, got %q", body)
+	}
+}
+
+func TestHandleCodexChatRequest_NonStreamingScannerErrorReturnsBadGateway(t *testing.T) {
+	oldProvider := CodexProvider
+	defer func() { CodexProvider = oldProvider }()
+
+	fake := &fakeCodexProvider{
+		resp: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body: io.NopCloser(&failingReaderCodex{
+				payload: []byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n"),
+				err:     errors.New("forced scanner failure"),
+			}),
+		},
+	}
+	CodexProvider = fake
+
+	req := map[string]interface{}{
+		"model": "gpt-5.2-codex",
+		"messages": []interface{}{
+			map[string]interface{}{"role": "user", "content": "hello"},
+		},
+		"stream": false,
+	}
+	rec := httptest.NewRecorder()
+	handleCodexChatRequest(rec, req, "req-collect-err")
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502 on scanner error, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("expected json error response, got %v (%s)", err, rec.Body.String())
+	}
+	errObj, _ := payload["error"].(map[string]interface{})
+	if errObj == nil {
+		t.Fatalf("expected error object, got %#v", payload)
+	}
+	msg, _ := errObj["message"].(string)
+	if !strings.Contains(msg, "Codex stream read error") {
+		t.Fatalf("expected scanner error message, got %#v", errObj["message"])
+	}
+}
+
+func TestHandleCodexChatRequest_UpstreamErrorNormalizedEnvelope(t *testing.T) {
+	oldProvider := CodexProvider
+	defer func() { CodexProvider = oldProvider }()
+
+	fake := &fakeCodexProvider{
+		resp: &http.Response{
+			StatusCode: http.StatusNotFound,
+			Header:     make(http.Header),
+			Body: io.NopCloser(strings.NewReader(
+				`{"error":{"code":404,"message":"Requested entity was not found.","status":"NOT_FOUND"}}`,
+			)),
+		},
+	}
+	CodexProvider = fake
+
+	req := map[string]interface{}{
+		"model": "gpt-5.2-codex",
+		"messages": []interface{}{
+			map[string]interface{}{"role": "user", "content": "hello"},
+		},
+		"stream": false,
+	}
+	rec := httptest.NewRecorder()
+	handleCodexChatRequest(rec, req, "req-upstream-404")
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("expected json error response, got %v (%s)", err, rec.Body.String())
+	}
+	errObj, _ := payload["error"].(map[string]interface{})
+	if errObj == nil {
+		t.Fatalf("expected error object, got %#v", payload)
+	}
+	if typ, _ := errObj["type"].(string); typ != "invalid_request_error" {
+		t.Fatalf("expected invalid_request_error, got %#v", errObj["type"])
+	}
+	if _, ok := errObj["code"]; !ok {
+		t.Fatalf("expected error.code, got %#v", errObj)
+	}
+}
+
+func TestHandleCodexResponsesPassthrough_UpstreamErrorNormalizedEnvelope(t *testing.T) {
+	oldProvider := CodexProvider
+	defer func() { CodexProvider = oldProvider }()
+
+	fake := &fakeCodexProvider{
+		resp: &http.Response{
+			StatusCode: http.StatusTooManyRequests,
+			Header:     make(http.Header),
+			Body: io.NopCloser(strings.NewReader(
+				`{"error":{"code":429,"message":"quota exceeded","status":"RESOURCE_EXHAUSTED"}}`,
+			)),
+		},
+	}
+	CodexProvider = fake
+
+	rec := httptest.NewRecorder()
+	reqBody := `{"model":"gpt-5.2-codex","input":"hello"}`
+	handleCodexResponsesPassthrough(rec, []byte(reqBody), "gpt-5.2-codex", "req-responses-429")
+
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected status 429, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("expected json error response, got %v (%s)", err, rec.Body.String())
+	}
+	errObj, _ := payload["error"].(map[string]interface{})
+	if errObj == nil {
+		t.Fatalf("expected error object, got %#v", payload)
+	}
+	if typ, _ := errObj["type"].(string); typ != "rate_limit_error" {
+		t.Fatalf("expected rate_limit_error, got %#v", errObj["type"])
+	}
+	if _, ok := errObj["code"]; !ok {
+		t.Fatalf("expected error.code, got %#v", errObj)
 	}
 }

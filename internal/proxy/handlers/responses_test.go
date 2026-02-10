@@ -2,11 +2,27 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 )
+
+type failingReaderResponses struct {
+	payload []byte
+	read    bool
+	err     error
+}
+
+func (r *failingReaderResponses) Read(p []byte) (int, error) {
+	if !r.read {
+		r.read = true
+		return copy(p, r.payload), nil
+	}
+	return 0, r.err
+}
 
 func TestConvertChatCompletionToResponses_EmptyInput(t *testing.T) {
 	// Empty map should not panic and return valid response
@@ -278,5 +294,98 @@ func TestWriteResponsesUpstreamError_UsesStatusFallbackWhenBodyUnreadable(t *tes
 	}
 	if typ, _ := errObj["type"].(string); typ != "rate_limit_error" {
 		t.Fatalf("expected rate_limit_error, got %#v", errObj["type"])
+	}
+}
+
+func TestStreamResponsesChunks_CleanEOFAccumulatesTextAndUsage(t *testing.T) {
+	stream := strings.Join([]string{
+		`data: {"response":{"candidates":[{"content":{"parts":[{"text":"Hello"}]}}]}}`,
+		`data: {"response":{"candidates":[{"content":{"parts":[{"text":" world"}]}}],"usageMetadata":{"promptTokenCount":3,"candidatesTokenCount":2,"totalTokenCount":5}}}`,
+	}, "\n") + "\n"
+
+	rec := httptest.NewRecorder()
+	fullText, usage, aborted, scannerErr := streamResponsesChunks(
+		rec,
+		rec,
+		strings.NewReader(stream),
+		"req-responses-clean",
+		"resp_test",
+		"item_test",
+	)
+
+	if scannerErr != nil {
+		t.Fatalf("expected clean scanner EOF, got %v", scannerErr)
+	}
+	if aborted {
+		t.Fatal("did not expect stream to be aborted")
+	}
+	if fullText != "Hello world" {
+		t.Fatalf("expected aggregated text, got %q", fullText)
+	}
+	if usage == nil || usage.PromptTokens != 3 || usage.CompletionTokens != 2 || usage.TotalTokens != 5 {
+		t.Fatalf("unexpected usage: %+v", usage)
+	}
+	if !strings.Contains(rec.Body.String(), "response.output_text.delta") {
+		t.Fatalf("expected delta events to be written, got %q", rec.Body.String())
+	}
+}
+
+func TestStreamResponsesChunks_ScannerErrorReturnsErrorWithoutAbort(t *testing.T) {
+	reader := io.NopCloser(&failingReaderResponses{
+		payload: []byte(`data: {"response":{"candidates":[{"content":{"parts":[{"text":"partial"}]}}]}}` + "\n"),
+		err:     errors.New("forced scanner failure"),
+	})
+	defer reader.Close()
+
+	rec := httptest.NewRecorder()
+	fullText, usage, aborted, scannerErr := streamResponsesChunks(
+		rec,
+		rec,
+		reader,
+		"req-responses-scan-err",
+		"resp_test",
+		"item_test",
+	)
+
+	if scannerErr == nil {
+		t.Fatal("expected scanner error, got nil")
+	}
+	if aborted {
+		t.Fatal("expected scanner failure path, not safety abort path")
+	}
+	if usage != nil {
+		t.Fatalf("expected nil usage on truncated stream, got %+v", usage)
+	}
+	if fullText != "partial" {
+		t.Fatalf("expected partial text capture before error, got %q", fullText)
+	}
+}
+
+func TestStreamResponsesChunks_RepeatedChunkTriggersSafetyAbort(t *testing.T) {
+	// NewStreamSafetyChecker aborts at maxRepeats=10 for identical consecutive chunks.
+	repeated := `data: {"response":{"candidates":[{"content":{"parts":[{"text":"x"}]}}]}}`
+	stream := strings.Repeat(repeated+"\n", 11)
+
+	rec := httptest.NewRecorder()
+	fullText, usage, aborted, scannerErr := streamResponsesChunks(
+		rec,
+		rec,
+		strings.NewReader(stream),
+		"req-responses-abort",
+		"resp_test",
+		"item_test",
+	)
+
+	if scannerErr != nil {
+		t.Fatalf("expected no scanner error on safety abort, got %v", scannerErr)
+	}
+	if !aborted {
+		t.Fatal("expected streamAborted=true due to repeated chunks")
+	}
+	if usage != nil {
+		t.Fatalf("expected nil usage on safety-aborted stream, got %+v", usage)
+	}
+	if fullText == "" {
+		t.Fatal("expected some text before safety abort")
 	}
 }

@@ -812,8 +812,6 @@ func handleResponsesStreaming(w http.ResponseWriter, client *upstream.Client, to
 	respID := "resp_" + uuid.New().String()[:12]
 	itemID := "item_" + uuid.New().String()[:8]
 	created := time.Now().Unix()
-	fullText := strings.Builder{}
-	var latestUsage *ResponsesUsage
 
 	createdEvent := map[string]interface{}{
 		"type": "response.created",
@@ -831,54 +829,13 @@ func handleResponsesStreaming(w http.ResponseWriter, client *upstream.Client, to
 		flusher.Flush()
 	}
 
-	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
-	safetyChecker := NewStreamSafetyChecker()
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.HasPrefix(line, "data: ") {
-			continue
-		}
-		data := strings.TrimPrefix(line, "data: ")
-		if data == "[DONE]" {
-			break
-		}
-		if abort, reason := safetyChecker.CheckChunk([]byte(data)); abort {
-			log.Printf("⚠️ [%s] /v1/responses Stream aborted by safety checker: %s", requestId, reason)
-			break
-		}
-
-		var wrapped map[string]interface{}
-		if err := json.Unmarshal([]byte(data), &wrapped); err != nil {
-			continue
-		}
-
-		geminiResp, ok := wrapped["response"].(map[string]interface{})
-		if !ok {
-			geminiResp = wrapped
-		}
-
-		text := extractTextFromGemini(geminiResp)
-		if text != "" {
-			fullText.WriteString(text)
-			deltaEvent := map[string]interface{}{
-				"type":          "response.output_text.delta",
-				"response_id":   respID,
-				"item_id":       itemID,
-				"output_index":  0,
-				"content_index": 0,
-				"delta":         text,
-			}
-			if b, err := json.Marshal(deltaEvent); err == nil {
-				fmt.Fprintf(w, "data: %s\n\n", b)
-				flusher.Flush()
-			}
-		}
-
-		if usage := extractResponsesUsageFromGemini(geminiResp); usage != nil {
-			latestUsage = usage
-		}
+	fullText, latestUsage, streamAborted, scannerErr := streamResponsesChunks(w, flusher, resp.Body, requestId, respID, itemID)
+	if scannerErr != nil {
+		log.Printf("⚠️ [%s] /v1/responses Scanner error: %v", requestId, scannerErr)
+		return
+	}
+	if streamAborted {
+		return
 	}
 
 	outputDoneEvent := map[string]interface{}{
@@ -887,7 +844,7 @@ func handleResponsesStreaming(w http.ResponseWriter, client *upstream.Client, to
 		"item_id":       itemID,
 		"output_index":  0,
 		"content_index": 0,
-		"text":          fullText.String(),
+		"text":          fullText,
 	}
 	if b, err := json.Marshal(outputDoneEvent); err == nil {
 		fmt.Fprintf(w, "data: %s\n\n", b)
@@ -909,7 +866,7 @@ func handleResponsesStreaming(w http.ResponseWriter, client *upstream.Client, to
 				"content": []map[string]interface{}{
 					{
 						"type": "output_text",
-						"text": fullText.String(),
+						"text": fullText,
 					},
 				},
 			},
@@ -930,6 +887,62 @@ func handleResponsesStreaming(w http.ResponseWriter, client *upstream.Client, to
 	}
 	fmt.Fprintf(w, "data: [DONE]\n\n")
 	flusher.Flush()
+}
+
+func streamResponsesChunks(w io.Writer, flusher http.Flusher, stream io.Reader, requestId, respID, itemID string) (fullText string, latestUsage *ResponsesUsage, streamAborted bool, scannerErr error) {
+	scanner := bufio.NewScanner(stream)
+	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+	safetyChecker := NewStreamSafetyChecker()
+	textBuilder := strings.Builder{}
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := strings.TrimPrefix(line, "data: ")
+		if data == "[DONE]" {
+			break
+		}
+		if abort, reason := safetyChecker.CheckChunk([]byte(data)); abort {
+			log.Printf("⚠️ [%s] /v1/responses Stream aborted by safety checker: %s", requestId, reason)
+			streamAborted = true
+			break
+		}
+
+		var wrapped map[string]interface{}
+		if err := json.Unmarshal([]byte(data), &wrapped); err != nil {
+			continue
+		}
+
+		geminiResp, ok := wrapped["response"].(map[string]interface{})
+		if !ok {
+			geminiResp = wrapped
+		}
+
+		text := extractTextFromGemini(geminiResp)
+		if text != "" {
+			textBuilder.WriteString(text)
+			deltaEvent := map[string]interface{}{
+				"type":          "response.output_text.delta",
+				"response_id":   respID,
+				"item_id":       itemID,
+				"output_index":  0,
+				"content_index": 0,
+				"delta":         text,
+			}
+			if b, err := json.Marshal(deltaEvent); err == nil {
+				fmt.Fprintf(w, "data: %s\n\n", b)
+				flusher.Flush()
+			}
+		}
+
+		if usage := extractResponsesUsageFromGemini(geminiResp); usage != nil {
+			latestUsage = usage
+		}
+	}
+
+	return textBuilder.String(), latestUsage, streamAborted, scanner.Err()
 }
 
 func extractResponsesUsageFromGemini(geminiResp map[string]interface{}) *ResponsesUsage {

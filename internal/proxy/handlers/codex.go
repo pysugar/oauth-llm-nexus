@@ -57,9 +57,7 @@ func handleCodexChatRequest(w http.ResponseWriter, chatReq map[string]interface{
 	if resp.StatusCode != http.StatusOK {
 		body := codex.ReadErrorBody(resp)
 		log.Printf("❌ [%s] Codex API error (status %d): %s", requestId, resp.StatusCode, body)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(resp.StatusCode)
-		w.Write([]byte(body))
+		writeOpenAIUpstreamError(w, resp.StatusCode, []byte(body))
 		return
 	}
 
@@ -86,12 +84,19 @@ func streamCodexToOpenAI(w http.ResponseWriter, body io.Reader, model, requestId
 	scanner.Buffer(nil, 10*1024*1024) // 10MB buffer
 
 	chunkCount := 0
+	doneSent := false
 	for scanner.Scan() {
 		line := scanner.Text()
 		if !strings.HasPrefix(line, "data: ") {
 			continue
 		}
 		data := strings.TrimPrefix(line, "data: ")
+		if data == "[DONE]" {
+			fmt.Fprintf(w, "data: [DONE]\n\n")
+			flusher.Flush()
+			doneSent = true
+			break
+		}
 
 		var event map[string]interface{}
 		if err := json.Unmarshal([]byte(data), &event); err != nil {
@@ -126,14 +131,21 @@ func streamCodexToOpenAI(w http.ResponseWriter, body io.Reader, model, requestId
 		case "response.completed":
 			fmt.Fprintf(w, "data: [DONE]\n\n")
 			flusher.Flush()
+			doneSent = true
 			log.Printf("✅ [%s] Codex streaming completed: %d chunks", requestId, chunkCount)
 			return
 		}
 	}
 
-	// If we get here without response.completed, still send DONE
-	fmt.Fprintf(w, "data: [DONE]\n\n")
-	flusher.Flush()
+	if err := scanner.Err(); err != nil {
+		log.Printf("⚠️ [%s] Codex chat stream scanner error: %v", requestId, err)
+		return
+	}
+	if !doneSent {
+		// On clean EOF without explicit done marker, append the sentinel for compatibility.
+		fmt.Fprintf(w, "data: [DONE]\n\n")
+		flusher.Flush()
+	}
 }
 
 // collectCodexToOpenAI collects Codex SSE and converts to non-streaming response
@@ -168,6 +180,11 @@ func collectCodexToOpenAI(w http.ResponseWriter, body io.Reader, model, requestI
 				usage, _ = resp["usage"].(map[string]interface{})
 			}
 		}
+	}
+	if err := scanner.Err(); err != nil {
+		log.Printf("⚠️ [%s] Codex non-stream collect scanner error: %v", requestId, err)
+		writeOpenAIError(w, "Codex stream read error: "+err.Error(), http.StatusBadGateway)
+		return
 	}
 
 	response := map[string]interface{}{
@@ -258,9 +275,7 @@ func handleCodexResponsesPassthrough(w http.ResponseWriter, bodyBytes []byte, ta
 	if resp.StatusCode != http.StatusOK {
 		body := codex.ReadErrorBody(resp)
 		log.Printf("❌ [%s] Codex API error (status %d): %s", requestId, resp.StatusCode, body)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(resp.StatusCode)
-		w.Write([]byte(body))
+		writeOpenAIUpstreamError(w, resp.StatusCode, []byte(body))
 		return
 	}
 
