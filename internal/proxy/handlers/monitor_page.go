@@ -179,6 +179,9 @@ var monitorPageHTML = `<!DOCTYPE html>
     <script>
         let isLogging = false;
         let logsData = [];
+        let logsRequestInFlight = false;
+        const LOGS_POLL_INTERVAL_MS = 10000;
+        const LOGS_POLL_LIMIT = 50;
         
         // Always mask sensitive data (emails)
         function maskEmail(email) {
@@ -237,10 +240,14 @@ var monitorPageHTML = `<!DOCTYPE html>
             } catch (e) { console.error(e); }
         }
 
-        async function loadLogs() {
+        async function loadLogs(force = false) {
+            if (logsRequestInFlight && !force) return;
+            if (document.visibilityState === 'hidden' && !force) return;
+
+            logsRequestInFlight = true;
             try {
                 const [logsRes, statsRes] = await Promise.all([
-                    fetch('/api/request-logs?limit=100'),
+                    fetch('/api/request-logs?limit=' + LOGS_POLL_LIMIT),
                     fetch('/api/request-stats')
                 ]);
                 
@@ -256,7 +263,11 @@ var monitorPageHTML = `<!DOCTYPE html>
                     logsData = data.logs || [];
                     renderLogs();
                 }
-            } catch (e) { console.error(e); }
+            } catch (e) {
+                console.error(e);
+            } finally {
+                logsRequestInFlight = false;
+            }
         }
 
         function renderLogs() {
@@ -390,11 +401,19 @@ var monitorPageHTML = `<!DOCTYPE html>
         // Initial load
         window.addEventListener('load', () => {
             loadStatus();
-            loadLogs();
+            loadLogs(true);
         });
 
-        // Auto-refresh every 5 seconds
-        setInterval(loadLogs, 5000);
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') {
+                loadLogs(true);
+            }
+        });
+
+        // Auto-refresh every 10 seconds
+        setInterval(() => {
+            loadLogs();
+        }, LOGS_POLL_INTERVAL_MS);
     </script>
 </body>
 </html>`

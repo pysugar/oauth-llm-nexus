@@ -539,14 +539,7 @@ func OpenAIToGeminiClaudeAntigravity(req OpenAIChatRequest, resolvedModel, proje
 					continue
 				}
 
-				args := map[string]interface{}{}
-				if strings.TrimSpace(tc.Function.Arguments) != "" {
-					if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
-						args = map[string]interface{}{
-							"params": tc.Function.Arguments,
-						}
-					}
-				}
+				args := normalizeClaudeFunctionArgs(tc.Function.Arguments)
 
 				cleanID, thoughtSignature := splitToolCallIDAndSignature(tc.ID)
 				if thoughtSignature == "" {
@@ -712,6 +705,35 @@ func parseToolResult(raw string) interface{} {
 		return parsed
 	}
 	return raw
+}
+
+func normalizeClaudeFunctionArgs(raw string) map[string]interface{} {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return map[string]interface{}{}
+	}
+
+	var parsed interface{}
+	if err := json.Unmarshal([]byte(trimmed), &parsed); err != nil {
+		return map[string]interface{}{
+			"params": raw,
+		}
+	}
+
+	if parsed == nil {
+		return map[string]interface{}{}
+	}
+
+	if obj, ok := parsed.(map[string]interface{}); ok {
+		if obj == nil {
+			return map[string]interface{}{}
+		}
+		return obj
+	}
+
+	return map[string]interface{}{
+		"params": parsed,
+	}
 }
 
 func ConvertToolsToGeminiClaudeAntigravity(tools []Tool) []GeminiTool {

@@ -296,6 +296,92 @@ func TestOpenAIToGemini_NonClaudeKeepsExistingRoleMapping(t *testing.T) {
 	}
 }
 
+func TestOpenAIToGemini_ClaudeToolCallNullArgumentsBecomeEmptyObject(t *testing.T) {
+	req := OpenAIChatRequest{
+		Model: "claude-opus-4-6-thinking",
+		Messages: []OpenAIMessage{
+			{
+				Role: "assistant",
+				ToolCalls: []OpenAIToolCall{
+					{
+						ID:   "call_456",
+						Type: "function",
+						Function: &OpenAIFunctionCall{
+							Name:      "session_status",
+							Arguments: "null",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	geminiReq := OpenAIToGemini(req, "claude-opus-4-6-thinking", "test-project")
+	if len(geminiReq.Request.Contents) != 1 {
+		t.Fatalf("Expected 1 content message, got %d", len(geminiReq.Request.Contents))
+	}
+
+	part := geminiReq.Request.Contents[0].Parts[0]
+	if part.FunctionCall == nil {
+		t.Fatal("Expected functionCall part")
+	}
+	if part.FunctionCall.Args == nil {
+		t.Fatal("Expected functionCall.args to be non-nil")
+	}
+	if len(part.FunctionCall.Args) != 0 {
+		t.Fatalf("Expected empty args object for null input, got %#v", part.FunctionCall.Args)
+	}
+
+	payload, err := json.Marshal(part.FunctionCall)
+	if err != nil {
+		t.Fatalf("Failed to marshal functionCall: %v", err)
+	}
+	if !strings.Contains(string(payload), `"args":{}`) {
+		t.Fatalf("Expected args serialized as object, got %s", string(payload))
+	}
+}
+
+func TestNormalizeClaudeFunctionArgs_NonObjectJSONWrappedAsParams(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		wantValue interface{}
+	}{
+		{name: "array", input: `["a","b"]`, wantValue: []interface{}{"a", "b"}},
+		{name: "number", input: `123`, wantValue: float64(123)},
+		{name: "boolean", input: `true`, wantValue: true},
+		{name: "string", input: `"abc"`, wantValue: "abc"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			args := normalizeClaudeFunctionArgs(tc.input)
+			if len(args) != 1 {
+				t.Fatalf("Expected wrapped params object, got %#v", args)
+			}
+			if got, ok := args["params"]; !ok {
+				t.Fatalf("Expected params key in wrapped args, got %#v", args)
+			} else {
+				gotJSON, _ := json.Marshal(got)
+				wantJSON, _ := json.Marshal(tc.wantValue)
+				if string(gotJSON) != string(wantJSON) {
+					t.Fatalf("Expected params=%s, got %s", string(wantJSON), string(gotJSON))
+				}
+			}
+		})
+	}
+}
+
+func TestNormalizeClaudeFunctionArgs_InvalidJSONWrappedAsRawString(t *testing.T) {
+	raw := `{"broken":`
+	args := normalizeClaudeFunctionArgs(raw)
+	if got, ok := args["params"]; !ok {
+		t.Fatalf("Expected params key for invalid JSON, got %#v", args)
+	} else if got != raw {
+		t.Fatalf("Expected raw string preserved, got %#v", got)
+	}
+}
+
 func TestConvertJSONSchemaToOpenAPI_ClaudeStrict(t *testing.T) {
 	schema := map[string]interface{}{
 		"type":        "object",

@@ -1011,6 +1011,8 @@ var dashboardHTML = `<!DOCTYPE html>
         // Request Monitor Functions
         // ============================================
         let isLoggingEnabled = false;
+        let requestLogsInFlight = false;
+        const REQUEST_LOGS_POLL_INTERVAL_MS = 10000;
 
         async function loadLoggingStatus() {
             try {
@@ -1050,7 +1052,11 @@ var dashboardHTML = `<!DOCTYPE html>
             } catch (e) { console.error(e); }
         }
 
-        async function loadRequestLogs() {
+        async function loadRequestLogs(force = false) {
+            if (requestLogsInFlight && !force) return;
+            if (document.visibilityState === 'hidden' && !force) return;
+
+            requestLogsInFlight = true;
             try {
                 const [logsRes, statsRes] = await Promise.all([
                     fetch('/api/request-logs?limit=50'),
@@ -1097,6 +1103,8 @@ var dashboardHTML = `<!DOCTYPE html>
                 }
             } catch (e) {
                 console.error('Failed to load request logs', e);
+            } finally {
+                requestLogsInFlight = false;
             }
         }
 
@@ -1104,7 +1112,7 @@ var dashboardHTML = `<!DOCTYPE html>
             if (!confirm('Clear all request logs?')) return;
             try {
                 await fetch('/api/request-logs/clear', { method: 'POST' });
-                loadRequestLogs();
+                loadRequestLogs(true);
             } catch (e) { console.error(e); }
         }
 
@@ -1149,12 +1157,20 @@ var dashboardHTML = `<!DOCTYPE html>
             loadSupportStatus();
             loadModelRoutes();
             loadLoggingStatus();
-            loadRequestLogs();
+            loadRequestLogs(true);
+        });
+
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') {
+                loadRequestLogs(true);
+            }
         });
         
         // Polling
         setInterval(loadAll, 60000);
-        setInterval(loadRequestLogs, 10000); // Refresh logs every 10s
+        setInterval(() => {
+            loadRequestLogs();
+        }, REQUEST_LOGS_POLL_INTERVAL_MS); // Refresh logs every 10s
     </script>
 </body>
 </html>`
