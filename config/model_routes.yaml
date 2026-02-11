@@ -54,16 +54,10 @@ routes:
   # Opus Tier (Powerful)
   - client: claude-3-opus
     provider: google
-    target: claude-opus-4-5-thinking
-  - client: claude-3-opus-20240229
+    target: claude-opus-4-6-thinking
+  - client: claude-opus-4-6
     provider: google
-    target: claude-opus-4-5-thinking
-  - client: claude-opus-4-5
-    provider: google
-    target: claude-opus-4-5-thinking
-  - client: claude-opus-4-5-20250514
-    provider: google
-    target: claude-opus-4-5-thinking
+    target: claude-opus-4-6-thinking
   - client: claude-3-5-opus-latest
     provider: google
     target: gemini-3-flash
@@ -74,6 +68,9 @@ routes:
   
   # Codex Series (2026) - Route to native Codex provider
   # Uses ~/.codex/auth.json for authentication
+  - client: gpt-5.3-codex
+    provider: codex
+    target: gpt-5.3-codex
   - client: gpt-5.2-codex
     provider: codex
     target: gpt-5.2-codex
