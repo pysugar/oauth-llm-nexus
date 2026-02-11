@@ -569,11 +569,11 @@ func GenAIStreamHandlerWithMonitor(tokenMgr *token.Manager, upstreamClient *upst
 		// Get account email using common helper
 		accountEmail := GetAccountEmail(r, tokenMgr)
 
-		// For streaming, we can't easily capture the full response
-		sw := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
+		// For streaming, capture the first MaxStreamSnippetSize bytes for logging
+		sw := &streamSnippetRecorder{ResponseWriter: w, statusCode: http.StatusOK}
 		baseHandler(sw, r)
 
-		// Log the request (response body will be empty for streams)
+		// Log the request (response body contains stream snippet)
 		pm.LogRequest(models.RequestLog{
 			Method:       r.Method,
 			URL:          r.URL.Path,
@@ -585,7 +585,7 @@ func GenAIStreamHandlerWithMonitor(tokenMgr *token.Manager, upstreamClient *upst
 			AccountEmail: accountEmail,
 			Error:        streamStatusError(sw.statusCode),
 			RequestBody:  string(bodyBytes),
-			ResponseBody: "[streaming response]",
+			ResponseBody: sw.Snippet(),
 		})
 	}
 }

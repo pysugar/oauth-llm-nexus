@@ -525,7 +525,7 @@ func OpenAIChatHandlerWithMonitor(tokenMgr *token.Manager, upstreamClient *upstr
 		// For streaming requests, we can't wrap the response writer
 		// Capture actual HTTP status without buffering streaming body.
 		if req.Stream {
-			sw := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
+			sw := &streamSnippetRecorder{ResponseWriter: w, statusCode: http.StatusOK}
 			baseHandler(sw, r)
 
 			pm.LogRequest(models.RequestLog{
@@ -539,7 +539,7 @@ func OpenAIChatHandlerWithMonitor(tokenMgr *token.Manager, upstreamClient *upstr
 				AccountEmail: accountEmail,
 				Error:        streamStatusError(sw.statusCode),
 				RequestBody:  string(bodyBytes),
-				ResponseBody: "[streaming response]",
+				ResponseBody: sw.Snippet(),
 			})
 			return
 		}
@@ -652,4 +652,57 @@ func streamStatusError(statusCode int) string {
 		return ""
 	}
 	return http.StatusText(statusCode)
+}
+
+const (
+	// MaxStreamSnippetSize limits how many bytes of streaming response we capture for logging.
+	// Large enough for useful diagnostics, small enough to avoid memory pressure.
+	MaxStreamSnippetSize = 4096
+)
+
+// streamSnippetRecorder wraps http.ResponseWriter to capture the status code
+// AND the first MaxStreamSnippetSize bytes of streaming output for logging.
+// Once the snippet buffer is full, subsequent writes pass through with zero overhead.
+type streamSnippetRecorder struct {
+	http.ResponseWriter
+	statusCode  int
+	snippet     strings.Builder
+	snippetDone bool // true once we've captured enough bytes
+}
+
+func (s *streamSnippetRecorder) WriteHeader(code int) {
+	s.statusCode = code
+	s.ResponseWriter.WriteHeader(code)
+}
+
+func (s *streamSnippetRecorder) Write(b []byte) (int, error) {
+	if !s.snippetDone {
+		remaining := MaxStreamSnippetSize - s.snippet.Len()
+		if remaining > 0 {
+			if len(b) <= remaining {
+				s.snippet.Write(b)
+			} else {
+				s.snippet.Write(b[:remaining])
+				s.snippetDone = true
+			}
+		} else {
+			s.snippetDone = true
+		}
+	}
+	return s.ResponseWriter.Write(b)
+}
+
+func (s *streamSnippetRecorder) Flush() {
+	if flusher, ok := s.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+// Snippet returns the captured stream snippet for logging.
+func (s *streamSnippetRecorder) Snippet() string {
+	text := s.snippet.String()
+	if s.snippetDone {
+		return text + "...[truncated]"
+	}
+	return text
 }

@@ -13,6 +13,7 @@ import (
 
 	"github.com/glebarez/sqlite"
 	"github.com/pysugar/oauth-llm-nexus/internal/db/models"
+	"github.com/pysugar/oauth-llm-nexus/internal/util"
 	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -29,8 +30,12 @@ var (
 
 // InitDB initializes the SQLite database connection and runs migrations.
 func InitDB(dbPath string) (*gorm.DB, error) {
+	gormLogLevel := logger.Warn
+	if util.IsVerbose() {
+		gormLogLevel = logger.Info
+	}
 	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Info),
+		Logger: logger.Default.LogMode(gormLogLevel),
 	})
 	if err != nil {
 		return nil, err

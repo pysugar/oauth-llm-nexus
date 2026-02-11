@@ -142,6 +142,7 @@ func shouldSkipRequestHeader(header string) bool {
 	switch header {
 	case "Authorization",
 		"X-Goog-Api-Key",
+		"Accept-Encoding",
 		"Connection",
 		"Proxy-Connection",
 		"Keep-Alive",

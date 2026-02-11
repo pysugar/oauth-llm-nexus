@@ -717,7 +717,7 @@ func OpenAIResponsesHandlerWithMonitor(database *gorm.DB, tokenMgr *token.Manage
 		accountEmail := GetAccountEmail(r, tokenMgr)
 
 		if req.Stream {
-			sw := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
+			sw := &streamSnippetRecorder{ResponseWriter: w, statusCode: http.StatusOK}
 			baseHandler(sw, r)
 
 			pm.LogRequest(models.RequestLog{
@@ -731,7 +731,7 @@ func OpenAIResponsesHandlerWithMonitor(database *gorm.DB, tokenMgr *token.Manage
 				AccountEmail: accountEmail,
 				Error:        streamStatusError(sw.statusCode),
 				RequestBody:  string(bodyBytes),
-				ResponseBody: "[streaming response]",
+				ResponseBody: sw.Snippet(),
 			})
 			return
 		}

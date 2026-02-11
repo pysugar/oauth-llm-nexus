@@ -87,7 +87,7 @@ func GeminiCompatProxyHandlerWithMonitor(pm *monitor.ProxyMonitor) http.HandlerF
 
 		// Stream actions should avoid buffering full response body in memory.
 		if action == "streamGenerateContent" {
-			sw := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
+			sw := &streamSnippetRecorder{ResponseWriter: w, statusCode: http.StatusOK}
 			baseHandler(sw, r)
 			pm.LogRequest(models.RequestLog{
 				Method:       r.Method,
@@ -99,7 +99,7 @@ func GeminiCompatProxyHandlerWithMonitor(pm *monitor.ProxyMonitor) http.HandlerF
 				MappedModel:  model,
 				Error:        streamStatusError(sw.statusCode),
 				RequestBody:  string(bodyBytes),
-				ResponseBody: "[streaming response]",
+				ResponseBody: sw.Snippet(),
 			})
 			return
 		}
