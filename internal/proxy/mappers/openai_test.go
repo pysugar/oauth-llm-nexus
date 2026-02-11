@@ -1,6 +1,7 @@
 package mappers
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -130,7 +131,7 @@ func TestOpenAIToGemini_IDSmuggling(t *testing.T) {
 	}
 
 	if parts[0].ThoughtSignature != "test_sig" {
-		t.Errorf("Expected thought_signature 'test_sig', got %q", parts[0].ThoughtSignature)
+		t.Errorf("Expected thought signature 'test_sig', got %q", parts[0].ThoughtSignature)
 	}
 
 	// Test extraction from tool role (cleaning)
@@ -149,6 +150,149 @@ func TestOpenAIToGemini_IDSmuggling(t *testing.T) {
 	geminiReq2 := OpenAIToGemini(req2, "gemini-3-flash", "test-project")
 	if geminiReq2.Request.Contents[0].Parts[0].FunctionResponse.Name != "test_func" {
 		t.Errorf("Expected function name 'test_func', got %q", geminiReq2.Request.Contents[0].Parts[0].FunctionResponse.Name)
+	}
+}
+
+func TestOpenAIToGemini_ClaudeDeveloperMappedToSystemInstruction(t *testing.T) {
+	req := OpenAIChatRequest{
+		Model: "claude-opus-4-6-thinking",
+		Messages: []OpenAIMessage{
+			{Role: "developer", Content: "You are a coding assistant."},
+			{Role: "user", Content: "Fix this bug."},
+		},
+	}
+
+	geminiReq := OpenAIToGemini(req, "claude-opus-4-6-thinking", "test-project")
+
+	if geminiReq.Request.SystemInstruction == nil {
+		t.Fatal("SystemInstruction should not be nil for Claude developer messages")
+	}
+	if len(geminiReq.Request.SystemInstruction.Parts) < 2 {
+		t.Fatalf("Expected identity + developer in systemInstruction, got %d parts", len(geminiReq.Request.SystemInstruction.Parts))
+	}
+	if geminiReq.Request.SystemInstruction.Parts[1].Text != "You are a coding assistant." {
+		t.Fatalf("Expected developer content in systemInstruction, got %q", geminiReq.Request.SystemInstruction.Parts[1].Text)
+	}
+
+	if len(geminiReq.Request.Contents) != 1 {
+		t.Fatalf("Expected 1 content message, got %d", len(geminiReq.Request.Contents))
+	}
+	if geminiReq.Request.Contents[0].Role != "user" {
+		t.Fatalf("Expected user role for content, got %q", geminiReq.Request.Contents[0].Role)
+	}
+}
+
+func TestOpenAIToGemini_ClaudeToolCallAndToolResponsePairing(t *testing.T) {
+	req := OpenAIChatRequest{
+		Model: "claude-opus-4-6-thinking",
+		Messages: []OpenAIMessage{
+			{
+				Role: "assistant",
+				ToolCalls: []OpenAIToolCall{
+					{
+						ID:   "call_123",
+						Type: "function",
+						Function: &OpenAIFunctionCall{
+							Name:      "cron",
+							Arguments: `{"action":"list"}`,
+						},
+					},
+				},
+			},
+			{
+				Role:       "tool",
+				ToolCallID: "call_123",
+				Content:    `{"status":"ok"}`,
+			},
+		},
+	}
+
+	geminiReq := OpenAIToGemini(req, "claude-opus-4-6-thinking", "test-project")
+
+	if len(geminiReq.Request.Contents) != 2 {
+		t.Fatalf("Expected 2 contents (model tool call + user tool response), got %d", len(geminiReq.Request.Contents))
+	}
+
+	modelPart := geminiReq.Request.Contents[0].Parts[0]
+	if modelPart.FunctionCall == nil {
+		t.Fatal("Expected functionCall part for assistant tool_calls")
+	}
+	if modelPart.FunctionCall.Name != "cron" {
+		t.Fatalf("Expected function name cron, got %q", modelPart.FunctionCall.Name)
+	}
+	if modelPart.ThoughtSignature != SkipThoughtSignatureValidator {
+		t.Fatalf("Expected sentinel thought signature, got %q", modelPart.ThoughtSignature)
+	}
+
+	userPart := geminiReq.Request.Contents[1].Parts[0]
+	if userPart.FunctionResponse == nil {
+		t.Fatal("Expected functionResponse part for tool message")
+	}
+	if userPart.FunctionResponse.Name != "cron" {
+		t.Fatalf("Expected function response name cron, got %q", userPart.FunctionResponse.Name)
+	}
+
+	resultMap, ok := userPart.FunctionResponse.Response["result"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("Expected JSON object in function response result, got %#v", userPart.FunctionResponse.Response["result"])
+	}
+	if resultMap["status"] != "ok" {
+		t.Fatalf("Expected status=ok, got %#v", resultMap["status"])
+	}
+}
+
+func TestOpenAIToGemini_ClaudeToolMessageMissingToolCallIDBestEffort(t *testing.T) {
+	req := OpenAIChatRequest{
+		Model: "claude-opus-4-6-thinking",
+		Messages: []OpenAIMessage{
+			{
+				Role:    "tool",
+				Content: "raw tool output",
+			},
+		},
+	}
+
+	geminiReq := OpenAIToGemini(req, "claude-opus-4-6-thinking", "test-project")
+
+	// Without tool_call_id and name, mapper should skip the message to avoid invalid functionResponse.
+	if len(geminiReq.Request.Contents) != 0 {
+		t.Fatalf("Expected skipped invalid tool message, got %d contents", len(geminiReq.Request.Contents))
+	}
+}
+
+func TestGeminiPartThoughtSignatureUsesCamelCaseJSONTag(t *testing.T) {
+	part := GeminiPart{
+		ThoughtSignature: "sig_123",
+	}
+
+	data, err := json.Marshal(part)
+	if err != nil {
+		t.Fatalf("Failed to marshal GeminiPart: %v", err)
+	}
+	payload := string(data)
+
+	if !strings.Contains(payload, `"thoughtSignature":"sig_123"`) {
+		t.Fatalf("Expected camelCase thoughtSignature field, got %s", payload)
+	}
+	if strings.Contains(payload, "thought_signature") {
+		t.Fatalf("Unexpected snake_case thought_signature field in payload: %s", payload)
+	}
+}
+
+func TestOpenAIToGemini_NonClaudeKeepsExistingRoleMapping(t *testing.T) {
+	req := OpenAIChatRequest{
+		Model: "gemini-3-flash",
+		Messages: []OpenAIMessage{
+			{Role: "developer", Content: "Non-claude developer prompt"},
+		},
+	}
+
+	geminiReq := OpenAIToGemini(req, "gemini-3-flash", "test-project")
+	if len(geminiReq.Request.Contents) != 1 {
+		t.Fatalf("Expected 1 content message, got %d", len(geminiReq.Request.Contents))
+	}
+	if geminiReq.Request.Contents[0].Role != "developer" {
+		t.Fatalf("Expected developer role to remain unchanged for non-claude, got %q", geminiReq.Request.Contents[0].Role)
 	}
 }
 

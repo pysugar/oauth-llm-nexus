@@ -2,6 +2,7 @@ package mappers
 
 import (
 	"encoding/json"
+	"log"
 	"strings"
 	"time"
 )
@@ -9,6 +10,7 @@ import (
 // OpenAI Request/Response structures
 
 const ThoughtSignatureSeparator = "__thought__"
+const SkipThoughtSignatureValidator = "skip_thought_signature_validator"
 
 type OpenAIChatRequest struct {
 	Model       string          `json:"model"`
@@ -190,9 +192,9 @@ type GeminiContent struct {
 
 type GeminiPart struct {
 	Text             string                  `json:"text,omitempty"`
-	FunctionCall     *GeminiFunctionCall     `json:"functionCall,omitempty"`      // For model's tool call request
-	FunctionResponse *GeminiFunctionResponse `json:"functionResponse,omitempty"`  // For user's tool result
-	ThoughtSignature string                  `json:"thought_signature,omitempty"` // Required for Gemini 3 models (at part level)
+	FunctionCall     *GeminiFunctionCall     `json:"functionCall,omitempty"`     // For model's tool call request
+	FunctionResponse *GeminiFunctionResponse `json:"functionResponse,omitempty"` // For user's tool result
+	ThoughtSignature string                  `json:"thoughtSignature,omitempty"` // Required for Gemini 3 models (at part level)
 }
 
 // GeminiFunctionCall represents a function call from the model
@@ -287,6 +289,10 @@ type OpenAIAnnotationURLCitation struct {
 
 // OpenAIToGemini converts an OpenAI chat request to Gemini format
 func OpenAIToGemini(req OpenAIChatRequest, resolvedModel, projectID string) GeminiRequest {
+	if isClaudeModel(resolvedModel) {
+		return OpenAIToGeminiClaudeAntigravity(req, resolvedModel, projectID)
+	}
+
 	contents := make([]GeminiContent, 0, len(req.Messages))
 	var systemParts []GeminiPart
 
@@ -474,6 +480,242 @@ You are pair programming with a USER to solve their coding task. The task may re
 	}
 
 	return geminiReq
+}
+
+// OpenAIToGeminiClaudeAntigravity converts OpenAI chat requests to Antigravity format for Claude models.
+// This implementation aligns with CLIProxyAPI's OpenAI->Antigravity semantics.
+func OpenAIToGeminiClaudeAntigravity(req OpenAIChatRequest, resolvedModel, projectID string) GeminiRequest {
+	contents := make([]GeminiContent, 0, len(req.Messages))
+	var systemParts []GeminiPart
+	hasSingleMessage := len(req.Messages) == 1
+
+	// First pass: collect assistant tool call IDs to function names.
+	toolCallNameByID := make(map[string]string)
+	for _, msg := range req.Messages {
+		if msg.Role != "assistant" {
+			continue
+		}
+		for _, tc := range msg.ToolCalls {
+			if tc.Function == nil || tc.Function.Name == "" {
+				continue
+			}
+			cleanID, _ := splitToolCallIDAndSignature(tc.ID)
+			if tc.ID != "" {
+				toolCallNameByID[tc.ID] = tc.Function.Name
+			}
+			if cleanID != "" {
+				toolCallNameByID[cleanID] = tc.Function.Name
+			}
+		}
+	}
+
+	for _, msg := range req.Messages {
+		role := strings.ToLower(strings.TrimSpace(msg.Role))
+
+		switch role {
+		case "system", "developer":
+			// CLIProxyAPI behavior: system/developer become systemInstruction when history has more than one message.
+			if !hasSingleMessage {
+				systemParts = append(systemParts, messageTextParts(msg)...)
+				continue
+			}
+
+			// Single system/developer message should degrade to a user content message.
+			if parts := messageTextParts(msg); len(parts) > 0 {
+				contents = append(contents, GeminiContent{
+					Role:  "user",
+					Parts: parts,
+				})
+			}
+
+		case "assistant":
+			parts := make([]GeminiPart, 0, len(msg.ToolCalls)+1)
+			parts = append(parts, messageTextParts(msg)...)
+			for _, tc := range msg.ToolCalls {
+				if tc.Type != "" && tc.Type != "function" {
+					continue
+				}
+				if tc.Function == nil || tc.Function.Name == "" {
+					continue
+				}
+
+				args := map[string]interface{}{}
+				if strings.TrimSpace(tc.Function.Arguments) != "" {
+					if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+						args = map[string]interface{}{
+							"params": tc.Function.Arguments,
+						}
+					}
+				}
+
+				cleanID, thoughtSignature := splitToolCallIDAndSignature(tc.ID)
+				if thoughtSignature == "" {
+					thoughtSignature = SkipThoughtSignatureValidator
+				}
+
+				parts = append(parts, GeminiPart{
+					FunctionCall: &GeminiFunctionCall{
+						Name: tc.Function.Name,
+						Args: args,
+						ID:   cleanID,
+					},
+					ThoughtSignature: thoughtSignature,
+				})
+			}
+
+			if len(parts) > 0 {
+				contents = append(contents, GeminiContent{
+					Role:  "model",
+					Parts: parts,
+				})
+			}
+
+		case "tool", "function":
+			cleanToolCallID, _ := splitToolCallIDAndSignature(msg.ToolCallID)
+			if msg.ToolCallID == "" {
+				log.Printf("⚠️ OpenAIToGeminiClaudeAntigravity: missing tool_call_id for role=%s; using best-effort mapping", role)
+			}
+
+			functionName := msg.Name
+			if functionName == "" && msg.ToolCallID != "" {
+				if mappedName, ok := toolCallNameByID[msg.ToolCallID]; ok {
+					functionName = mappedName
+				}
+			}
+			if functionName == "" && cleanToolCallID != "" {
+				if mappedName, ok := toolCallNameByID[cleanToolCallID]; ok {
+					functionName = mappedName
+				}
+			}
+			if functionName == "" && cleanToolCallID != "" {
+				functionName = cleanToolCallID
+			}
+			if functionName == "" {
+				log.Printf("⚠️ OpenAIToGeminiClaudeAntigravity: skip tool/function message without tool_call_id and name")
+				continue
+			}
+
+			responseResult := parseToolResult(msg.Content)
+			contents = append(contents, GeminiContent{
+				Role: "user",
+				Parts: []GeminiPart{
+					{
+						FunctionResponse: &GeminiFunctionResponse{
+							Name: functionName,
+							Response: map[string]interface{}{
+								"result": responseResult,
+							},
+							ID: cleanToolCallID,
+						},
+					},
+				},
+			})
+
+		default:
+			// Keep Claude contents.role constrained to user/model only.
+			if parts := messageTextParts(msg); len(parts) > 0 {
+				contents = append(contents, GeminiContent{
+					Role:  "user",
+					Parts: parts,
+				})
+			}
+		}
+	}
+
+	// Antigravity identity injection (v3.3.17 feature)
+	const antigravityIdentity = `You are Antigravity, a powerful agentic AI coding assistant designed by the Google Deepmind team working on Advanced Agentic Coding.
+You are pair programming with a USER to solve their coding task. The task may require creating a new codebase, modifying or debugging an existing codebase, or simply answering a question.
+**Absolute paths only**
+**Proactiveness**`
+
+	hasAntigravity := false
+	for _, part := range systemParts {
+		if strings.Contains(part.Text, "You are Antigravity") {
+			hasAntigravity = true
+			break
+		}
+	}
+	if !hasAntigravity {
+		systemParts = append([]GeminiPart{{Text: antigravityIdentity}}, systemParts...)
+	}
+
+	payload := GeminiRequestPayload{
+		Contents: contents,
+	}
+	if len(systemParts) > 0 {
+		payload.SystemInstruction = &GeminiContent{
+			Parts: systemParts,
+		}
+	}
+
+	geminiReq := GeminiRequest{
+		Project:     projectID,
+		RequestID:   "agent-" + time.Now().Format("20060102150405"),
+		Model:       resolvedModel,
+		Request:     payload,
+		UserAgent:   "antigravity",
+		RequestType: "agent",
+	}
+
+	if req.Temperature != nil || req.MaxTokens != nil || req.TopP != nil || len(req.Stop) > 0 {
+		geminiReq.Request.GenerationConfig = &GeminiGenerationConfig{
+			Temperature:     req.Temperature,
+			MaxOutputTokens: req.MaxTokens,
+			TopP:            req.TopP,
+			StopSequences:   req.Stop,
+		}
+	}
+
+	if len(req.Tools) > 0 {
+		tools := ConvertToolsToGeminiClaudeAntigravity(req.Tools)
+		if len(tools) > 0 {
+			geminiReq.Request.Tools = tools
+		}
+	}
+
+	return geminiReq
+}
+
+func isClaudeModel(model string) bool {
+	return strings.Contains(strings.ToLower(model), "claude")
+}
+
+func splitToolCallIDAndSignature(toolCallID string) (cleanID string, thoughtSignature string) {
+	cleanID = strings.TrimSpace(toolCallID)
+	if cleanID == "" {
+		return "", ""
+	}
+	if strings.Contains(cleanID, ThoughtSignatureSeparator) {
+		parts := strings.SplitN(cleanID, ThoughtSignatureSeparator, 2)
+		if len(parts) == 2 {
+			return parts[0], strings.TrimSpace(parts[1])
+		}
+	}
+	return cleanID, ""
+}
+
+func messageTextParts(msg OpenAIMessage) []GeminiPart {
+	text := strings.TrimSpace(msg.Content)
+	if text == "" {
+		return nil
+	}
+	return []GeminiPart{{Text: text}}
+}
+
+func parseToolResult(raw string) interface{} {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	var parsed interface{}
+	if err := json.Unmarshal([]byte(trimmed), &parsed); err == nil {
+		return parsed
+	}
+	return raw
+}
+
+func ConvertToolsToGeminiClaudeAntigravity(tools []Tool) []GeminiTool {
+	return ConvertToolsToGemini(tools)
 }
 
 // getThinkingLevelForModel returns the appropriate thinkingLevel for Gemini 3 Pro models
