@@ -160,6 +160,10 @@ func executeEndpointTest(endpoint string, database *gorm.DB, tokenMgr *token.Man
 		), nil
 
 	case testEndpointGenAIGenerate:
+		targetModel, provider := "gemini-3-flash", "google"
+		if resolvedModel, resolvedProvider, err := db.ResolveModelWithProviderForProtocol("gemini-3-flash", string(db.ProtocolGenAI)); err == nil {
+			targetModel, provider = resolvedModel, resolvedProvider
+		}
 		payload := map[string]interface{}{
 			"contents": []map[string]interface{}{
 				{
@@ -174,8 +178,8 @@ func executeEndpointTest(endpoint string, database *gorm.DB, tokenMgr *token.Man
 			endpoint,
 			"/genai/v1beta/models/gemini-3-flash:generateContent",
 			"gemini-3-flash",
-			"google",
-			db.ResolveModel("gemini-3-flash", "google"),
+			provider,
+			targetModel,
 			GenAIHandler(tokenMgr, upstreamClient),
 			payload,
 			map[string]string{"model": "gemini-3-flash"},
@@ -183,7 +187,7 @@ func executeEndpointTest(endpoint string, database *gorm.DB, tokenMgr *token.Man
 		), nil
 
 	case testEndpointVertexGenerate:
-		if GeminiCompatProvider == nil || !GeminiCompatProvider.IsEnabled() {
+		if VertexAIStudioProvider == nil || !VertexAIStudioProvider.IsEnabled() {
 			return EndpointTestResult{
 				Endpoint:    endpoint,
 				Path:        "/v1/publishers/google/models/gemini-3-flash-preview:streamGenerateContent",
@@ -194,7 +198,7 @@ func executeEndpointTest(endpoint string, database *gorm.DB, tokenMgr *token.Man
 				DurationMS:  0,
 				ContentType: "application/json",
 				Skipped:     true,
-				Reason:      "gemini_compat_disabled",
+				Reason:      "vertex_proxy_disabled",
 				Summary:     "Skipped because Vertex AI proxy is disabled",
 				Snippet:     "",
 			}, nil
@@ -216,7 +220,7 @@ func executeEndpointTest(endpoint string, database *gorm.DB, tokenMgr *token.Man
 			"gemini-3-flash-preview",
 			"vertex",
 			"gemini-3-flash-preview",
-			GeminiCompatProxyHandler(),
+			VertexAIStudioProxyHandler(),
 			payload,
 			nil,
 			true,
@@ -228,7 +232,7 @@ func executeEndpointTest(endpoint string, database *gorm.DB, tokenMgr *token.Man
 				Endpoint:    endpoint,
 				Path:        "/v1beta/models/gemini-3-flash-preview:streamGenerateContent",
 				Model:       "gemini-3-flash-preview",
-				Provider:    "gemini_api",
+				Provider:    "gemini",
 				MappedModel: "gemini-3-flash-preview",
 				StatusCode:  http.StatusOK,
 				DurationMS:  0,
@@ -254,7 +258,7 @@ func executeEndpointTest(endpoint string, database *gorm.DB, tokenMgr *token.Man
 			endpoint,
 			"/v1beta/models/gemini-3-flash-preview:streamGenerateContent",
 			"gemini-3-flash-preview",
-			"gemini_api",
+			"gemini",
 			"gemini-3-flash-preview",
 			GeminiAIStudioProxyHandler(),
 			payload,

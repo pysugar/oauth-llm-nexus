@@ -23,13 +23,6 @@ import (
 // ClaudeMessagesHandler handles /anthropic/v1/messages
 func ClaudeMessagesHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Get token using common helper
-		cachedToken, err := GetTokenFromRequest(r, tokenMgr)
-		if err != nil {
-			writeClaudeError(w, "No valid token available: "+err.Error(), http.StatusUnauthorized)
-			return
-		}
-
 		// Parse request as flexible JSON (Claude Code sends complex content blocks)
 		var rawReq map[string]interface{}
 		if err := json.NewDecoder(r.Body).Decode(&rawReq); err != nil {
@@ -39,7 +32,23 @@ func ClaudeMessagesHandler(tokenMgr *token.Manager, upstreamClient *upstream.Cli
 
 		// Extract required fields
 		rawModel, _ := rawReq["model"].(string)
-		model := db.ResolveModel(rawModel, "google")
+		model, provider, routeErr := db.ResolveModelWithProviderForProtocol(rawModel, string(db.ProtocolAnthropic))
+		if routeErr != nil {
+			writeClaudeError(w, "Invalid model route: "+routeErr.Error(), http.StatusUnprocessableEntity)
+			return
+		}
+		if provider != "google" {
+			writeClaudeError(w, "Unsupported provider for Anthropic protocol: "+provider, http.StatusUnprocessableEntity)
+			return
+		}
+
+		// Get token using common helper
+		cachedToken, err := GetTokenFromRequest(r, tokenMgr)
+		if err != nil {
+			writeClaudeError(w, "No valid token available: "+err.Error(), http.StatusUnauthorized)
+			return
+		}
+
 		messages, _ := rawReq["messages"].([]interface{})
 		stream, _ := rawReq["stream"].(bool)
 
@@ -702,6 +711,14 @@ func ClaudeMessagesHandlerWithMonitor(tokenMgr *token.Manager, upstreamClient *u
 			Model string `json:"model"`
 		}
 		json.Unmarshal(bodyBytes, &req)
+		targetModel, provider := req.Model, "google"
+		routeErrMsg := ""
+		if resolvedModel, resolvedProvider, err := db.ResolveModelWithProviderForProtocol(req.Model, string(db.ProtocolAnthropic)); err == nil {
+			targetModel, provider = resolvedModel, resolvedProvider
+		} else if req.Model != "" {
+			provider = "invalid"
+			routeErrMsg = err.Error()
+		}
 
 		// Get account email using common helper
 		accountEmail := GetAccountEmail(r, tokenMgr)
@@ -741,6 +758,13 @@ func ClaudeMessagesHandlerWithMonitor(tokenMgr *token.Manager, upstreamClient *u
 				errorMsg = respBody
 			}
 		}
+		if routeErrMsg != "" {
+			if errorMsg == "" {
+				errorMsg = "invalid model route: " + routeErrMsg
+			} else {
+				errorMsg = "invalid model route: " + routeErrMsg + "; " + errorMsg
+			}
+		}
 
 		// Log the request
 		pm.LogRequest(models.RequestLog{
@@ -748,9 +772,9 @@ func ClaudeMessagesHandlerWithMonitor(tokenMgr *token.Manager, upstreamClient *u
 			URL:          r.URL.Path,
 			Status:       rec.statusCode,
 			Duration:     time.Since(startTime).Milliseconds(),
-			Provider:     "google",
+			Provider:     provider,
 			Model:        req.Model,
-			MappedModel:  db.ResolveModel(req.Model, "google"),
+			MappedModel:  targetModel,
 			AccountEmail: accountEmail,
 			Error:        errorMsg,
 			InputTokens:  inputTokens,

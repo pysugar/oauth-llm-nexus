@@ -533,8 +533,12 @@ func OpenAIResponsesHandler(database *gorm.DB, tokenMgr *token.Manager, upstream
 			log.Printf("📥 [VERBOSE] /v1/responses Original Request:\n%s", string(bodyBytes))
 		}
 
-		// 2. Check provider routing - Codex models use passthrough
-		targetModel, provider := db.ResolveModelWithProvider(req.Model)
+		// 2. Resolve provider routing with protocol-aware validation.
+		targetModel, provider, routeErr := db.ResolveModelWithProviderForProtocol(req.Model, string(db.ProtocolOpenAI))
+		if routeErr != nil {
+			writeOpenAIError(w, "Invalid model route: "+routeErr.Error(), http.StatusUnprocessableEntity)
+			return
+		}
 		log.Printf("🗺️ /v1/responses Model routing: %s -> %s (provider: %s)", req.Model, targetModel, provider)
 
 		if provider == "codex" {
@@ -713,7 +717,10 @@ func OpenAIResponsesHandlerWithMonitor(database *gorm.DB, tokenMgr *token.Manage
 		var req OpenAIResponsesRequest
 		_ = json.Unmarshal(bodyBytes, &req)
 
-		targetModel, provider := db.ResolveModelWithProvider(req.Model)
+		targetModel, provider := req.Model, "google"
+		if resolvedModel, resolvedProvider, err := db.ResolveModelWithProviderForProtocol(req.Model, string(db.ProtocolOpenAI)); err == nil {
+			targetModel, provider = resolvedModel, resolvedProvider
+		}
 		accountEmail := GetAccountEmail(r, tokenMgr)
 
 		if req.Stream {

@@ -45,8 +45,8 @@ func main() {
 	}
 
 	// Initialize Vertex AI key proxy (auto-enabled when NEXUS_VERTEX_API_KEY is set)
-	geminiCompatEnabled := handlers.InitGeminiCompatProviderFromEnv()
-	if geminiCompatEnabled {
+	vertexAIStudioEnabled := handlers.InitVertexAIStudioProviderFromEnv()
+	if vertexAIStudioEnabled {
 		log.Println("✅ Vertex AI proxy enabled (/v1/publishers/google/models/*)")
 	} else {
 		log.Println("ℹ️ Vertex AI proxy disabled (set NEXUS_VERTEX_API_KEY to enable)")
@@ -166,8 +166,8 @@ func main() {
 		r.Get("/models", handlers.OpenAIModelsListHandler(database))
 		r.Post("/responses", handlers.OpenAIResponsesHandlerWithMonitor(database, tokenManager, upstreamClient, proxyMonitor))
 		r.Get("/codex/quota", handlers.CodexQuotaHandler())
-		if geminiCompatEnabled {
-			r.Post("/publishers/google/models/*", handlers.GeminiCompatProxyHandlerWithMonitor(proxyMonitor))
+		if vertexAIStudioEnabled {
+			r.Post("/publishers/google/models/*", handlers.VertexAIStudioProxyHandlerWithMonitor(proxyMonitor))
 		}
 	})
 
@@ -232,7 +232,7 @@ func main() {
 	log.Printf("🔌 OpenAI API: http://%s/v1", displayURL)
 	log.Printf("🔌 Anthropic API: http://%s/anthropic/v1", displayURL)
 	log.Printf("🔌 GenAI API: http://%s/genai/v1beta", displayURL)
-	if geminiCompatEnabled {
+	if vertexAIStudioEnabled {
 		log.Printf("🔌 Vertex AI API: http://%s/v1/publishers/google/models/{model}:<action>", displayURL)
 	}
 	if geminiAIStudioEnabled {

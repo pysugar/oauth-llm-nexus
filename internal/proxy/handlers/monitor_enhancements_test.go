@@ -51,7 +51,7 @@ func waitForLogCount(pm *monitor.ProxyMonitor, expected int) []models.RequestLog
 	return pm.GetLogs(100, 0)
 }
 
-func TestGeminiCompatProxyHandlerWithMonitor_LogsWhenEnabled(t *testing.T) {
+func TestVertexAIStudioProxyHandlerWithMonitor_LogsWhenEnabled(t *testing.T) {
 	db := newTestDB(t)
 	pm := monitor.NewProxyMonitor(db)
 	pm.SetEnabled(true)
@@ -69,9 +69,9 @@ func TestGeminiCompatProxyHandlerWithMonitor_LogsWhenEnabled(t *testing.T) {
 		}),
 	}
 
-	oldProvider := GeminiCompatProvider
-	GeminiCompatProvider = vertexkey.NewProviderWithClient("server-key", "https://aiplatform.googleapis.com", time.Minute, client)
-	defer func() { GeminiCompatProvider = oldProvider }()
+	oldProvider := VertexAIStudioProvider
+	VertexAIStudioProvider = vertexkey.NewProviderWithClient("server-key", "https://aiplatform.googleapis.com", time.Minute, client)
+	defer func() { VertexAIStudioProvider = oldProvider }()
 
 	req := httptest.NewRequest(
 		http.MethodPost,
@@ -81,7 +81,7 @@ func TestGeminiCompatProxyHandlerWithMonitor_LogsWhenEnabled(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	rec := httptest.NewRecorder()
-	GeminiCompatProxyHandlerWithMonitor(pm).ServeHTTP(rec, req)
+	VertexAIStudioProxyHandlerWithMonitor(pm).ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d", rec.Code)
 	}
@@ -98,7 +98,7 @@ func TestGeminiCompatProxyHandlerWithMonitor_LogsWhenEnabled(t *testing.T) {
 	}
 }
 
-func TestGeminiCompatProxyHandlerWithMonitor_NoLogsWhenDisabled(t *testing.T) {
+func TestVertexAIStudioProxyHandlerWithMonitor_NoLogsWhenDisabled(t *testing.T) {
 	db := newTestDB(t)
 	pm := monitor.NewProxyMonitor(db)
 	pm.SetEnabled(false)
@@ -114,9 +114,9 @@ func TestGeminiCompatProxyHandlerWithMonitor_NoLogsWhenDisabled(t *testing.T) {
 		}),
 	}
 
-	oldProvider := GeminiCompatProvider
-	GeminiCompatProvider = vertexkey.NewProviderWithClient("server-key", "https://aiplatform.googleapis.com", time.Minute, client)
-	defer func() { GeminiCompatProvider = oldProvider }()
+	oldProvider := VertexAIStudioProvider
+	VertexAIStudioProvider = vertexkey.NewProviderWithClient("server-key", "https://aiplatform.googleapis.com", time.Minute, client)
+	defer func() { VertexAIStudioProvider = oldProvider }()
 
 	req := httptest.NewRequest(
 		http.MethodPost,
@@ -126,7 +126,7 @@ func TestGeminiCompatProxyHandlerWithMonitor_NoLogsWhenDisabled(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	rec := httptest.NewRecorder()
-	GeminiCompatProxyHandlerWithMonitor(pm).ServeHTTP(rec, req)
+	VertexAIStudioProxyHandlerWithMonitor(pm).ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d", rec.Code)
 	}
@@ -173,8 +173,8 @@ func TestGeminiAIStudioProxyHandlerWithMonitor_LogsWhenEnabled(t *testing.T) {
 	if len(logs) == 0 {
 		t.Fatalf("expected at least one log entry")
 	}
-	if logs[0].Provider != "gemini_api" {
-		t.Fatalf("expected provider=gemini_api, got %q", logs[0].Provider)
+	if logs[0].Provider != "gemini" {
+		t.Fatalf("expected provider=gemini, got %q", logs[0].Provider)
 	}
 	if logs[0].Model != "gemini-2.5-flash" {
 		t.Fatalf("expected parsed model, got %q", logs[0].Model)
@@ -282,5 +282,85 @@ func TestRequestLogsHistory_SearchByProvider(t *testing.T) {
 	}
 	if got.Logs[0].Provider != "codex" {
 		t.Fatalf("expected first log provider=codex, got %q", got.Logs[0].Provider)
+	}
+}
+
+func TestRequestLogsHistory_SearchGeminiProvider(t *testing.T) {
+	db := newTestDB(t)
+	pm := monitor.NewProxyMonitor(db)
+	pm.SetEnabled(true)
+
+	pm.LogRequest(models.RequestLog{
+		Method:   http.MethodPost,
+		URL:      "/v1beta/models/gemini-3-flash-preview:streamGenerateContent",
+		Status:   http.StatusOK,
+		Duration: 15,
+		Provider: "gemini",
+		Model:    "gemini-3-flash-preview",
+	})
+
+	_ = waitForLogCount(pm, 2)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/request-logs/history?q=gemini", nil)
+	rec := httptest.NewRecorder()
+	GetRequestLogsHistoryHandler(pm).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rec.Code)
+	}
+
+	var got struct {
+		Logs []models.RequestLog `json:"logs"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("failed to parse history response: %v body=%s", err, rec.Body.String())
+	}
+	if len(got.Logs) == 0 {
+		t.Fatalf("expected gemini logs, got 0")
+	}
+	for _, entry := range got.Logs {
+		if entry.Provider != "gemini" {
+			t.Fatalf("expected provider=gemini only, got %q", entry.Provider)
+		}
+	}
+}
+
+func TestClaudeMessagesHandlerWithMonitor_InvalidRouteUsesInvalidProvider(t *testing.T) {
+	db := newTestDB(t)
+	pm := monitor.NewProxyMonitor(db)
+	pm.SetEnabled(true)
+
+	if err := dbpkg.CreateModelRoute(db, &models.ModelRoute{
+		ClientModel:    "claude-opus-4-6-thinking",
+		TargetProvider: "codex",
+		TargetModel:    "claude-opus-4-6-thinking",
+		IsActive:       true,
+	}); err != nil {
+		t.Fatalf("failed to seed invalid anthopic route: %v", err)
+	}
+
+	tokenMgr := token.NewManager(db)
+	body := `{
+		"model":"claude-opus-4-6-thinking",
+		"messages":[{"role":"user","content":"hello"}],
+		"max_tokens":32
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/anthropic/v1/messages", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	ClaudeMessagesHandlerWithMonitor(tokenMgr, nil, pm).ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected status 422, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	logs := waitForLogCount(pm, 1)
+	if len(logs) == 0 {
+		t.Fatalf("expected at least one log entry")
+	}
+	if logs[0].Provider != "invalid" {
+		t.Fatalf("expected provider=invalid, got %q", logs[0].Provider)
+	}
+	if !strings.Contains(logs[0].Error, "invalid model route") {
+		t.Fatalf("expected invalid model route error, got %q", logs[0].Error)
 	}
 }

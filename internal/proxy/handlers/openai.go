@@ -46,8 +46,12 @@ func OpenAIChatHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client)
 			return
 		}
 
-		// Resolve model mapping WITH provider
-		targetModel, provider := db.ResolveModelWithProvider(req.Model)
+		// Resolve model mapping with protocol-aware provider validation.
+		targetModel, provider, routeErr := db.ResolveModelWithProviderForProtocol(req.Model, string(db.ProtocolOpenAI))
+		if routeErr != nil {
+			writeOpenAIError(w, "Invalid model route: "+routeErr.Error(), http.StatusUnprocessableEntity)
+			return
+		}
 		log.Printf("🗺️ OpenAI model routing: %s -> %s (provider: %s)", req.Model, targetModel, provider)
 
 		// Route based on provider
@@ -59,8 +63,7 @@ func OpenAIChatHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client)
 			chatReqMap["model"] = targetModel // Use resolved target model
 			handleCodexChatRequest(w, chatReqMap, requestId)
 			return
-
-		default:
+		case "google":
 			// Google Cloud Code flow (existing behavior)
 			cachedToken, err := GetTokenFromRequest(r, tokenMgr)
 			if err != nil {
@@ -92,6 +95,9 @@ func OpenAIChatHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client)
 			} else {
 				handleOpenAINonStreaming(w, upstreamClient, cachedToken.AccessToken, payload, req.Model, requestId)
 			}
+		default:
+			writeOpenAIError(w, "Unsupported provider for OpenAI protocol: "+provider, http.StatusUnprocessableEntity)
+			return
 		}
 	}
 }
@@ -517,7 +523,10 @@ func OpenAIChatHandlerWithMonitor(tokenMgr *token.Manager, upstreamClient *upstr
 			Stream bool   `json:"stream"`
 		}
 		json.Unmarshal(bodyBytes, &req)
-		targetModel, provider := db.ResolveModelWithProvider(req.Model)
+		targetModel, provider := req.Model, "google"
+		if resolvedModel, resolvedProvider, err := db.ResolveModelWithProviderForProtocol(req.Model, string(db.ProtocolOpenAI)); err == nil {
+			targetModel, provider = resolvedModel, resolvedProvider
+		}
 
 		// Get account email using common helper
 		accountEmail := GetAccountEmail(r, tokenMgr)

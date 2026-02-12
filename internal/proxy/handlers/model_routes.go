@@ -11,6 +11,12 @@ import (
 	"gorm.io/gorm"
 )
 
+func writeModelRouteError(w http.ResponseWriter, message string, status int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": message})
+}
+
 // ModelRoutesHandler returns all model routes
 func ModelRoutesHandler(database *gorm.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -28,25 +34,27 @@ func CreateModelRouteHandler(database *gorm.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var route models.ModelRoute
 		if err := json.NewDecoder(r.Body).Decode(&route); err != nil {
-			http.Error(w, `{"error": "Invalid request body"}`, http.StatusBadRequest)
+			writeModelRouteError(w, "Invalid request body", http.StatusBadRequest)
 			return
 		}
 
 		// Validate required fields
 		if route.ClientModel == "" || route.TargetModel == "" {
-			http.Error(w, `{"error": "client_model and target_model are required"}`, http.StatusBadRequest)
+			writeModelRouteError(w, "client_model and target_model are required", http.StatusBadRequest)
 			return
 		}
 
 		// Default to "google" provider if not specified
-		if route.TargetProvider == "" {
-			route.TargetProvider = "google"
+		route.TargetProvider = db.NormalizeProvider(route.TargetProvider)
+		if err := db.ValidateRouteProvider(route.ClientModel, route.TargetProvider); err != nil {
+			writeModelRouteError(w, err.Error(), http.StatusUnprocessableEntity)
+			return
 		}
 
 		route.IsActive = true
 
 		if err := db.CreateModelRoute(database, &route); err != nil {
-			http.Error(w, `{"error": "Failed to create route (possibly duplicate): `+err.Error()+`"}`, http.StatusConflict)
+			writeModelRouteError(w, "Failed to create route (possibly duplicate): "+err.Error(), http.StatusConflict)
 			return
 		}
 
@@ -62,19 +70,29 @@ func UpdateModelRouteHandler(database *gorm.DB) http.HandlerFunc {
 		idStr := chi.URLParam(r, "id")
 		id, err := strconv.ParseUint(idStr, 10, 32)
 		if err != nil {
-			http.Error(w, `{"error": "Invalid route ID"}`, http.StatusBadRequest)
+			writeModelRouteError(w, "Invalid route ID", http.StatusBadRequest)
 			return
 		}
 
 		var route models.ModelRoute
 		if err := json.NewDecoder(r.Body).Decode(&route); err != nil {
-			http.Error(w, `{"error": "Invalid request body"}`, http.StatusBadRequest)
+			writeModelRouteError(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		if route.ClientModel == "" || route.TargetModel == "" {
+			writeModelRouteError(w, "client_model and target_model are required", http.StatusBadRequest)
+			return
+		}
+		route.TargetProvider = db.NormalizeProvider(route.TargetProvider)
+		if err := db.ValidateRouteProvider(route.ClientModel, route.TargetProvider); err != nil {
+			writeModelRouteError(w, err.Error(), http.StatusUnprocessableEntity)
 			return
 		}
 
 		route.ID = uint(id)
 		if err := db.UpdateModelRoute(database, &route); err != nil {
-			http.Error(w, `{"error": "Failed to update route: `+err.Error()+`"}`, http.StatusInternalServerError)
+			writeModelRouteError(w, "Failed to update route: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 
@@ -89,12 +107,12 @@ func DeleteModelRouteHandler(database *gorm.DB) http.HandlerFunc {
 		idStr := chi.URLParam(r, "id")
 		id, err := strconv.ParseUint(idStr, 10, 32)
 		if err != nil {
-			http.Error(w, `{"error": "Invalid route ID"}`, http.StatusBadRequest)
+			writeModelRouteError(w, "Invalid route ID", http.StatusBadRequest)
 			return
 		}
 
 		if err := db.DeleteModelRoute(database, uint(id)); err != nil {
-			http.Error(w, `{"error": "Failed to delete route"}`, http.StatusInternalServerError)
+			writeModelRouteError(w, "Failed to delete route", http.StatusInternalServerError)
 			return
 		}
 
@@ -107,7 +125,7 @@ func DeleteModelRouteHandler(database *gorm.DB) http.HandlerFunc {
 func ResetModelRoutesHandler(database *gorm.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := db.ResetModelRoutes(database); err != nil {
-			http.Error(w, `{"error": "Failed to reset routes"}`, http.StatusInternalServerError)
+			writeModelRouteError(w, "Failed to reset routes", http.StatusInternalServerError)
 			return
 		}
 
