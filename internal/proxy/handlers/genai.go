@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,6 +18,8 @@ import (
 	"github.com/pysugar/oauth-llm-nexus/internal/proxy/monitor"
 	"github.com/pysugar/oauth-llm-nexus/internal/proxy/translator"
 	"github.com/pysugar/oauth-llm-nexus/internal/upstream"
+	"github.com/pysugar/oauth-llm-nexus/internal/upstream/geminikey"
+	"github.com/pysugar/oauth-llm-nexus/internal/upstream/vertexkey"
 	"github.com/pysugar/oauth-llm-nexus/internal/util"
 )
 
@@ -30,12 +33,92 @@ func isPremiumModel(model string) bool {
 	return strings.Contains(lowerModel, "claude") || strings.Contains(model, "gemini-3-pro")
 }
 
+func forwardGenAIToKeyProxy(
+	w http.ResponseWriter,
+	r *http.Request,
+	provider string,
+	model string,
+	action string,
+	bodyBytes []byte,
+) bool {
+	switch provider {
+	case "vertex":
+		if VertexAIStudioProvider == nil || !VertexAIStudioProvider.IsEnabled() {
+			writeGenAIError(w, "Vertex AI proxy is not enabled", http.StatusServiceUnavailable)
+			return true
+		}
+		resp, err := VertexAIStudioProvider.Forward(
+			r.Context(),
+			r.Method,
+			model,
+			action,
+			r.URL.Query(),
+			r.Header,
+			bodyBytes,
+		)
+		if err != nil {
+			writeGenAIError(w, "Upstream proxy error: "+err.Error(), http.StatusBadGateway)
+			return true
+		}
+		defer resp.Body.Close()
+		if err := vertexkey.CopyResponse(w, resp); err != nil {
+			log.Printf("❌ GenAI vertex proxy response copy error: model=%s action=%s err=%v", model, action, err)
+		}
+		return true
+	case "gemini":
+		if GeminiAIStudioProvider == nil || !GeminiAIStudioProvider.IsEnabled() {
+			writeGenAIError(w, "Gemini API proxy is not enabled", http.StatusServiceUnavailable)
+			return true
+		}
+		path := fmt.Sprintf("/v1beta/models/%s:%s", model, action)
+		resp, err := GeminiAIStudioProvider.Forward(
+			r.Context(),
+			r.Method,
+			path,
+			r.URL.Query(),
+			r.Header,
+			bodyBytes,
+		)
+		if err != nil {
+			writeGenAIError(w, "Upstream proxy error: "+err.Error(), http.StatusBadGateway)
+			return true
+		}
+		defer resp.Body.Close()
+		if err := geminikey.CopyResponse(w, resp); err != nil {
+			log.Printf("❌ GenAI gemini proxy response copy error: model=%s action=%s err=%v", model, action, err)
+		}
+		return true
+	default:
+		return false
+	}
+}
+
 // GenAIHandler handles /genai/v1beta/models/{model}:generateContent
 func GenAIHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		rawModel := chi.URLParam(r, "model")
-		// Resolve model mapping (e.g. gemini-2.0-flash -> gemini-3-flash)
-		model := db.ResolveModel(rawModel, "google")
+		model, provider, routeErr := db.ResolveModelWithProviderForProtocol(rawModel, string(db.ProtocolGenAI))
+		if routeErr != nil {
+			writeGenAIError(w, "Invalid model route: "+routeErr.Error(), http.StatusUnprocessableEntity)
+			return
+		}
+
+		bodyBytes, err := io.ReadAll(r.Body)
+		if err != nil {
+			writeGenAIError(w, "Failed to read request body", http.StatusBadRequest)
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+
+		log.Printf("📨 GenAI request: model=%s provider=%s", model, provider)
+
+		if forwardGenAIToKeyProxy(w, r, provider, model, "generateContent", bodyBytes) {
+			return
+		}
+		if provider != "google" {
+			writeGenAIError(w, "Unsupported provider for GenAI protocol: "+provider, http.StatusUnprocessableEntity)
+			return
+		}
 
 		// Get token using common helper
 		cachedToken, err := GetTokenFromRequest(r, tokenMgr)
@@ -44,21 +127,17 @@ func GenAIHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client) http
 			return
 		}
 
-		// Parse request body
 		var reqBody map[string]interface{}
-		if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+		if err := json.Unmarshal(bodyBytes, &reqBody); err != nil {
 			writeGenAIError(w, "Invalid request", http.StatusBadRequest)
 			return
 		}
-
-		log.Printf("📨 GenAI request: model=%s", model)
 
 		// Generate requestId using common helper
 		requestId := GetOrGenerateRequestID(r)
 
 		if IsVerbose() {
-			reqBytes, _ := json.MarshalIndent(reqBody, "", "  ")
-			log.Printf("📥 [VERBOSE] [%s] /genai/v1beta Raw request:\n%s", requestId, util.TruncateBytes(reqBytes))
+			log.Printf("📥 [VERBOSE] [%s] /genai/v1beta Raw request:\n%s", requestId, util.TruncateBytes(bodyBytes))
 		}
 
 		// Build Cloud Code API payload (wrapped format)
@@ -165,8 +244,28 @@ func GenAIHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client) http
 func GenAIStreamHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		rawModel := chi.URLParam(r, "model")
-		// Resolve model mapping
-		model := db.ResolveModel(rawModel, "google")
+		model, provider, routeErr := db.ResolveModelWithProviderForProtocol(rawModel, string(db.ProtocolGenAI))
+		if routeErr != nil {
+			writeGenAIError(w, "Invalid model route: "+routeErr.Error(), http.StatusUnprocessableEntity)
+			return
+		}
+
+		bodyBytes, err := io.ReadAll(r.Body)
+		if err != nil {
+			writeGenAIError(w, "Failed to read request body", http.StatusBadRequest)
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+
+		log.Printf("📨 GenAI stream request: model=%s provider=%s", model, provider)
+
+		if forwardGenAIToKeyProxy(w, r, provider, model, "streamGenerateContent", bodyBytes) {
+			return
+		}
+		if provider != "google" {
+			writeGenAIError(w, "Unsupported provider for GenAI protocol: "+provider, http.StatusUnprocessableEntity)
+			return
+		}
 
 		// Get token using common helper
 		cachedToken, err := GetTokenFromRequest(r, tokenMgr)
@@ -176,18 +275,15 @@ func GenAIStreamHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client
 		}
 
 		var reqBody map[string]interface{}
-		if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+		if err := json.Unmarshal(bodyBytes, &reqBody); err != nil {
 			writeGenAIError(w, "Invalid request", http.StatusBadRequest)
 			return
 		}
 
-		log.Printf("📨 GenAI stream request: model=%s", model)
-
 		// Generate requestId using common helper
 		requestId := GetOrGenerateRequestID(r)
 		if IsVerbose() {
-			reqBytes, _ := json.MarshalIndent(reqBody, "", "  ")
-			log.Printf("📥 [VERBOSE] [%s] GenAI stream raw request:\n%s", requestId, util.TruncateBytes(reqBytes))
+			log.Printf("📥 [VERBOSE] [%s] GenAI stream raw request:\n%s", requestId, util.TruncateBytes(bodyBytes))
 		}
 
 		payload := map[string]interface{}{
@@ -493,6 +589,10 @@ func GenAIHandlerWithMonitor(tokenMgr *token.Manager, upstreamClient *upstream.C
 
 		// Get account email using common helper
 		accountEmail := GetAccountEmail(r, tokenMgr)
+		targetModel, provider := rawModel, "google"
+		if resolvedModel, resolvedProvider, err := db.ResolveModelWithProviderForProtocol(rawModel, string(db.ProtocolGenAI)); err == nil {
+			targetModel, provider = resolvedModel, resolvedProvider
+		}
 
 		// Use response recorder
 		rec := &responseRecorder{ResponseWriter: w, statusCode: 200}
@@ -536,9 +636,9 @@ func GenAIHandlerWithMonitor(tokenMgr *token.Manager, upstreamClient *upstream.C
 			URL:          r.URL.Path,
 			Status:       rec.statusCode,
 			Duration:     time.Since(startTime).Milliseconds(),
-			Provider:     "google",
+			Provider:     provider,
 			Model:        rawModel,
-			MappedModel:  db.ResolveModel(rawModel, "google"),
+			MappedModel:  targetModel,
 			AccountEmail: accountEmail,
 			Error:        errorMsg,
 			InputTokens:  inputTokens,
@@ -568,6 +668,10 @@ func GenAIStreamHandlerWithMonitor(tokenMgr *token.Manager, upstreamClient *upst
 
 		// Get account email using common helper
 		accountEmail := GetAccountEmail(r, tokenMgr)
+		targetModel, provider := rawModel, "google"
+		if resolvedModel, resolvedProvider, err := db.ResolveModelWithProviderForProtocol(rawModel, string(db.ProtocolGenAI)); err == nil {
+			targetModel, provider = resolvedModel, resolvedProvider
+		}
 
 		// For streaming, capture the first MaxStreamSnippetSize bytes for logging
 		sw := &streamSnippetRecorder{ResponseWriter: w, statusCode: http.StatusOK}
@@ -579,9 +683,9 @@ func GenAIStreamHandlerWithMonitor(tokenMgr *token.Manager, upstreamClient *upst
 			URL:          r.URL.Path,
 			Status:       sw.statusCode,
 			Duration:     time.Since(startTime).Milliseconds(),
-			Provider:     "google",
+			Provider:     provider,
 			Model:        rawModel,
-			MappedModel:  db.ResolveModel(rawModel, "google"),
+			MappedModel:  targetModel,
 			AccountEmail: accountEmail,
 			Error:        streamStatusError(sw.statusCode),
 			RequestBody:  string(bodyBytes),

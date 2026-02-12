@@ -13,41 +13,41 @@ import (
 	"github.com/pysugar/oauth-llm-nexus/internal/upstream/vertexkey"
 )
 
-// GeminiCompatProvider is a global provider used by Vertex AI proxy endpoints.
+// VertexAIStudioProvider is a global provider used by Vertex AI proxy endpoints.
 // It is initialized at startup only when NEXUS_VERTEX_API_KEY is set.
-var GeminiCompatProvider *vertexkey.Provider
+var VertexAIStudioProvider *vertexkey.Provider
 
-// InitGeminiCompatProviderFromEnv initializes the provider from environment variables.
+// InitVertexAIStudioProviderFromEnv initializes the provider from environment variables.
 // Returns true when the provider is enabled.
-func InitGeminiCompatProviderFromEnv() bool {
-	GeminiCompatProvider = vertexkey.NewProviderFromEnv()
-	return GeminiCompatProvider != nil && GeminiCompatProvider.IsEnabled()
+func InitVertexAIStudioProviderFromEnv() bool {
+	VertexAIStudioProvider = vertexkey.NewProviderFromEnv()
+	return VertexAIStudioProvider != nil && VertexAIStudioProvider.IsEnabled()
 }
 
-// GeminiCompatProxyHandler handles:
+// VertexAIStudioProxyHandler handles:
 // - POST /v1/publishers/google/models/{model}:generateContent
 // - POST /v1/publishers/google/models/{model}:streamGenerateContent
 // - POST /v1/publishers/google/models/{model}:countTokens
-func GeminiCompatProxyHandler() http.HandlerFunc {
+func VertexAIStudioProxyHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if GeminiCompatProvider == nil || !GeminiCompatProvider.IsEnabled() {
-			writeGeminiCompatError(w, "Vertex AI proxy is not enabled", http.StatusServiceUnavailable)
+		if VertexAIStudioProvider == nil || !VertexAIStudioProvider.IsEnabled() {
+			writeVertexAIStudioError(w, "Vertex AI proxy is not enabled", http.StatusServiceUnavailable)
 			return
 		}
 
-		model, action, ok := parseGeminiCompatModelAction(r.URL.Path)
+		model, action, ok := parseVertexAIStudioModelAction(r.URL.Path)
 		if !ok {
-			writeGeminiCompatError(w, "Unsupported endpoint", http.StatusNotFound)
+			writeVertexAIStudioError(w, "Unsupported endpoint", http.StatusNotFound)
 			return
 		}
 
 		bodyBytes, err := io.ReadAll(r.Body)
 		if err != nil {
-			writeGeminiCompatError(w, "Failed to read request body", http.StatusBadRequest)
+			writeVertexAIStudioError(w, "Failed to read request body", http.StatusBadRequest)
 			return
 		}
 
-		resp, err := GeminiCompatProvider.Forward(
+		resp, err := VertexAIStudioProvider.Forward(
 			r.Context(),
 			r.Method,
 			model,
@@ -57,21 +57,21 @@ func GeminiCompatProxyHandler() http.HandlerFunc {
 			bodyBytes,
 		)
 		if err != nil {
-			log.Printf("❌ Gemini compat proxy error: model=%s action=%s err=%v", model, action, err)
-			writeGeminiCompatError(w, "Upstream proxy error: "+err.Error(), http.StatusBadGateway)
+			log.Printf("❌ Vertex AI proxy error: model=%s action=%s err=%v", model, action, err)
+			writeVertexAIStudioError(w, "Upstream proxy error: "+err.Error(), http.StatusBadGateway)
 			return
 		}
 		defer resp.Body.Close()
 
 		if err := vertexkey.CopyResponse(w, resp); err != nil {
-			log.Printf("❌ Gemini compat response copy error: model=%s action=%s err=%v", model, action, err)
+			log.Printf("❌ Vertex AI response copy error: model=%s action=%s err=%v", model, action, err)
 		}
 	}
 }
 
-// GeminiCompatProxyHandlerWithMonitor wraps GeminiCompatProxyHandler with request logging.
-func GeminiCompatProxyHandlerWithMonitor(pm *monitor.ProxyMonitor) http.HandlerFunc {
-	baseHandler := GeminiCompatProxyHandler()
+// VertexAIStudioProxyHandlerWithMonitor wraps VertexAIStudioProxyHandler with request logging.
+func VertexAIStudioProxyHandlerWithMonitor(pm *monitor.ProxyMonitor) http.HandlerFunc {
+	baseHandler := VertexAIStudioProxyHandler()
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !pm.IsEnabled() {
@@ -80,7 +80,7 @@ func GeminiCompatProxyHandlerWithMonitor(pm *monitor.ProxyMonitor) http.HandlerF
 		}
 
 		startTime := time.Now()
-		model, action, _ := parseGeminiCompatModelAction(r.URL.Path)
+		model, action, _ := parseVertexAIStudioModelAction(r.URL.Path)
 
 		bodyBytes, _ := io.ReadAll(r.Body)
 		r.Body = io.NopCloser(strings.NewReader(string(bodyBytes)))
@@ -137,7 +137,7 @@ func GeminiCompatProxyHandlerWithMonitor(pm *monitor.ProxyMonitor) http.HandlerF
 	}
 }
 
-func parseGeminiCompatModelAction(path string) (model string, action string, ok bool) {
+func parseVertexAIStudioModelAction(path string) (model string, action string, ok bool) {
 	const prefix = "/v1/publishers/google/models/"
 	if !strings.HasPrefix(path, prefix) {
 		return "", "", false
@@ -162,7 +162,7 @@ func parseGeminiCompatModelAction(path string) (model string, action string, ok 
 	return "", "", false
 }
 
-func writeGeminiCompatError(w http.ResponseWriter, message string, status int) {
+func writeVertexAIStudioError(w http.ResponseWriter, message string, status int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{

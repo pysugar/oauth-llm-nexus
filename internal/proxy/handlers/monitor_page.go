@@ -284,6 +284,7 @@ var monitorPageHTML = `<!DOCTYPE html>
                 const badgeClass = isSuccess ? 'badge-success' : (log.status === 429 ? 'badge-warning' : 'badge-error');
                 const time = new Date(log.timestamp).toLocaleTimeString();
                 const account = maskEmail(log.account_email);
+                const provider = normalizeProviderLabel(log.provider);
                 
                 html += '<tr onclick="showDetail(' + idx + ')">';
                 
@@ -304,7 +305,7 @@ var monitorPageHTML = `<!DOCTYPE html>
                 }
                 html += '</td>';
 
-                html += '<td><span class="badge badge-warning">' + (log.provider || '-') + '</span></td>';
+                html += '<td><span class="badge badge-warning">' + provider + '</span></td>';
                 
                 html += '<td class="account" title="' + (log.account_email || '') + '">' + account + '</td>';
                 html += '<td>' + log.url + '</td>';
@@ -331,6 +332,12 @@ var monitorPageHTML = `<!DOCTYPE html>
             return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
         }
 
+        function normalizeProviderLabel(provider) {
+            const normalized = String(provider || '').trim().toLowerCase();
+            if (!normalized) return '-';
+            return normalized;
+        }
+
         function showDetail(idx) {
             const log = logsData[idx];
             const isSuccess = log.status >= 200 && log.status < 400;
@@ -339,7 +346,7 @@ var monitorPageHTML = `<!DOCTYPE html>
             html += '<div class="detail-item"><label>Status</label><div class="value ' + (isSuccess ? 'success' : 'error') + '">' + log.status + '</div></div>';
             html += '<div class="detail-item"><label>Duration</label><div class="value">' + log.duration + 'ms</div></div>';
             html += '<div class="detail-item"><label>Model</label><div class="value" style="color:#60a5fa">' + (log.model || '-') + '</div></div>';
-            html += '<div class="detail-item"><label>Provider</label><div class="value" style="color:#fbbf24">' + (log.provider || '-') + '</div></div>';
+            html += '<div class="detail-item"><label>Provider</label><div class="value" style="color:#fbbf24">' + normalizeProviderLabel(log.provider) + '</div></div>';
             html += '<div class="detail-item"><label>Mapped To</label><div class="value" style="color:#4ade80">' + (log.mapped_model || '-') + '</div></div>';
             html += '</div>';
             

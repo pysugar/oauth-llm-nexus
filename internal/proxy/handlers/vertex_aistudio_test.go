@@ -18,7 +18,7 @@ func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
 
-func TestParseGeminiCompatModelAction(t *testing.T) {
+func TestParseVertexAIStudioModelAction(t *testing.T) {
 	tests := []struct {
 		path   string
 		model  string
@@ -50,34 +50,34 @@ func TestParseGeminiCompatModelAction(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		model, action, ok := parseGeminiCompatModelAction(tt.path)
+		model, action, ok := parseVertexAIStudioModelAction(tt.path)
 		if ok != tt.ok {
-			t.Fatalf("parseGeminiCompatModelAction(%q) ok = %v, want %v", tt.path, ok, tt.ok)
+			t.Fatalf("parseVertexAIStudioModelAction(%q) ok = %v, want %v", tt.path, ok, tt.ok)
 		}
 		if model != tt.model {
-			t.Fatalf("parseGeminiCompatModelAction(%q) model = %q, want %q", tt.path, model, tt.model)
+			t.Fatalf("parseVertexAIStudioModelAction(%q) model = %q, want %q", tt.path, model, tt.model)
 		}
 		if action != tt.action {
-			t.Fatalf("parseGeminiCompatModelAction(%q) action = %q, want %q", tt.path, action, tt.action)
+			t.Fatalf("parseVertexAIStudioModelAction(%q) action = %q, want %q", tt.path, action, tt.action)
 		}
 	}
 }
 
-func TestGeminiCompatProxyHandler_Disabled(t *testing.T) {
-	oldProvider := GeminiCompatProvider
-	GeminiCompatProvider = nil
-	defer func() { GeminiCompatProvider = oldProvider }()
+func TestVertexAIStudioProxyHandler_Disabled(t *testing.T) {
+	oldProvider := VertexAIStudioProvider
+	VertexAIStudioProvider = nil
+	defer func() { VertexAIStudioProvider = oldProvider }()
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/publishers/google/models/gemini-2.5-flash-lite:generateContent", nil)
 	w := httptest.NewRecorder()
-	GeminiCompatProxyHandler().ServeHTTP(w, req)
+	VertexAIStudioProxyHandler().ServeHTTP(w, req)
 
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("Expected status 503, got %d", w.Code)
 	}
 }
 
-func TestGeminiCompatProxyHandler_Passthrough(t *testing.T) {
+func TestVertexAIStudioProxyHandler_Passthrough(t *testing.T) {
 	var gotPath string
 	var gotQueryKey string
 	var gotBody []byte
@@ -98,9 +98,9 @@ func TestGeminiCompatProxyHandler_Passthrough(t *testing.T) {
 		}),
 	}
 
-	oldProvider := GeminiCompatProvider
-	GeminiCompatProvider = vertexkey.NewProviderWithClient("server-key", "https://aiplatform.googleapis.com", time.Minute, client)
-	defer func() { GeminiCompatProvider = oldProvider }()
+	oldProvider := VertexAIStudioProvider
+	VertexAIStudioProvider = vertexkey.NewProviderWithClient("server-key", "https://aiplatform.googleapis.com", time.Minute, client)
+	defer func() { VertexAIStudioProvider = oldProvider }()
 
 	reqBody := `{"contents":[{"role":"user","parts":[{"text":"hello"}]}]}`
 	req := httptest.NewRequest(
@@ -113,7 +113,7 @@ func TestGeminiCompatProxyHandler_Passthrough(t *testing.T) {
 	req.Header.Set("X-Goog-Api-Key", "client-key")
 
 	w := httptest.NewRecorder()
-	GeminiCompatProxyHandler().ServeHTTP(w, req)
+	VertexAIStudioProxyHandler().ServeHTTP(w, req)
 
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("Expected status 202, got %d", w.Code)
@@ -132,7 +132,7 @@ func TestGeminiCompatProxyHandler_Passthrough(t *testing.T) {
 	}
 }
 
-func TestGeminiCompatProxyHandler_StreamProxyMode(t *testing.T) {
+func TestVertexAIStudioProxyHandler_StreamProxyMode(t *testing.T) {
 	var gotPath string
 
 	client := &http.Client{
@@ -152,9 +152,9 @@ func TestGeminiCompatProxyHandler_StreamProxyMode(t *testing.T) {
 		}),
 	}
 
-	oldProvider := GeminiCompatProvider
-	GeminiCompatProvider = vertexkey.NewProviderWithClient("server-key", "https://aiplatform.googleapis.com", time.Minute, client)
-	defer func() { GeminiCompatProvider = oldProvider }()
+	oldProvider := VertexAIStudioProvider
+	VertexAIStudioProvider = vertexkey.NewProviderWithClient("server-key", "https://aiplatform.googleapis.com", time.Minute, client)
+	defer func() { VertexAIStudioProvider = oldProvider }()
 
 	req := httptest.NewRequest(
 		http.MethodPost,
@@ -164,7 +164,7 @@ func TestGeminiCompatProxyHandler_StreamProxyMode(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	w := httptest.NewRecorder()
-	GeminiCompatProxyHandler().ServeHTTP(w, req)
+	VertexAIStudioProxyHandler().ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d", w.Code)

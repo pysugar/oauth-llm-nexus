@@ -23,7 +23,7 @@ func newTestDB(t *testing.T) *gorm.DB {
 func TestResolveModelWithProvider_DeterministicOrder(t *testing.T) {
 	db := newTestDB(t)
 
-	// Insert in reverse order to verify cache load ordering is deterministic.
+	// First active row (id ASC) should win for duplicated client_model.
 	if err := db.Create(&models.ModelRoute{
 		ClientModel:    "gpt-4",
 		TargetProvider: "google",
@@ -44,7 +44,25 @@ func TestResolveModelWithProvider_DeterministicOrder(t *testing.T) {
 	loadModelRouteCache(db)
 
 	target, provider := ResolveModelWithProvider("gpt-4")
-	if provider != "codex" || target != "gpt-5.2" {
-		t.Fatalf("expected deterministic codex mapping, got provider=%s target=%s", provider, target)
+	if provider != "google" || target != "gemini-3-flash" {
+		t.Fatalf("expected first-row google mapping, got provider=%s target=%s", provider, target)
+	}
+}
+
+func TestResolveModelWithProviderForProtocol_RejectsIncompatibleProvider(t *testing.T) {
+	db := newTestDB(t)
+	if err := db.Create(&models.ModelRoute{
+		ClientModel:    "gemini-3-flash-preview",
+		TargetProvider: "vertex",
+		TargetModel:    "gemini-3-flash-preview",
+		IsActive:       true,
+	}).Error; err != nil {
+		t.Fatalf("create route: %v", err)
+	}
+
+	loadModelRouteCache(db)
+
+	if _, _, err := ResolveModelWithProviderForProtocol("gemini-3-flash-preview", string(ProtocolOpenAI)); err == nil {
+		t.Fatal("expected openai protocol to reject vertex provider")
 	}
 }

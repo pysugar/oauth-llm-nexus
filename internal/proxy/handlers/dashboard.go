@@ -256,7 +256,7 @@ func maskAPIKey(apiKey string) string {
 // SupportStatusHandler returns current support status for optional providers/features.
 func SupportStatusHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		vertexEnabled := GeminiCompatProvider != nil && GeminiCompatProvider.IsEnabled()
+		vertexEnabled := VertexAIStudioProvider != nil && VertexAIStudioProvider.IsEnabled()
 		aiStudioEnabled := GeminiAIStudioProvider != nil && GeminiAIStudioProvider.IsEnabled()
 		codexEnabled := CodexProvider != nil
 
@@ -396,7 +396,7 @@ var dashboardHTML = `<!DOCTYPE html>
         <!-- Model Routes Card -->
         <div class="bg-gray-800 rounded-xl p-4 mb-6">
             <div class="flex justify-between items-center mb-2">
-                <h3 class="text-sm font-semibold text-gray-400">🗺️ Model Routes <span class="text-xs text-gray-500 ml-1">(Client → Google Backend)</span></h3>
+                <h3 class="text-sm font-semibold text-gray-400">🗺️ Model Routes <span class="text-xs text-gray-500 ml-1">(Client → Provider Backend)</span></h3>
                 <div class="flex gap-2">
                     <button onclick="showAddRouteModal()" class="text-xs bg-blue-600 hover:bg-blue-500 px-3 py-1 rounded">➕ Add</button>
                     <button onclick="resetModelRoutes()" class="text-xs bg-gray-600 hover:bg-gray-500 px-3 py-1 rounded">🔄 Reset</button>
@@ -420,9 +420,7 @@ var dashboardHTML = `<!DOCTYPE html>
                     </div>
                     <div class="mb-3">
                         <label class="block text-sm text-gray-400 mb-1">Backend Provider</label>
-                        <select id="route-provider" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white">
-                            <option value="google" selected>google</option>
-                        </select>
+                        <select id="route-provider" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"></select>
                     </div>
                     <div class="mb-3">
                         <label class="block text-sm text-gray-400 mb-1">Target Model</label>
@@ -896,6 +894,74 @@ var dashboardHTML = `<!DOCTYPE html>
         }
 
         // Model Routes Functions
+        function normalizeProviderForUI(provider) {
+            const normalized = (provider || '').trim().toLowerCase();
+            return normalized || 'google';
+        }
+
+        function providerOptionLabel(provider) {
+            switch (provider) {
+                case 'google':
+                    return 'google (antigravity)';
+                case 'gemini':
+                    return 'gemini (gemini_api)';
+                case 'vertex':
+                    return 'vertex';
+                case 'codex':
+                    return 'codex';
+                default:
+                    return provider;
+            }
+        }
+
+        function providerDisplayLabel(provider) {
+            const normalized = normalizeProviderForUI(provider);
+            return providerOptionLabel(normalized);
+        }
+
+        function allowedProvidersForClientModel(clientModel) {
+            const model = (clientModel || '').trim().toLowerCase();
+            if (model.startsWith('gpt')) return ['codex', 'google'];
+            if (model.startsWith('gemini')) return ['google', 'gemini', 'vertex'];
+            return ['google'];
+        }
+
+        function updateRouteProviderOptions(clientModel, preferredProvider) {
+            const select = document.getElementById('route-provider');
+            if (!select) return;
+
+            const allowed = allowedProvidersForClientModel(clientModel);
+            const normalizedPreferred = normalizeProviderForUI(preferredProvider);
+            const selected = allowed.includes(normalizedPreferred) ? normalizedPreferred : allowed[0];
+
+            select.innerHTML = '';
+            allowed.forEach((provider) => {
+                const option = document.createElement('option');
+                option.value = provider;
+                option.textContent = providerOptionLabel(provider);
+                if (provider === selected) {
+                    option.selected = true;
+                }
+                select.appendChild(option);
+            });
+        }
+
+        function refreshRouteProviderOptions(preferredProvider) {
+            const clientInput = document.getElementById('route-client');
+            const providerSelect = document.getElementById('route-provider');
+            const currentProvider = (preferredProvider !== undefined)
+                ? preferredProvider
+                : (providerSelect ? providerSelect.value : 'google');
+            updateRouteProviderOptions(clientInput ? clientInput.value : '', currentProvider);
+        }
+
+        function initRouteProviderPolicyBindings() {
+            const clientInput = document.getElementById('route-client');
+            if (!clientInput) return;
+            clientInput.addEventListener('input', refreshRouteProviderOptions);
+            clientInput.addEventListener('change', refreshRouteProviderOptions);
+        }
+
         async function loadModelRoutes() {
             const container = document.getElementById('routes-container');
             container.innerHTML = '<div class="text-gray-400">Loading...</div>';
@@ -910,7 +976,7 @@ var dashboardHTML = `<!DOCTYPE html>
                         data.routes.forEach(r => {
                             html += '<div class="grid grid-cols-5 gap-2 items-center hover:bg-gray-700/50 rounded px-1 py-0.5 group">';
                             html += '<code class="text-blue-300 truncate text-xs">' + r.client_model + '</code>';
-                            html += '<span class="text-purple-400 text-xs">' + r.target_provider + '</span>';
+                            html += '<span class="text-purple-400 text-xs">' + providerDisplayLabel(r.target_provider) + '</span>';
                             html += '<span class="text-gray-500 text-center">→</span>';
                             html += '<code class="text-green-300 truncate text-xs">' + r.target_model + '</code>';
                             html += '<div class="text-right opacity-0 group-hover:opacity-100">';
@@ -933,7 +999,7 @@ var dashboardHTML = `<!DOCTYPE html>
             document.getElementById('route-modal-title').textContent = 'Add Model Route';
             document.getElementById('route-id').value = '';
             document.getElementById('route-client').value = '';
-            document.getElementById('route-provider').value = 'google';
+            refreshRouteProviderOptions('google');
             document.getElementById('route-target').value = '';
             document.getElementById('route-modal').classList.remove('hidden');
         }
@@ -942,7 +1008,7 @@ var dashboardHTML = `<!DOCTYPE html>
             document.getElementById('route-modal-title').textContent = 'Edit Model Route';
             document.getElementById('route-id').value = id;
             document.getElementById('route-client').value = client;
-            document.getElementById('route-provider').value = provider;
+            refreshRouteProviderOptions(provider);
             document.getElementById('route-target').value = target;
             document.getElementById('route-modal').classList.remove('hidden');
         }
@@ -1167,6 +1233,8 @@ var dashboardHTML = `<!DOCTYPE html>
 
         // Initial Load
         window.addEventListener('load', () => {
+            initRouteProviderPolicyBindings();
+            refreshRouteProviderOptions('google');
             loadAll();
             loadAPIKey();
             loadSupportStatus();

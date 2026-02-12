@@ -3,6 +3,7 @@ package db
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -178,10 +179,7 @@ func ensureModelRoutes(db *gorm.DB) {
 
 	// Insert routes into database
 	for _, route := range config.Routes {
-		provider := route.Provider
-		if provider == "" {
-			provider = "google" // default
-		}
+		provider := NormalizeProvider(route.Provider)
 		db.Create(&models.ModelRoute{
 			ClientModel:    route.Client,
 			TargetProvider: provider,
@@ -199,7 +197,7 @@ func ensureModelRoutes(db *gorm.DB) {
 func loadModelRouteCache(db *gorm.DB) {
 	var routes []models.ModelRoute
 	db.Where("is_active = ?", true).
-		Order("client_model asc, target_provider asc, id asc").
+		Order("id asc").
 		Find(&routes)
 
 	modelRouteCacheLock.Lock()
@@ -208,13 +206,14 @@ func loadModelRouteCache(db *gorm.DB) {
 	modelRouteCache = make(map[string]string)
 	providerRouteCache = make(map[string]string)
 	for _, r := range routes {
-		key := r.ClientModel + ":" + r.TargetProvider
+		provider := NormalizeProvider(r.TargetProvider)
+		key := r.ClientModel + ":" + provider
 		modelRouteCache[key] = r.TargetModel
 		// Also cache clientModel -> provider mapping (first wins)
 		if _, exists := providerRouteCache[r.ClientModel]; !exists {
-			providerRouteCache[r.ClientModel] = r.TargetProvider
+			providerRouteCache[r.ClientModel] = provider
 		}
-		log.Printf("  - %s -> %s (%s)", r.ClientModel, r.TargetModel, r.TargetProvider)
+		log.Printf("  - %s -> %s (%s)", r.ClientModel, r.TargetModel, provider)
 	}
 	log.Printf("📋 Loaded %d model routes into cache", len(routes))
 }
@@ -238,7 +237,7 @@ func sensitiveLoggingEnabled() bool {
 func GetModelRoute(clientModel, targetProvider string) string {
 	modelRouteCacheLock.RLock()
 	defer modelRouteCacheLock.RUnlock()
-	key := clientModel + ":" + targetProvider
+	key := clientModel + ":" + NormalizeProvider(targetProvider)
 	return modelRouteCache[key]
 }
 
@@ -254,24 +253,60 @@ func ResolveModel(clientModel, targetProvider string) string {
 	return clientModel
 }
 
-// ResolveModelWithProvider returns (targetModel, provider) for a given client model
-// Lookup is based on clientModel only - provider is determined from route config
-// If no mapping exists, returns (clientModel, "google") as default passthrough
+// ResolveModelWithProvider returns (targetModel, provider) for a given client model.
+// Deprecated: prefer ResolveModelWithProviderForProtocol to enforce protocol/provider compatibility.
+// This helper is retained for compatibility with tests and probe endpoints.
+// If route validation fails, it falls back to (clientModel, "google").
 func ResolveModelWithProvider(clientModel string) (targetModel, provider string) {
+	targetModel, provider, err := ResolveModelWithProviderForProtocol(clientModel, "")
+	if err != nil {
+		log.Printf("⚠️ Model routing invalid for %s: %v (fallback to google passthrough)", clientModel, err)
+		return clientModel, "google"
+	}
+	return targetModel, provider
+}
+
+// ResolveModelWithProviderForProtocol resolves route using first active row (id ASC),
+// then validates model-prefix policy and protocol/provider compatibility.
+func ResolveModelWithProviderForProtocol(clientModel string, protocol string) (targetModel, provider string, err error) {
+	clientModel = strings.TrimSpace(clientModel)
+	if clientModel == "" {
+		return "", "", fmt.Errorf("client model is required")
+	}
+
 	modelRouteCacheLock.RLock()
 	defer modelRouteCacheLock.RUnlock()
 
-	// First find the provider for this client model
+	provider = "google"
+	targetModel = clientModel
+
 	if prov, ok := providerRouteCache[clientModel]; ok {
-		key := clientModel + ":" + prov
-		if target, ok := modelRouteCache[key]; ok {
-			log.Printf("🗺️ Model routing: %s -> %s (provider: %s)", clientModel, target, prov)
-			return target, prov
+		provider = NormalizeProvider(prov)
+		key := clientModel + ":" + provider
+		if target, exists := modelRouteCache[key]; exists {
+			targetModel = target
 		}
 	}
 
-	// No mapping found, passthrough with default provider
-	return clientModel, "google"
+	if err := ValidateRouteProvider(clientModel, provider); err != nil {
+		return "", "", err
+	}
+	if strings.TrimSpace(protocol) != "" {
+		if err := ValidateProviderForProtocol(provider, protocol); err != nil {
+			return "", "", err
+		}
+	}
+
+	log.Printf("🗺️ Model routing: %s -> %s (provider: %s, protocol: %s)", clientModel, targetModel, provider, normalizeProtocolForLog(protocol))
+	return targetModel, provider, nil
+}
+
+func normalizeProtocolForLog(protocol string) string {
+	p := strings.TrimSpace(strings.ToLower(protocol))
+	if p == "" {
+		return "any"
+	}
+	return p
 }
 
 // GetAllModelRoutes returns all routes from database
@@ -283,6 +318,7 @@ func GetAllModelRoutes(db *gorm.DB) []models.ModelRoute {
 
 // CreateModelRoute creates a new route and refreshes cache
 func CreateModelRoute(db *gorm.DB, route *models.ModelRoute) error {
+	route.TargetProvider = NormalizeProvider(route.TargetProvider)
 	if err := db.Create(route).Error; err != nil {
 		return err
 	}
@@ -292,6 +328,7 @@ func CreateModelRoute(db *gorm.DB, route *models.ModelRoute) error {
 
 // UpdateModelRoute updates a route and refreshes cache
 func UpdateModelRoute(db *gorm.DB, route *models.ModelRoute) error {
+	route.TargetProvider = NormalizeProvider(route.TargetProvider)
 	if err := db.Save(route).Error; err != nil {
 		return err
 	}
