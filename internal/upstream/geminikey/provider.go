@@ -1,4 +1,4 @@
-package vertexkey
+package geminikey
 
 import (
 	"bytes"
@@ -8,23 +8,26 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	pathpkg "path"
 	"strings"
 	"time"
 )
 
 const (
-	defaultBaseURL = "https://aiplatform.googleapis.com"
+	defaultBaseURL = "https://generativelanguage.googleapis.com"
 	defaultTimeout = 5 * time.Minute
 )
 
-var allowedActions = map[string]struct{}{
+var allowedPostActions = map[string]struct{}{
 	"generateContent":       {},
 	"streamGenerateContent": {},
 	"countTokens":           {},
+	"embedContent":          {},
+	"batchEmbedContents":    {},
 }
 
-// Provider transparently proxies Gemini-compatible requests to Vertex API using
-// a server-side API key.
+// Provider transparently proxies Google AI Studio Gemini API requests using
+// server-side API key injection.
 type Provider struct {
 	apiKey     string
 	baseURL    string
@@ -36,7 +39,7 @@ func NewProvider(apiKey, baseURL string, timeout time.Duration) *Provider {
 	return NewProviderWithClient(apiKey, baseURL, timeout, nil)
 }
 
-// NewProviderWithClient creates a Provider with an optional custom HTTP client.
+// NewProviderWithClient creates a Provider with optional custom HTTP client.
 func NewProviderWithClient(apiKey, baseURL string, timeout time.Duration, httpClient *http.Client) *Provider {
 	trimmedBaseURL := strings.TrimSpace(baseURL)
 	if trimmedBaseURL == "" {
@@ -48,6 +51,7 @@ func NewProviderWithClient(apiKey, baseURL string, timeout time.Duration, httpCl
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: timeout}
 	}
+
 	return &Provider{
 		apiKey:     strings.TrimSpace(apiKey),
 		baseURL:    strings.TrimRight(trimmedBaseURL, "/"),
@@ -55,15 +59,19 @@ func NewProviderWithClient(apiKey, baseURL string, timeout time.Duration, httpCl
 	}
 }
 
-// NewProviderFromEnv creates a Provider using environment variables.
+// NewProviderFromEnv creates a provider from environment variables.
+// Priority: NEXUS_GEMINI_API_KEY > GEMINI_API_KEY.
 func NewProviderFromEnv() *Provider {
-	apiKey := strings.TrimSpace(getenv("NEXUS_VERTEX_API_KEY"))
+	apiKey := strings.TrimSpace(getenv("NEXUS_GEMINI_API_KEY"))
+	if apiKey == "" {
+		apiKey = strings.TrimSpace(getenv("GEMINI_API_KEY"))
+	}
 	if apiKey == "" {
 		return nil
 	}
 
-	baseURL := strings.TrimSpace(getenv("NEXUS_VERTEX_BASE_URL"))
-	timeout := parseTimeoutFromEnv("NEXUS_VERTEX_PROXY_TIMEOUT")
+	baseURL := strings.TrimSpace(getenv("NEXUS_GEMINI_BASE_URL"))
+	timeout := parseTimeoutFromEnv("NEXUS_GEMINI_PROXY_TIMEOUT")
 	return NewProvider(apiKey, baseURL, timeout)
 }
 
@@ -72,31 +80,25 @@ func (p *Provider) IsEnabled() bool {
 	return p != nil && p.apiKey != ""
 }
 
-// Forward proxies request to Vertex API:
-// /v1/publishers/google/models/{model}:{action} -> /v1/publishers/google/models/{model}:{action}
+// Forward proxies request to AI Studio endpoint with server-side API key.
 func (p *Provider) Forward(
 	ctx context.Context,
 	method string,
-	model string,
-	action string,
+	requestPath string,
 	incomingQuery url.Values,
 	incomingHeaders http.Header,
 	body []byte,
 ) (*http.Response, error) {
 	if !p.IsEnabled() {
-		return nil, fmt.Errorf("vertex key provider is not enabled")
+		return nil, fmt.Errorf("gemini key provider is not enabled")
 	}
 
-	if _, ok := allowedActions[action]; !ok {
-		return nil, fmt.Errorf("unsupported action: %s", action)
+	normalizedPath, err := normalizeAndValidatePath(method, requestPath)
+	if err != nil {
+		return nil, err
 	}
 
-	model = normalizeModel(model)
-	if model == "" {
-		return nil, fmt.Errorf("model is required")
-	}
-
-	targetURL := fmt.Sprintf("%s/v1/publishers/google/models/%s:%s", p.baseURL, url.PathEscape(model), action)
+	targetURL := p.baseURL + normalizedPath
 	parsedTarget, err := url.Parse(targetURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid target URL: %w", err)
@@ -114,6 +116,51 @@ func (p *Provider) Forward(
 
 	copyForwardHeaders(req.Header, incomingHeaders)
 	return p.httpClient.Do(req)
+}
+
+func normalizeAndValidatePath(method string, requestPath string) (string, error) {
+	cleanPath := pathpkg.Clean("/" + strings.TrimSpace(requestPath))
+	if !strings.HasPrefix(cleanPath, "/v1beta/models") {
+		return "", fmt.Errorf("unsupported endpoint: %s", requestPath)
+	}
+
+	if method == http.MethodGet {
+		if cleanPath == "/v1beta/models" {
+			return cleanPath, nil
+		}
+		if strings.HasPrefix(cleanPath, "/v1beta/models/") {
+			model := strings.TrimPrefix(cleanPath, "/v1beta/models/")
+			if model != "" && !strings.Contains(model, ":") {
+				return cleanPath, nil
+			}
+		}
+		return "", fmt.Errorf("unsupported endpoint: %s", requestPath)
+	}
+
+	if method != http.MethodPost {
+		return "", fmt.Errorf("unsupported method: %s", method)
+	}
+
+	if !strings.HasPrefix(cleanPath, "/v1beta/models/") {
+		return "", fmt.Errorf("unsupported endpoint: %s", requestPath)
+	}
+
+	rest := strings.TrimPrefix(cleanPath, "/v1beta/models/")
+	if rest == "" {
+		return "", fmt.Errorf("unsupported endpoint: %s", requestPath)
+	}
+
+	colon := strings.LastIndex(rest, ":")
+	if colon <= 0 || colon == len(rest)-1 {
+		return "", fmt.Errorf("unsupported endpoint: %s", requestPath)
+	}
+
+	action := rest[colon+1:]
+	if _, ok := allowedPostActions[action]; !ok {
+		return "", fmt.Errorf("unsupported action: %s", action)
+	}
+
+	return cleanPath, nil
 }
 
 func cloneValues(values url.Values) url.Values {
@@ -169,12 +216,6 @@ func parseTimeoutFromEnv(key string) time.Duration {
 		return defaultTimeout
 	}
 	return dur
-}
-
-func normalizeModel(model string) string {
-	trimmed := strings.TrimSpace(model)
-	trimmed = strings.TrimPrefix(trimmed, "google/")
-	return strings.TrimSpace(trimmed)
 }
 
 var getenv = func(key string) string {

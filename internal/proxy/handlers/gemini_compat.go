@@ -13,7 +13,7 @@ import (
 	"github.com/pysugar/oauth-llm-nexus/internal/upstream/vertexkey"
 )
 
-// GeminiCompatProvider is a global provider used by Gemini-compatible v1beta endpoints.
+// GeminiCompatProvider is a global provider used by Vertex AI proxy endpoints.
 // It is initialized at startup only when NEXUS_VERTEX_API_KEY is set.
 var GeminiCompatProvider *vertexkey.Provider
 
@@ -25,13 +25,13 @@ func InitGeminiCompatProviderFromEnv() bool {
 }
 
 // GeminiCompatProxyHandler handles:
-// - POST /v1beta/models/{model}:generateContent
-// - POST /v1beta/models/{model}:streamGenerateContent
-// - POST /v1beta/models/{model}:countTokens
+// - POST /v1/publishers/google/models/{model}:generateContent
+// - POST /v1/publishers/google/models/{model}:streamGenerateContent
+// - POST /v1/publishers/google/models/{model}:countTokens
 func GeminiCompatProxyHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if GeminiCompatProvider == nil || !GeminiCompatProvider.IsEnabled() {
-			writeGeminiCompatError(w, "Gemini compatibility proxy is not enabled", http.StatusServiceUnavailable)
+			writeGeminiCompatError(w, "Vertex AI proxy is not enabled", http.StatusServiceUnavailable)
 			return
 		}
 
@@ -138,7 +138,7 @@ func GeminiCompatProxyHandlerWithMonitor(pm *monitor.ProxyMonitor) http.HandlerF
 }
 
 func parseGeminiCompatModelAction(path string) (model string, action string, ok bool) {
-	const prefix = "/v1beta/models/"
+	const prefix = "/v1/publishers/google/models/"
 	if !strings.HasPrefix(path, prefix) {
 		return "", "", false
 	}

@@ -6,6 +6,7 @@ import (
 
 	"github.com/glebarez/sqlite"
 	"github.com/pysugar/oauth-llm-nexus/internal/db/models"
+	"golang.org/x/oauth2"
 	"gorm.io/gorm"
 )
 
@@ -69,6 +70,59 @@ func TestIsPermanentRefreshError(t *testing.T) {
 				t.Fatalf("expected %v, got %v", tt.permanent, got)
 			}
 		})
+	}
+}
+
+func TestRefreshAccountToken_ReactivatesInactiveAccount(t *testing.T) {
+	db := newTestTokenDB(t)
+	acc := models.Account{
+		ID:           "acc-refresh",
+		Email:        "refresh@example.com",
+		Provider:     "google",
+		AccessToken:  "old-token",
+		RefreshToken: "refresh-token",
+		ExpiresAt:    time.Now().Add(-time.Hour),
+		IsActive:     false,
+	}
+	if err := db.Create(&acc).Error; err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+
+	oldRefreshOAuthToken := refreshOAuthToken
+	defer func() { refreshOAuthToken = oldRefreshOAuthToken }()
+
+	refreshOAuthToken = func(refreshToken string) (*oauth2.Token, error) {
+		if refreshToken != "refresh-token" {
+			t.Fatalf("unexpected refresh token: %s", refreshToken)
+		}
+		return &oauth2.Token{
+			AccessToken: "new-token",
+			Expiry:      time.Now().Add(time.Hour),
+		}, nil
+	}
+
+	mgr := NewManager(db)
+	if err := mgr.RefreshAccountToken(acc.ID); err != nil {
+		t.Fatalf("refresh inactive account should succeed, got err=%v", err)
+	}
+
+	var updated models.Account
+	if err := db.First(&updated, "id = ?", acc.ID).Error; err != nil {
+		t.Fatalf("reload updated account: %v", err)
+	}
+	if !updated.IsActive {
+		t.Fatal("expected inactive account to be reactivated after manual refresh")
+	}
+	if updated.AccessToken != "new-token" {
+		t.Fatalf("expected access token to be updated, got %q", updated.AccessToken)
+	}
+
+	cached, exists := mgr.cache[acc.ID]
+	if !exists {
+		t.Fatal("expected refreshed account to be inserted into cache")
+	}
+	if cached.AccessToken != "new-token" {
+		t.Fatalf("expected cached token to be updated, got %q", cached.AccessToken)
 	}
 }
 

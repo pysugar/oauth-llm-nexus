@@ -44,12 +44,20 @@ func main() {
 		log.Println("✅ Codex provider initialized")
 	}
 
-	// Initialize Gemini-compatible Vertex key proxy (auto-enabled when NEXUS_VERTEX_API_KEY is set)
+	// Initialize Vertex AI key proxy (auto-enabled when NEXUS_VERTEX_API_KEY is set)
 	geminiCompatEnabled := handlers.InitGeminiCompatProviderFromEnv()
 	if geminiCompatEnabled {
-		log.Println("✅ Gemini compatibility proxy enabled (/v1beta/models/*)")
+		log.Println("✅ Vertex AI proxy enabled (/v1/publishers/google/models/*)")
 	} else {
-		log.Println("ℹ️ Gemini compatibility proxy disabled (set NEXUS_VERTEX_API_KEY to enable)")
+		log.Println("ℹ️ Vertex AI proxy disabled (set NEXUS_VERTEX_API_KEY to enable)")
+	}
+
+	// Initialize Gemini API proxy (auto-enabled when NEXUS_GEMINI_API_KEY or GEMINI_API_KEY is set)
+	geminiAIStudioEnabled := handlers.InitGeminiAIStudioProviderFromEnv()
+	if geminiAIStudioEnabled {
+		log.Println("✅ Gemini API proxy enabled (/v1beta/models/*)")
+	} else {
+		log.Println("ℹ️ Gemini API proxy disabled (set NEXUS_GEMINI_API_KEY or GEMINI_API_KEY to enable)")
 	}
 
 	// Create router
@@ -158,6 +166,9 @@ func main() {
 		r.Get("/models", handlers.OpenAIModelsListHandler(database))
 		r.Post("/responses", handlers.OpenAIResponsesHandlerWithMonitor(database, tokenManager, upstreamClient, proxyMonitor))
 		r.Get("/codex/quota", handlers.CodexQuotaHandler())
+		if geminiCompatEnabled {
+			r.Post("/publishers/google/models/*", handlers.GeminiCompatProxyHandlerWithMonitor(proxyMonitor))
+		}
 	})
 
 	// Anthropic-compatible API
@@ -179,14 +190,20 @@ func main() {
 		})
 	})
 
-	// Gemini-compatible API for OpenClaw:
+	// Gemini API:
+	// /v1beta/models
+	// /v1beta/models/{model}
 	// /v1beta/models/{model}:generateContent
 	// /v1beta/models/{model}:streamGenerateContent
 	// /v1beta/models/{model}:countTokens
-	if geminiCompatEnabled {
+	// /v1beta/models/{model}:embedContent
+	// /v1beta/models/{model}:batchEmbedContents
+	if geminiAIStudioEnabled {
 		r.Route("/v1beta", func(r chi.Router) {
 			r.Use(middleware.APIKeyAuth(database))
-			r.Post("/models/*", handlers.GeminiCompatProxyHandlerWithMonitor(proxyMonitor))
+			r.Get("/models", handlers.GeminiAIStudioProxyHandlerWithMonitor(proxyMonitor))
+			r.Get("/models/*", handlers.GeminiAIStudioProxyHandlerWithMonitor(proxyMonitor))
+			r.Post("/models/*", handlers.GeminiAIStudioProxyHandlerWithMonitor(proxyMonitor))
 		})
 	}
 
@@ -216,7 +233,10 @@ func main() {
 	log.Printf("🔌 Anthropic API: http://%s/anthropic/v1", displayURL)
 	log.Printf("🔌 GenAI API: http://%s/genai/v1beta", displayURL)
 	if geminiCompatEnabled {
-		log.Printf("🔌 Gemini Compat API: http://%s/v1beta/models/{model}:<action>", displayURL)
+		log.Printf("🔌 Vertex AI API: http://%s/v1/publishers/google/models/{model}:<action>", displayURL)
+	}
+	if geminiAIStudioEnabled {
+		log.Printf("🔌 Gemini API: http://%s/v1beta/models", displayURL)
 	}
 
 	if err := http.ListenAndServe(addr, r); err != nil {

@@ -16,6 +16,7 @@ import (
 	dbpkg "github.com/pysugar/oauth-llm-nexus/internal/db"
 	"github.com/pysugar/oauth-llm-nexus/internal/db/models"
 	"github.com/pysugar/oauth-llm-nexus/internal/proxy/monitor"
+	"github.com/pysugar/oauth-llm-nexus/internal/upstream/geminikey"
 	"github.com/pysugar/oauth-llm-nexus/internal/upstream/vertexkey"
 	"gorm.io/gorm"
 )
@@ -74,7 +75,7 @@ func TestGeminiCompatProxyHandlerWithMonitor_LogsWhenEnabled(t *testing.T) {
 
 	req := httptest.NewRequest(
 		http.MethodPost,
-		"/v1beta/models/gemini-2.5-flash-lite:generateContent",
+		"/v1/publishers/google/models/gemini-2.5-flash-lite:generateContent",
 		strings.NewReader(`{"contents":[{"role":"user","parts":[{"text":"hello"}]}]}`),
 	)
 	req.Header.Set("Content-Type", "application/json")
@@ -119,7 +120,7 @@ func TestGeminiCompatProxyHandlerWithMonitor_NoLogsWhenDisabled(t *testing.T) {
 
 	req := httptest.NewRequest(
 		http.MethodPost,
-		"/v1beta/models/gemini-2.5-flash-lite:generateContent",
+		"/v1/publishers/google/models/gemini-2.5-flash-lite:generateContent",
 		strings.NewReader(`{"contents":[{"role":"user","parts":[{"text":"hello"}]}]}`),
 	)
 	req.Header.Set("Content-Type", "application/json")
@@ -132,6 +133,51 @@ func TestGeminiCompatProxyHandlerWithMonitor_NoLogsWhenDisabled(t *testing.T) {
 
 	if stats := pm.GetStats(); stats.TotalRequests != 0 {
 		t.Fatalf("expected no monitor logs when disabled, got %+v", stats)
+	}
+}
+
+func TestGeminiAIStudioProxyHandlerWithMonitor_LogsWhenEnabled(t *testing.T) {
+	db := newTestDB(t)
+	pm := monitor.NewProxyMonitor(db)
+	pm.SetEnabled(true)
+
+	client := &http.Client{
+		Timeout: time.Minute,
+		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(bytes.NewBufferString(`{"candidates":[{"content":{"parts":[{"text":"ok"}]}}]}`)),
+			}, nil
+		}),
+	}
+
+	oldProvider := GeminiAIStudioProvider
+	GeminiAIStudioProvider = geminikey.NewProviderWithClient("server-key", "https://generativelanguage.googleapis.com", time.Minute, client)
+	defer func() { GeminiAIStudioProvider = oldProvider }()
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/v1beta/models/gemini-2.5-flash:generateContent",
+		strings.NewReader(`{"contents":[{"role":"user","parts":[{"text":"hello"}]}]}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	rec := httptest.NewRecorder()
+	GeminiAIStudioProxyHandlerWithMonitor(pm).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rec.Code)
+	}
+
+	logs := waitForLogCount(pm, 1)
+	if len(logs) == 0 {
+		t.Fatalf("expected at least one log entry")
+	}
+	if logs[0].Provider != "gemini_api" {
+		t.Fatalf("expected provider=gemini_api, got %q", logs[0].Provider)
+	}
+	if logs[0].Model != "gemini-2.5-flash" {
+		t.Fatalf("expected parsed model, got %q", logs[0].Model)
 	}
 }
 

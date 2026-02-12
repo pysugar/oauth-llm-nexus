@@ -15,6 +15,13 @@ import (
 	"gorm.io/gorm"
 )
 
+var refreshOAuthToken = func(refreshToken string) (*oauth2.Token, error) {
+	token := &oauth2.Token{RefreshToken: refreshToken}
+	config := google.GetOAuthConfig("")
+	tokenSource := config.TokenSource(context.Background(), token)
+	return tokenSource.Token()
+}
+
 // Manager handles token lifecycle including auto-refresh
 type Manager struct {
 	db    *gorm.DB
@@ -141,6 +148,8 @@ func (m *Manager) GetTokenByAccountID(accountID string) (*CachedToken, error) {
 
 // RefreshAccountToken forces a refresh for a specific account
 func (m *Manager) RefreshAccountToken(accountID string) error {
+	// Manual refresh has top priority by product design.
+	// It is allowed to reactivate an inactive account after successful token refresh.
 	m.refreshToken(accountID)
 
 	// Verify refresh success
@@ -244,15 +253,7 @@ func (m *Manager) refreshToken(accountID string) {
 		return
 	}
 
-	// Use OAuth2 token source for refresh
-	token := &oauth2.Token{
-		RefreshToken: account.RefreshToken,
-	}
-
-	config := google.GetOAuthConfig("")
-	tokenSource := config.TokenSource(context.Background(), token)
-
-	newToken, err := tokenSource.Token()
+	newToken, err := refreshOAuthToken(account.RefreshToken)
 	if err != nil {
 		log.Printf("❌ Refresh token failed for %s: %v", account.Email, err)
 

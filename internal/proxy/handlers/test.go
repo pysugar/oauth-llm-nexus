@@ -21,11 +21,12 @@ import (
 )
 
 const (
-	testEndpointOpenAIChat      = "openai_chat"
-	testEndpointOpenAIResponses = "openai_responses"
-	testEndpointAnthropic       = "anthropic_messages"
-	testEndpointGenAIGenerate   = "genai_generate"
-	testEndpointVertexGenerate  = "vertex_generate"
+	testEndpointOpenAIChat       = "openai_chat"
+	testEndpointOpenAIResponses  = "openai_responses"
+	testEndpointAnthropic        = "anthropic_messages"
+	testEndpointGenAIGenerate    = "genai_generate"
+	testEndpointVertexGenerate   = "vertex_generate"
+	testEndpointAIStudioGenerate = "gemini_api_generate"
 )
 
 // EndpointTestResult is the normalized response for /api/test.
@@ -185,7 +186,7 @@ func executeEndpointTest(endpoint string, database *gorm.DB, tokenMgr *token.Man
 		if GeminiCompatProvider == nil || !GeminiCompatProvider.IsEnabled() {
 			return EndpointTestResult{
 				Endpoint:    endpoint,
-				Path:        "/v1beta/models/gemini-3-flash-preview:generateContent",
+				Path:        "/v1/publishers/google/models/gemini-3-flash-preview:streamGenerateContent",
 				Model:       "gemini-3-flash-preview",
 				Provider:    "vertex",
 				MappedModel: "gemini-3-flash-preview",
@@ -194,7 +195,7 @@ func executeEndpointTest(endpoint string, database *gorm.DB, tokenMgr *token.Man
 				ContentType: "application/json",
 				Skipped:     true,
 				Reason:      "gemini_compat_disabled",
-				Summary:     "Skipped because Gemini compatibility proxy is disabled",
+				Summary:     "Skipped because Vertex AI proxy is disabled",
 				Snippet:     "",
 			}, nil
 		}
@@ -211,14 +212,54 @@ func executeEndpointTest(endpoint string, database *gorm.DB, tokenMgr *token.Man
 		}
 		return runHandlerProbe(
 			endpoint,
-			"/v1beta/models/gemini-3-flash-preview:generateContent",
+			"/v1/publishers/google/models/gemini-3-flash-preview:streamGenerateContent",
 			"gemini-3-flash-preview",
 			"vertex",
 			"gemini-3-flash-preview",
 			GeminiCompatProxyHandler(),
 			payload,
 			nil,
-			false,
+			true,
+		), nil
+
+	case testEndpointAIStudioGenerate:
+		if GeminiAIStudioProvider == nil || !GeminiAIStudioProvider.IsEnabled() {
+			return EndpointTestResult{
+				Endpoint:    endpoint,
+				Path:        "/v1beta/models/gemini-3-flash-preview:streamGenerateContent",
+				Model:       "gemini-3-flash-preview",
+				Provider:    "gemini_api",
+				MappedModel: "gemini-3-flash-preview",
+				StatusCode:  http.StatusOK,
+				DurationMS:  0,
+				ContentType: "application/json",
+				Skipped:     true,
+				Reason:      "gemini_api_proxy_disabled",
+				Summary:     "Skipped because Gemini API proxy is disabled",
+				Snippet:     "",
+			}, nil
+		}
+
+		payload := map[string]interface{}{
+			"contents": []map[string]interface{}{
+				{
+					"role": "user",
+					"parts": []map[string]interface{}{
+						{"text": "Say hello in one short sentence."},
+					},
+				},
+			},
+		}
+		return runHandlerProbe(
+			endpoint,
+			"/v1beta/models/gemini-3-flash-preview:streamGenerateContent",
+			"gemini-3-flash-preview",
+			"gemini_api",
+			"gemini-3-flash-preview",
+			GeminiAIStudioProxyHandler(),
+			payload,
+			nil,
+			true,
 		), nil
 
 	default:

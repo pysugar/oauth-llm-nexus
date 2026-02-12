@@ -26,25 +26,25 @@ func TestParseGeminiCompatModelAction(t *testing.T) {
 		ok     bool
 	}{
 		{
-			path:   "/v1beta/models/gemini-2.5-flash-lite:generateContent",
+			path:   "/v1/publishers/google/models/gemini-2.5-flash-lite:generateContent",
 			model:  "gemini-2.5-flash-lite",
 			action: "generateContent",
 			ok:     true,
 		},
 		{
-			path:   "/v1beta/models/gemini-3-flash-preview:streamGenerateContent",
+			path:   "/v1/publishers/google/models/gemini-3-flash-preview:streamGenerateContent",
 			model:  "gemini-3-flash-preview",
 			action: "streamGenerateContent",
 			ok:     true,
 		},
 		{
-			path:   "/v1beta/models/google/gemini-3-pro-preview:countTokens",
+			path:   "/v1/publishers/google/models/google/gemini-3-pro-preview:countTokens",
 			model:  "google/gemini-3-pro-preview",
 			action: "countTokens",
 			ok:     true,
 		},
 		{
-			path: "/v1beta/models/gemini-3-flash-preview:files",
+			path: "/v1/publishers/google/models/gemini-3-flash-preview:files",
 			ok:   false,
 		},
 	}
@@ -68,7 +68,7 @@ func TestGeminiCompatProxyHandler_Disabled(t *testing.T) {
 	GeminiCompatProvider = nil
 	defer func() { GeminiCompatProvider = oldProvider }()
 
-	req := httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-2.5-flash-lite:generateContent", nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/publishers/google/models/gemini-2.5-flash-lite:generateContent", nil)
 	w := httptest.NewRecorder()
 	GeminiCompatProxyHandler().ServeHTTP(w, req)
 
@@ -105,7 +105,7 @@ func TestGeminiCompatProxyHandler_Passthrough(t *testing.T) {
 	reqBody := `{"contents":[{"role":"user","parts":[{"text":"hello"}]}]}`
 	req := httptest.NewRequest(
 		http.MethodPost,
-		"/v1beta/models/gemini-2.5-flash-lite:countTokens?key=client-key",
+		"/v1/publishers/google/models/gemini-2.5-flash-lite:countTokens?key=client-key",
 		strings.NewReader(reqBody),
 	)
 	req.Header.Set("Content-Type", "application/json")
@@ -158,7 +158,7 @@ func TestGeminiCompatProxyHandler_StreamProxyMode(t *testing.T) {
 
 	req := httptest.NewRequest(
 		http.MethodPost,
-		"/v1beta/models/gemini-2.5-flash-lite:streamGenerateContent",
+		"/v1/publishers/google/models/gemini-2.5-flash-lite:streamGenerateContent",
 		strings.NewReader(`{"contents":[{"role":"user","parts":[{"text":"hello"}]}]}`),
 	)
 	req.Header.Set("Content-Type", "application/json")

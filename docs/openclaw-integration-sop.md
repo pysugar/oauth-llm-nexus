@@ -1,32 +1,38 @@
-# OpenClaw x Nexus Vertex Proxy Integration SOP
+# OpenClaw x Nexus Gemini Proxy Integration SOP
 
 ## Goal
 
-Use OpenClaw `google` provider without exposing real Vertex API key to OpenClaw.
+Use OpenClaw `google` provider without exposing real Gemini/Vertex API key to OpenClaw.
 
 Architecture:
 
 - OpenClaw (uses `GEMINI_API_KEY` = Nexus API key)
-- Nexus (injects server-side `NEXUS_VERTEX_API_KEY`)
-- Vertex API (`aiplatform.googleapis.com`)
+- Nexus (`/v1beta/models/*` -> Gemini API, `/v1/publishers/google/models/*` -> Vertex AI)
+- Upstream API (`generativelanguage.googleapis.com` or `aiplatform.googleapis.com`)
 
 ## Prerequisites
 
-- Nexus version includes Gemini compatibility proxy endpoints:
-  - `POST /v1beta/models/{model}:generateContent`
-  - `POST /v1beta/models/{model}:streamGenerateContent`
-  - `POST /v1beta/models/{model}:countTokens`
+- Nexus version includes Gemini transparent proxy endpoints:
+  - Gemini API: `GET /v1beta/models`, `POST /v1beta/models/{model}:generateContent`
+  - Vertex AI: `POST /v1/publishers/google/models/{model}:generateContent`
 - OpenClaw installed and running.
 
 ## Step 1: Configure Nexus (server side)
 
-Set environment variables on the machine running Nexus:
+Set environment variables on the machine running Nexus (choose one or both upstreams):
 
 ```bash
+# Vertex upstream (optional)
 export NEXUS_VERTEX_API_KEY="YOUR_REAL_VERTEX_KEY"
-# Optional:
 # export NEXUS_VERTEX_BASE_URL="https://aiplatform.googleapis.com"
 # export NEXUS_VERTEX_PROXY_TIMEOUT="5m"
+
+# Gemini API upstream (recommended for /v1beta/models/*)
+export NEXUS_GEMINI_API_KEY="YOUR_REAL_GEMINI_KEY"
+# or fallback:
+# export GEMINI_API_KEY="YOUR_REAL_GEMINI_KEY"
+# export NEXUS_GEMINI_BASE_URL="https://generativelanguage.googleapis.com"
+# export NEXUS_GEMINI_PROXY_TIMEOUT="5m"
 ```
 
 Start Nexus:
@@ -36,9 +42,10 @@ cd /opt/vault/projects/2026-acp/oauth-llm-nexus
 go run ./cmd/nexus
 ```
 
-Expected startup log:
+Expected startup logs:
 
-- `Gemini compatibility proxy enabled (/v1beta/models/*)`
+- `Gemini API proxy enabled (/v1beta/models/*)`
+- `Vertex AI proxy enabled (/v1/publishers/google/models/*)` (if Vertex key is set)
 
 ## Step 2: Get Nexus API key (client side secret for OpenClaw)
 
@@ -53,7 +60,17 @@ This key is what OpenClaw should use as `GEMINI_API_KEY`.
 ```bash
 NEXUS_KEY="sk-xxxx"
 
-curl "http://127.0.0.1:8080/v1beta/models/gemini-3-flash-preview:streamGenerateContent" \
+# Gemini API transparent proxy
+curl "http://127.0.0.1:8080/v1beta/models/gemini-2.5-flash:generateContent" \
+  -X POST \
+  -H "Authorization: Bearer ${NEXUS_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "contents":[{"role":"user","parts":[{"text":"Explain how AI works in a few words"}]}]
+  }'
+
+# Vertex transparent proxy
+curl "http://127.0.0.1:8080/v1/publishers/google/models/gemini-3-flash-preview:streamGenerateContent" \
   -X POST \
   -H "Authorization: Bearer ${NEXUS_KEY}" \
   -H "Content-Type: application/json" \
@@ -62,7 +79,7 @@ curl "http://127.0.0.1:8080/v1beta/models/gemini-3-flash-preview:streamGenerateC
   }'
 ```
 
-If this works, proxy path/auth is ready.
+If these work, proxy path/auth is ready.
 
 ## Step 4: Configure OpenClaw to use Nexus
 
@@ -130,8 +147,13 @@ Run one real query in OpenClaw and confirm Nexus receives `/v1beta/models/*` tra
 
 ### 404 on `/v1beta/models/...`
 
+- `NEXUS_GEMINI_API_KEY` and `GEMINI_API_KEY` are both missing.
+- Gemini API endpoint is auto-disabled when neither key exists.
+
+### 404 on `/v1/publishers/google/models/...`
+
 - `NEXUS_VERTEX_API_KEY` missing on Nexus process.
-- Endpoint is auto-disabled when this variable is empty.
+- Vertex endpoint is auto-disabled when this variable is empty.
 
 ### OpenClaw still calls Google directly
 
@@ -141,6 +163,6 @@ Run one real query in OpenClaw and confirm Nexus receives `/v1beta/models/*` tra
 
 ## Security Checklist
 
-- Real Vertex key exists only on Nexus host (`NEXUS_VERTEX_API_KEY`).
+- Real upstream keys only exist on Nexus host (`NEXUS_VERTEX_API_KEY`, `NEXUS_GEMINI_API_KEY`/`GEMINI_API_KEY`).
 - OpenClaw only holds Nexus key (`GEMINI_API_KEY` = Nexus API key).
 - Do not commit any real keys in config files.

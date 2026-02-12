@@ -257,12 +257,16 @@ func maskAPIKey(apiKey string) string {
 func SupportStatusHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		vertexEnabled := GeminiCompatProvider != nil && GeminiCompatProvider.IsEnabled()
+		aiStudioEnabled := GeminiAIStudioProvider != nil && GeminiAIStudioProvider.IsEnabled()
 		codexEnabled := CodexProvider != nil
 
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"codex_enabled":               codexEnabled,
-			"gemini_vertex_proxy_enabled": vertexEnabled,
+			"codex_enabled":                 codexEnabled,
+			"vertex_ai_proxy_enabled":       vertexEnabled,
+			"gemini_api_proxy_enabled":      aiStudioEnabled,
+			"gemini_vertex_proxy_enabled":   vertexEnabled, // Backward compatibility
+			"gemini_aistudio_proxy_enabled": aiStudioEnabled,
 		})
 	}
 }
@@ -311,7 +315,8 @@ var dashboardHTML = `<!DOCTYPE html>
                 <h3 class="text-sm font-semibold text-gray-400">🔌 API Endpoints</h3>
                 <div class="flex flex-wrap items-center gap-2 text-xs">
                     <span id="support-codex" class="px-2 py-1 rounded bg-gray-700 text-gray-300">Codex: Unknown</span>
-                    <span id="support-vertex" class="px-2 py-1 rounded bg-gray-700 text-gray-300">Gemini Vertex Proxy: Unknown</span>
+                    <span id="support-vertex" class="px-2 py-1 rounded bg-gray-700 text-gray-300">Vertex AI Proxy: Unknown</span>
+                    <span id="support-aistudio" class="px-2 py-1 rounded bg-gray-700 text-gray-300">Gemini API Proxy: Unknown</span>
                 </div>
             </div>
             <div class="overflow-x-auto">
@@ -658,12 +663,14 @@ var dashboardHTML = `<!DOCTYPE html>
             { id: 'openai_responses', protocol: 'OpenAI', path: '/v1/responses', model: 'gpt-5.2', supportKey: null },
             { id: 'anthropic_messages', protocol: 'Anthropic', path: '/anthropic/v1/messages', model: 'claude-sonnet-4-5', supportKey: null },
             { id: 'genai_generate', protocol: 'GenAI', path: '/genai/v1beta/models/{model}:generateContent', model: 'gemini-3-flash', supportKey: null },
-            { id: 'vertex_generate', protocol: 'Gemini Compat', path: '/v1beta/models/{model}:generateContent', model: 'gemini-3-flash-preview', supportKey: 'gemini_vertex_proxy_enabled' }
+            { id: 'vertex_generate', protocol: 'Vertex AI', path: '/v1/publishers/google/models/{model}:streamGenerateContent', model: 'gemini-3-flash-preview', supportKey: 'vertex_ai_proxy_enabled' },
+            { id: 'gemini_api_generate', protocol: 'Gemini API', path: '/v1beta/models/{model}:streamGenerateContent', model: 'gemini-3-flash-preview', supportKey: 'gemini_api_proxy_enabled' }
         ];
 
         let supportStatus = {
             codex_enabled: false,
-            gemini_vertex_proxy_enabled: false
+            vertex_ai_proxy_enabled: false,
+            gemini_api_proxy_enabled: false
         };
 
         function supportChip(enabled, yesText = 'Enabled', noText = 'Disabled') {
@@ -708,7 +715,8 @@ var dashboardHTML = `<!DOCTYPE html>
                     const data = await res.json();
                     supportStatus = {
                         codex_enabled: !!data.codex_enabled,
-                        gemini_vertex_proxy_enabled: !!data.gemini_vertex_proxy_enabled
+                        vertex_ai_proxy_enabled: !!(data.vertex_ai_proxy_enabled ?? data.gemini_vertex_proxy_enabled),
+                        gemini_api_proxy_enabled: !!(data.gemini_api_proxy_enabled ?? data.gemini_aistudio_proxy_enabled)
                     };
                 }
             } catch (e) {
@@ -717,6 +725,7 @@ var dashboardHTML = `<!DOCTYPE html>
 
             const codexBadge = document.getElementById('support-codex');
             const vertexBadge = document.getElementById('support-vertex');
+            const aiStudioBadge = document.getElementById('support-aistudio');
             if (codexBadge) {
                 codexBadge.className = supportStatus.codex_enabled
                     ? 'px-2 py-1 rounded bg-green-500/20 text-green-400'
@@ -724,10 +733,16 @@ var dashboardHTML = `<!DOCTYPE html>
                 codexBadge.textContent = 'Codex: ' + (supportStatus.codex_enabled ? 'Enabled' : 'Disabled');
             }
             if (vertexBadge) {
-                vertexBadge.className = supportStatus.gemini_vertex_proxy_enabled
+                vertexBadge.className = supportStatus.vertex_ai_proxy_enabled
                     ? 'px-2 py-1 rounded bg-green-500/20 text-green-400'
                     : 'px-2 py-1 rounded bg-red-500/20 text-red-300';
-                vertexBadge.textContent = 'Gemini Vertex Proxy: ' + (supportStatus.gemini_vertex_proxy_enabled ? 'Enabled' : 'Disabled');
+                vertexBadge.textContent = 'Vertex AI Proxy: ' + (supportStatus.vertex_ai_proxy_enabled ? 'Enabled' : 'Disabled');
+            }
+            if (aiStudioBadge) {
+                aiStudioBadge.className = supportStatus.gemini_api_proxy_enabled
+                    ? 'px-2 py-1 rounded bg-green-500/20 text-green-400'
+                    : 'px-2 py-1 rounded bg-red-500/20 text-red-300';
+                aiStudioBadge.textContent = 'Gemini API Proxy: ' + (supportStatus.gemini_api_proxy_enabled ? 'Enabled' : 'Disabled');
             }
 
             renderEndpointTests();

@@ -12,7 +12,8 @@
     -   **OpenAI 兼容**：`/v1/chat/completions`、`/v1/responses`（支持 Cursor、Open WebUI 等）
     -   **Anthropic 兼容**：`/anthropic/v1/messages`（支持 Claude Code、Aider 等）
     -   **Google GenAI 兼容**：`/genai/v1beta/models`（支持官方 Google SDK）
-    -   **Gemini API-Key 兼容（OpenClaw）**：`/v1beta/models/*`，透明转发到 Vertex
+    -   **Vertex AI 透明代理**：`/v1/publishers/google/models/*`（服务端注入 Vertex key）
+    -   **Gemini API 透明代理**：`/v1beta/models/*`（服务端注入 Gemini key）
     -   **Codex 适配（provider=codex）**：对外提供 OpenAI 风格 `/v1/chat/completions` 与 `/v1/responses`，采用 stream-first 策略
 -   **智能模型映射**：通过 Dashboard 配置客户端模型名到后端模型的路由。
 -   **账号池管理**：链接多个 Google 账号以池化配额，提升限制。
@@ -119,9 +120,13 @@ docker-compose up -d
 | `NEXUS_ADMIN_PASSWORD` | - | 可选密码，用于保护 Dashboard 和 API 端点 |
 | `NEXUS_VERBOSE` | - | 设置为 `1` 或 `true` 启用详细的请求/响应日志 |
 | `NEXUS_ANTIGRAVITY_USER_AGENT` | `antigravity/1.15.8 windows/amd64` | 覆盖上游 Antigravity User-Agent |
-| `NEXUS_VERTEX_API_KEY` | - | 启用 Gemini 兼容 Vertex 透明代理（`/v1beta/models/*`） |
+| `NEXUS_VERTEX_API_KEY` | - | 启用 Vertex 透明代理（`/v1/publishers/google/models/*`） |
 | `NEXUS_VERTEX_BASE_URL` | `https://aiplatform.googleapis.com` | Vertex 上游基地址覆盖 |
 | `NEXUS_VERTEX_PROXY_TIMEOUT` | `5m` | Vertex 兼容代理上游超时 |
+| `NEXUS_GEMINI_API_KEY` | - | Gemini API 透明代理首选 key（`/v1beta/models/*`） |
+| `GEMINI_API_KEY` | - | 当 `NEXUS_GEMINI_API_KEY` 未设置时，作为 Gemini API 透明代理回退 key |
+| `NEXUS_GEMINI_BASE_URL` | `https://generativelanguage.googleapis.com` | Gemini API 上游基地址覆盖 |
+| `NEXUS_GEMINI_PROXY_TIMEOUT` | `5m` | Gemini API 透明代理上游超时 |
 
 **示例：带密码保护的局域网共享**
 ```bash
@@ -250,7 +255,7 @@ print(response.text)
 **OpenClaw（通过 Nexus 使用 google provider）**：
 ```bash
 # OpenClaw 运行环境：
-# GEMINI_API_KEY 需要填写 Nexus API key（sk-...），不是 Vertex 真正 key
+# GEMINI_API_KEY 需要填写 Nexus API key（sk-...），不是真实上游 Gemini/Vertex key
 export GEMINI_API_KEY="sk-your-nexus-key"
 
 # OpenClaw 配置中：
@@ -379,9 +384,16 @@ brew services restart oauth-llm-nexus
 | `POST /genai/v1beta/models/{model}:generateContent` | GenAI | 生成内容 |
 | `POST /genai/v1beta/models/{model}:streamGenerateContent` | GenAI | 流式生成内容 |
 | `GET /genai/v1beta/models` | GenAI | 列出可用模型 |
-| `POST /v1beta/models/{model}:generateContent` | Gemini Compat | 透明代理到 Vertex `generateContent` |
-| `POST /v1beta/models/{model}:streamGenerateContent` | Gemini Compat | 透明代理到 Vertex `streamGenerateContent` |
-| `POST /v1beta/models/{model}:countTokens` | Gemini Compat | 透明代理到 Vertex `countTokens` |
+| `POST /v1/publishers/google/models/{model}:generateContent` | Vertex AI | 透明代理到 Vertex `generateContent` |
+| `POST /v1/publishers/google/models/{model}:streamGenerateContent` | Vertex AI | 透明代理到 Vertex `streamGenerateContent` |
+| `POST /v1/publishers/google/models/{model}:countTokens` | Vertex AI | 透明代理到 Vertex `countTokens` |
+| `GET /v1beta/models` | Gemini API | 列出 Gemini API 模型 |
+| `GET /v1beta/models/{model}` | Gemini API | 获取 Gemini API 模型详情 |
+| `POST /v1beta/models/{model}:generateContent` | Gemini API | 生成内容 |
+| `POST /v1beta/models/{model}:streamGenerateContent` | Gemini API | 流式生成内容 |
+| `POST /v1beta/models/{model}:countTokens` | Gemini API | 计算 token |
+| `POST /v1beta/models/{model}:embedContent` | Gemini API | 单条向量嵌入 |
+| `POST /v1beta/models/{model}:batchEmbedContents` | Gemini API | 批量向量嵌入 |
 | `GET /api/accounts` | 内部 | 列出已链接账号 |
 | `GET /api/model-routes` | 内部 | 列出模型路由 |
 | `GET /monitor` | 内部 | 请求监控面板 |

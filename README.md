@@ -12,7 +12,8 @@
     -   **OpenAI Compatible**: `/v1/chat/completions`, `/v1/responses` (Works with Cursor, Open WebUI, etc.)
     -   **Anthropic Compatible**: `/anthropic/v1/messages` (Works with Claude Code, Aider, etc.)
     -   **Google GenAI Compatible**: `/genai/v1beta/models` (Works with official Google SDKs)
-    -   **Gemini API-Key Compatibility (OpenClaw)**: `/v1beta/models/*` with transparent Vertex upstream proxy
+    -   **Vertex AI Transparent Proxy**: `/v1/publishers/google/models/*` (server-side Vertex key injection)
+    -   **Gemini API Transparent Proxy**: `/v1beta/models/*` (server-side Gemini key injection)
     -   **Codex Adapter (provider=codex)**: OpenAI-facing `/v1/chat/completions` and `/v1/responses` with stream-first behavior
 -   **Smart Model Mapping**: Configurable routing from client model names to backend models via Dashboard.
 -   **Account Pool Management**: Link multiple Google accounts to pool quotas and increase limits.
@@ -119,9 +120,13 @@ The server will start on `127.0.0.1:8080` by default (or `:8086` in release mode
 | `NEXUS_ADMIN_PASSWORD` | - | Optional password to protect Dashboard and API endpoints |
 | `NEXUS_VERBOSE` | - | Set to `1` or `true` to enable detailed request/response logging |
 | `NEXUS_ANTIGRAVITY_USER_AGENT` | `antigravity/1.15.8 windows/amd64` | Override upstream Antigravity user agent |
-| `NEXUS_VERTEX_API_KEY` | - | Enable transparent Gemini-compatible Vertex proxy (`/v1beta/models/*`) |
+| `NEXUS_VERTEX_API_KEY` | - | Enable Vertex transparent proxy (`/v1/publishers/google/models/*`) |
 | `NEXUS_VERTEX_BASE_URL` | `https://aiplatform.googleapis.com` | Vertex upstream base URL override |
 | `NEXUS_VERTEX_PROXY_TIMEOUT` | `5m` | Upstream timeout for Vertex compatibility proxy |
+| `NEXUS_GEMINI_API_KEY` | - | Preferred key for Gemini API transparent proxy (`/v1beta/models/*`) |
+| `GEMINI_API_KEY` | - | Fallback key for Gemini API transparent proxy when `NEXUS_GEMINI_API_KEY` is unset |
+| `NEXUS_GEMINI_BASE_URL` | `https://generativelanguage.googleapis.com` | Gemini API upstream base URL override |
+| `NEXUS_GEMINI_PROXY_TIMEOUT` | `5m` | Upstream timeout for Gemini API transparent proxy |
 
 **Example: LAN Access with Password Protection**
 ```bash
@@ -250,7 +255,7 @@ print(response.text)
 **OpenClaw (google provider via Nexus proxy)**:
 ```bash
 # In OpenClaw runtime env:
-# GEMINI_API_KEY must be Nexus API key (sk-...), not real Vertex key
+# GEMINI_API_KEY must be Nexus API key (sk-...), not real upstream Gemini/Vertex key
 export GEMINI_API_KEY="sk-your-nexus-key"
 
 # In OpenClaw config:
@@ -379,9 +384,16 @@ If you're running in an air-gapped or firewall-restricted environment:
 | `POST /genai/v1beta/models/{model}:generateContent` | GenAI | Generate content |
 | `POST /genai/v1beta/models/{model}:streamGenerateContent` | GenAI | Generate content (streaming) |
 | `GET /genai/v1beta/models` | GenAI | List available models |
-| `POST /v1beta/models/{model}:generateContent` | Gemini Compat | Transparent proxy to Vertex `generateContent` |
-| `POST /v1beta/models/{model}:streamGenerateContent` | Gemini Compat | Transparent proxy to Vertex `streamGenerateContent` |
-| `POST /v1beta/models/{model}:countTokens` | Gemini Compat | Transparent proxy to Vertex `countTokens` |
+| `POST /v1/publishers/google/models/{model}:generateContent` | Vertex AI | Transparent proxy to Vertex `generateContent` |
+| `POST /v1/publishers/google/models/{model}:streamGenerateContent` | Vertex AI | Transparent proxy to Vertex `streamGenerateContent` |
+| `POST /v1/publishers/google/models/{model}:countTokens` | Vertex AI | Transparent proxy to Vertex `countTokens` |
+| `GET /v1beta/models` | Gemini API | List Gemini API models |
+| `GET /v1beta/models/{model}` | Gemini API | Get Gemini API model metadata |
+| `POST /v1beta/models/{model}:generateContent` | Gemini API | Generate content |
+| `POST /v1beta/models/{model}:streamGenerateContent` | Gemini API | Generate content (streaming) |
+| `POST /v1beta/models/{model}:countTokens` | Gemini API | Count tokens |
+| `POST /v1beta/models/{model}:embedContent` | Gemini API | Single embedding |
+| `POST /v1beta/models/{model}:batchEmbedContents` | Gemini API | Batch embeddings |
 | `GET /api/accounts` | Internal | List linked accounts |
 | `GET /api/model-routes` | Internal | List model routes |
 | `GET /monitor` | Internal | Request monitor dashboard |
