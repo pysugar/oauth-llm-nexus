@@ -96,6 +96,9 @@ func OpenAIChatHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client)
 				handleOpenAINonStreaming(w, upstreamClient, cachedToken.AccessToken, payload, req.Model, requestId)
 			}
 		default:
+			if forwardOpenAICompatChat(w, r, provider, bodyBytes, targetModel, requestId) {
+				return
+			}
 			writeOpenAIError(w, "Unsupported provider for OpenAI protocol: "+provider, http.StatusUnprocessableEntity)
 			return
 		}

@@ -14,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/pysugar/oauth-llm-nexus/internal/auth/token"
 	"github.com/pysugar/oauth-llm-nexus/internal/db/models"
+	"github.com/pysugar/oauth-llm-nexus/internal/providers/catalog"
 	"github.com/pysugar/oauth-llm-nexus/internal/upstream"
 	"gorm.io/gorm"
 )
@@ -259,12 +260,22 @@ func SupportStatusHandler() http.HandlerFunc {
 		vertexEnabled := VertexAIStudioProvider != nil && VertexAIStudioProvider.IsEnabled()
 		aiStudioEnabled := GeminiAIStudioProvider != nil && GeminiAIStudioProvider.IsEnabled()
 		codexEnabled := CodexProvider != nil
+		openrouterEnabled := false
+		nvidiaEnabled := false
+		if provider, ok := catalog.GetProvider("openrouter"); ok {
+			openrouterEnabled = provider.Enabled && provider.RuntimeEnabled
+		}
+		if provider, ok := catalog.GetProvider("nvidia"); ok {
+			nvidiaEnabled = provider.Enabled && provider.RuntimeEnabled
+		}
 
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"codex_enabled":                 codexEnabled,
 			"vertex_ai_proxy_enabled":       vertexEnabled,
 			"gemini_api_proxy_enabled":      aiStudioEnabled,
+			"openrouter_proxy_enabled":      openrouterEnabled,
+			"nvidia_proxy_enabled":          nvidiaEnabled,
 			"gemini_vertex_proxy_enabled":   vertexEnabled, // Backward compatibility
 			"gemini_aistudio_proxy_enabled": aiStudioEnabled,
 		})
@@ -298,7 +309,7 @@ var dashboardHTML = `<!DOCTYPE html>
     </style>
 </head>
 <body class="bg-gray-900 text-gray-100 min-h-screen">
-    <div class="container mx-auto px-4 py-6 max-w-6xl">
+    <div class="container mx-auto px-4 py-6 max-w-[96rem]">
         <header class="mb-6 flex justify-between items-center">
             <div>
                 <h1 class="text-2xl font-bold text-white flex items-center gap-2">
@@ -317,6 +328,8 @@ var dashboardHTML = `<!DOCTYPE html>
                     <span id="support-codex" class="px-2 py-1 rounded bg-gray-700 text-gray-300">Codex: Unknown</span>
                     <span id="support-vertex" class="px-2 py-1 rounded bg-gray-700 text-gray-300">Vertex AI Proxy: Unknown</span>
                     <span id="support-aistudio" class="px-2 py-1 rounded bg-gray-700 text-gray-300">Gemini API Proxy: Unknown</span>
+                    <span id="support-openrouter" class="px-2 py-1 rounded bg-gray-700 text-gray-300">OpenRouter Proxy: Unknown</span>
+                    <span id="support-nvidia" class="px-2 py-1 rounded bg-gray-700 text-gray-300">NVIDIA Proxy: Unknown</span>
                 </div>
             </div>
             <div class="overflow-x-auto">
@@ -662,13 +675,17 @@ var dashboardHTML = `<!DOCTYPE html>
             { id: 'anthropic_messages', protocol: 'Anthropic', path: '/anthropic/v1/messages', model: 'claude-sonnet-4-5', supportKey: null },
             { id: 'genai_generate', protocol: 'GenAI', path: '/genai/v1beta/models/{model}:generateContent', model: 'gemini-3-flash', supportKey: null },
             { id: 'vertex_generate', protocol: 'Vertex AI', path: '/v1/publishers/google/models/{model}:streamGenerateContent', model: 'gemini-3-flash-preview', supportKey: 'vertex_ai_proxy_enabled' },
-            { id: 'gemini_api_generate', protocol: 'Gemini API', path: '/v1beta/models/{model}:streamGenerateContent', model: 'gemini-3-flash-preview', supportKey: 'gemini_api_proxy_enabled' }
+            { id: 'gemini_api_generate', protocol: 'Gemini API', path: '/v1beta/models/{model}:streamGenerateContent', model: 'gemini-3-flash-preview', supportKey: 'gemini_api_proxy_enabled' },
+            { id: 'openrouter_generate', protocol: 'OpenRouter', path: '/openrouter/v1/chat/completions', model: 'openrouter/free', supportKey: 'openrouter_proxy_enabled' },
+            { id: 'nvidia_generate', protocol: 'NVIDIA', path: '/nvidia/v1/chat/completions', model: 'z-ai/glm4.7', supportKey: 'nvidia_proxy_enabled' }
         ];
 
         let supportStatus = {
             codex_enabled: false,
             vertex_ai_proxy_enabled: false,
-            gemini_api_proxy_enabled: false
+            gemini_api_proxy_enabled: false,
+            openrouter_proxy_enabled: false,
+            nvidia_proxy_enabled: false
         };
 
         function supportChip(enabled, yesText = 'Enabled', noText = 'Disabled') {
@@ -714,7 +731,9 @@ var dashboardHTML = `<!DOCTYPE html>
                     supportStatus = {
                         codex_enabled: !!data.codex_enabled,
                         vertex_ai_proxy_enabled: !!(data.vertex_ai_proxy_enabled ?? data.gemini_vertex_proxy_enabled),
-                        gemini_api_proxy_enabled: !!(data.gemini_api_proxy_enabled ?? data.gemini_aistudio_proxy_enabled)
+                        gemini_api_proxy_enabled: !!(data.gemini_api_proxy_enabled ?? data.gemini_aistudio_proxy_enabled),
+                        openrouter_proxy_enabled: !!data.openrouter_proxy_enabled,
+                        nvidia_proxy_enabled: !!data.nvidia_proxy_enabled
                     };
                 }
             } catch (e) {
@@ -724,6 +743,8 @@ var dashboardHTML = `<!DOCTYPE html>
             const codexBadge = document.getElementById('support-codex');
             const vertexBadge = document.getElementById('support-vertex');
             const aiStudioBadge = document.getElementById('support-aistudio');
+            const openrouterBadge = document.getElementById('support-openrouter');
+            const nvidiaBadge = document.getElementById('support-nvidia');
             if (codexBadge) {
                 codexBadge.className = supportStatus.codex_enabled
                     ? 'px-2 py-1 rounded bg-green-500/20 text-green-400'
@@ -741,6 +762,18 @@ var dashboardHTML = `<!DOCTYPE html>
                     ? 'px-2 py-1 rounded bg-green-500/20 text-green-400'
                     : 'px-2 py-1 rounded bg-red-500/20 text-red-300';
                 aiStudioBadge.textContent = 'Gemini API Proxy: ' + (supportStatus.gemini_api_proxy_enabled ? 'Enabled' : 'Disabled');
+            }
+            if (openrouterBadge) {
+                openrouterBadge.className = supportStatus.openrouter_proxy_enabled
+                    ? 'px-2 py-1 rounded bg-green-500/20 text-green-400'
+                    : 'px-2 py-1 rounded bg-red-500/20 text-red-300';
+                openrouterBadge.textContent = 'OpenRouter Proxy: ' + (supportStatus.openrouter_proxy_enabled ? 'Enabled' : 'Disabled');
+            }
+            if (nvidiaBadge) {
+                nvidiaBadge.className = supportStatus.nvidia_proxy_enabled
+                    ? 'px-2 py-1 rounded bg-green-500/20 text-green-400'
+                    : 'px-2 py-1 rounded bg-red-500/20 text-red-300';
+                nvidiaBadge.textContent = 'NVIDIA Proxy: ' + (supportStatus.nvidia_proxy_enabled ? 'Enabled' : 'Disabled');
             }
 
             renderEndpointTests();
@@ -909,6 +942,10 @@ var dashboardHTML = `<!DOCTYPE html>
                     return 'vertex';
                 case 'codex':
                     return 'codex';
+                case 'openrouter':
+                    return 'openrouter';
+                case 'nvidia':
+                    return 'nvidia';
                 default:
                     return provider;
             }
@@ -919,18 +956,37 @@ var dashboardHTML = `<!DOCTYPE html>
             return providerOptionLabel(normalized);
         }
 
-        function allowedProvidersForClientModel(clientModel) {
+        function fallbackAllowedProvidersForClientModel(clientModel) {
             const model = (clientModel || '').trim().toLowerCase();
-            if (model.startsWith('gpt')) return ['codex', 'google'];
-            if (model.startsWith('gemini')) return ['google', 'gemini', 'vertex'];
-            return ['google'];
+            if (model.startsWith('gpt')) return ['codex', 'google', 'openrouter'];
+            if (model.startsWith('gemini')) return ['google', 'gemini', 'vertex', 'openrouter'];
+            if (model.startsWith('claude')) return ['google', 'openrouter'];
+            return ['google', 'nvidia', 'openrouter'];
         }
 
-        function updateRouteProviderOptions(clientModel, preferredProvider) {
+        async function fetchAllowedProvidersForClientModel(clientModel) {
+            try {
+                const res = await fetch('/api/providers/allowed?client_model=' + encodeURIComponent(clientModel || ''), { cache: 'no-cache' });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (Array.isArray(data.providers) && data.providers.length > 0) {
+                        return data.providers.map(normalizeProviderForUI);
+                    }
+                }
+            } catch (_) {}
+            return fallbackAllowedProvidersForClientModel(clientModel);
+        }
+
+        let routeProviderOptionsRequestSeq = 0;
+
+        async function updateRouteProviderOptions(clientModel, preferredProvider) {
             const select = document.getElementById('route-provider');
             if (!select) return;
 
-            const allowed = allowedProvidersForClientModel(clientModel);
+            const reqSeq = ++routeProviderOptionsRequestSeq;
+            const allowed = await fetchAllowedProvidersForClientModel(clientModel);
+            if (reqSeq !== routeProviderOptionsRequestSeq) return;
+
             const normalizedPreferred = normalizeProviderForUI(preferredProvider);
             const selected = allowed.includes(normalizedPreferred) ? normalizedPreferred : allowed[0];
 
@@ -946,13 +1002,13 @@ var dashboardHTML = `<!DOCTYPE html>
             });
         }
 
-        function refreshRouteProviderOptions(preferredProvider) {
+        async function refreshRouteProviderOptions(preferredProvider) {
             const clientInput = document.getElementById('route-client');
             const providerSelect = document.getElementById('route-provider');
             const currentProvider = (preferredProvider !== undefined)
                 ? preferredProvider
                 : (providerSelect ? providerSelect.value : 'google');
-            updateRouteProviderOptions(clientInput ? clientInput.value : '', currentProvider);
+            await updateRouteProviderOptions(clientInput ? clientInput.value : '', currentProvider);
         }
 
         function initRouteProviderPolicyBindings() {

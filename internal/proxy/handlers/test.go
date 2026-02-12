@@ -15,6 +15,7 @@ import (
 	"github.com/pysugar/oauth-llm-nexus/internal/auth/token"
 	"github.com/pysugar/oauth-llm-nexus/internal/db"
 	"github.com/pysugar/oauth-llm-nexus/internal/db/models"
+	"github.com/pysugar/oauth-llm-nexus/internal/providers/catalog"
 	"github.com/pysugar/oauth-llm-nexus/internal/proxy/monitor"
 	"github.com/pysugar/oauth-llm-nexus/internal/upstream"
 	"gorm.io/gorm"
@@ -27,6 +28,8 @@ const (
 	testEndpointGenAIGenerate    = "genai_generate"
 	testEndpointVertexGenerate   = "vertex_generate"
 	testEndpointAIStudioGenerate = "gemini_api_generate"
+	testEndpointOpenRouterChat   = "openrouter_generate"
+	testEndpointNVIDIAChat       = "nvidia_generate"
 )
 
 // EndpointTestResult is the normalized response for /api/test.
@@ -266,9 +269,64 @@ func executeEndpointTest(endpoint string, database *gorm.DB, tokenMgr *token.Man
 			true,
 		), nil
 
+	case testEndpointOpenRouterChat:
+		return runOpenAICompatEndpointProbe(
+			endpoint,
+			"openrouter",
+			"/openrouter/v1/chat/completions",
+			"openrouter/free",
+		), nil
+
+	case testEndpointNVIDIAChat:
+		return runOpenAICompatEndpointProbe(
+			endpoint,
+			"nvidia",
+			"/nvidia/v1/chat/completions",
+			"z-ai/glm4.7",
+		), nil
+
 	default:
 		return EndpointTestResult{}, fmt.Errorf("Unsupported endpoint: %s", endpoint)
 	}
+}
+
+func runOpenAICompatEndpointProbe(endpoint string, provider string, path string, model string) EndpointTestResult {
+	info, ok := catalog.GetProvider(provider)
+	if !ok || !info.Enabled || !info.RuntimeEnabled {
+		return EndpointTestResult{
+			Endpoint:    endpoint,
+			Path:        path,
+			Model:       model,
+			Provider:    provider,
+			MappedModel: model,
+			StatusCode:  http.StatusOK,
+			DurationMS:  0,
+			ContentType: "application/json",
+			Skipped:     true,
+			Reason:      provider + "_proxy_disabled",
+			Summary:     "Skipped because " + provider + " proxy is disabled",
+			Snippet:     "",
+		}
+	}
+
+	payload := map[string]interface{}{
+		"model": model,
+		"messages": []map[string]interface{}{
+			{"role": "user", "content": "Say hello in one short sentence."},
+		},
+		"stream": false,
+	}
+	return runHandlerProbe(
+		endpoint,
+		path,
+		model,
+		provider,
+		model,
+		OpenAICompatChatProxyHandler(),
+		payload,
+		map[string]string{"provider": provider},
+		false,
+	)
 }
 
 func runHandlerProbe(

@@ -546,6 +546,10 @@ func OpenAIResponsesHandler(database *gorm.DB, tokenMgr *token.Manager, upstream
 			handleCodexResponsesPassthrough(w, bodyBytes, targetModel, requestId)
 			return
 		}
+		if provider != "google" {
+			writeOpenAIError(w, "Provider "+provider+" does not support /v1/responses in this release", http.StatusUnprocessableEntity)
+			return
+		}
 
 		// Google Cloud Code flow (existing behavior)
 		// 2. Convert to Chat Completions format

@@ -10,6 +10,7 @@ import (
 	"github.com/pysugar/oauth-llm-nexus/internal/auth/google"
 	"github.com/pysugar/oauth-llm-nexus/internal/auth/token"
 	"github.com/pysugar/oauth-llm-nexus/internal/db"
+	"github.com/pysugar/oauth-llm-nexus/internal/providers/catalog"
 	"github.com/pysugar/oauth-llm-nexus/internal/proxy/handlers"
 	"github.com/pysugar/oauth-llm-nexus/internal/proxy/middleware"
 	"github.com/pysugar/oauth-llm-nexus/internal/proxy/monitor"
@@ -42,6 +43,13 @@ func main() {
 		log.Printf("⚠️ Codex provider not available: %v", err)
 	} else {
 		log.Println("✅ Codex provider initialized")
+	}
+
+	// Initialize OpenAI-compatible provider catalog (configuration + env conventions).
+	if err := catalog.InitFromEnvAndConfig(); err != nil {
+		log.Printf("⚠️ OpenAI-compatible provider catalog loaded with fallback/defaults: %v", err)
+	} else {
+		log.Println("✅ OpenAI-compatible provider catalog initialized")
 	}
 
 	// Initialize Vertex AI key proxy (auto-enabled when NEXUS_VERTEX_API_KEY is set)
@@ -145,6 +153,8 @@ func main() {
 
 		// Version info
 		r.Get("/version", handlers.VersionHandler())
+		r.Get("/providers", handlers.ProvidersHandler())
+		r.Get("/providers/allowed", handlers.AllowedProvidersHandler())
 
 		// Request Monitor
 		r.Get("/request-logs", handlers.GetRequestLogsHandler(proxyMonitor))
@@ -169,6 +179,13 @@ func main() {
 		if vertexAIStudioEnabled {
 			r.Post("/publishers/google/models/*", handlers.VertexAIStudioProxyHandlerWithMonitor(proxyMonitor))
 		}
+	})
+
+	// OpenAI-compatible explicit provider path:
+	// POST /{provider}/v1/chat/completions
+	r.Route("/{provider}/v1", func(r chi.Router) {
+		r.Use(middleware.APIKeyAuth(database))
+		r.Post("/chat/completions", handlers.OpenAICompatChatProxyHandlerWithMonitor(proxyMonitor))
 	})
 
 	// Anthropic-compatible API

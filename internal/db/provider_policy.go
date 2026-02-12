@@ -2,7 +2,10 @@ package db
 
 import (
 	"fmt"
+	"slices"
 	"strings"
+
+	"github.com/pysugar/oauth-llm-nexus/internal/providers/catalog"
 )
 
 type RouteProtocol string
@@ -15,23 +18,29 @@ const (
 
 func AllowedProvidersByClientModel(clientModel string) []string {
 	model := strings.ToLower(strings.TrimSpace(clientModel))
+	var base []string
 
 	switch {
 	case strings.HasPrefix(model, "gpt"):
-		return []string{"codex", "google"}
+		base = []string{"codex", "google"}
 	case strings.HasPrefix(model, "gemini"):
-		return []string{"google", "vertex", "gemini"}
+		base = []string{"google", "vertex", "gemini"}
 	case strings.HasPrefix(model, "claude"):
-		return []string{"google"}
+		base = []string{"google"}
 	default:
-		return []string{"google"}
+		base = []string{"google"}
 	}
+
+	compatProviders := catalog.AllowedProviderIDsForModel(model)
+	return mergeProviders(base, compatProviders)
 }
 
 func AllowedProvidersByProtocol(protocol string) []string {
 	switch strings.ToLower(strings.TrimSpace(protocol)) {
 	case string(ProtocolOpenAI):
-		return []string{"google", "codex"}
+		base := []string{"google", "codex"}
+		compatProviders := catalog.ProviderIDsByCapability(catalog.CapabilityOpenAIChat)
+		return mergeProviders(base, compatProviders)
 	case string(ProtocolGenAI):
 		return []string{"google", "vertex", "gemini"}
 	case string(ProtocolAnthropic):
@@ -89,4 +98,23 @@ func containsProvider(allowed []string, provider string) bool {
 		}
 	}
 	return false
+}
+
+func mergeProviders(base []string, extras []string) []string {
+	result := make([]string, 0, len(base)+len(extras))
+	for _, provider := range base {
+		normalized := NormalizeProvider(provider)
+		if normalized == "" || slices.Contains(result, normalized) {
+			continue
+		}
+		result = append(result, normalized)
+	}
+	for _, provider := range extras {
+		normalized := NormalizeProvider(provider)
+		if normalized == "" || slices.Contains(result, normalized) {
+			continue
+		}
+		result = append(result, normalized)
+	}
+	return result
 }
