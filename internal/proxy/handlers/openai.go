@@ -16,6 +16,7 @@ import (
 	"github.com/pysugar/oauth-llm-nexus/internal/proxy/mappers"
 	"github.com/pysugar/oauth-llm-nexus/internal/proxy/monitor"
 	"github.com/pysugar/oauth-llm-nexus/internal/upstream"
+	"github.com/pysugar/oauth-llm-nexus/internal/upstream/geminikey"
 	"github.com/pysugar/oauth-llm-nexus/internal/util"
 	"gorm.io/gorm"
 )
@@ -94,6 +95,45 @@ func OpenAIChatHandler(tokenMgr *token.Manager, upstreamClient *upstream.Client)
 				handleOpenAIStreaming(w, upstreamClient, cachedToken.AccessToken, payload, req.Model, requestId)
 			} else {
 				handleOpenAINonStreaming(w, upstreamClient, cachedToken.AccessToken, payload, req.Model, requestId)
+			}
+		case "gemini":
+			// Gemini API native OpenAI-compatible endpoint
+			if GeminiAIStudioProvider == nil || !GeminiAIStudioProvider.IsEnabled() {
+				writeOpenAIError(w, "Gemini API proxy is not enabled (missing API key)", http.StatusServiceUnavailable)
+				return
+			}
+
+			// Replace model with resolved target model
+			var payload map[string]interface{}
+			if err := json.Unmarshal(bodyBytes, &payload); err != nil {
+				writeOpenAIError(w, "Invalid request body: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			payload["model"] = targetModel
+			rewrittenBody, err := json.Marshal(payload)
+			if err != nil {
+				writeOpenAIError(w, "Failed to rewrite request body", http.StatusInternalServerError)
+				return
+			}
+
+			log.Printf("🔄 [%s] Forwarding OpenAI request to Gemini native endpoint: model=%s", requestId, targetModel)
+			resp, err := GeminiAIStudioProvider.Forward(
+				r.Context(),
+				http.MethodPost,
+				"/v1beta/openai/chat/completions",
+				r.URL.Query(),
+				r.Header,
+				rewrittenBody,
+			)
+			if err != nil {
+				log.Printf("❌ [%s] Gemini OpenAI compat proxy error: %v", requestId, err)
+				writeOpenAIError(w, "Upstream proxy error: "+err.Error(), http.StatusBadGateway)
+				return
+			}
+			defer resp.Body.Close()
+
+			if err := geminikey.CopyResponse(w, resp); err != nil {
+				log.Printf("❌ [%s] Gemini OpenAI compat response copy error: %v", requestId, err)
 			}
 		default:
 			if forwardOpenAICompatChat(w, r, provider, bodyBytes, targetModel, requestId) {

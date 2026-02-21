@@ -121,6 +121,15 @@ func (p *Provider) Forward(
 
 func normalizeAndValidatePath(method string, requestPath string) (string, error) {
 	cleanPath := pathpkg.Clean("/" + strings.TrimSpace(requestPath))
+
+	// Allow native OpenAI-compatible endpoint (POST only)
+	if cleanPath == "/v1beta/openai/chat/completions" {
+		if method != http.MethodPost {
+			return "", fmt.Errorf("unsupported method for OpenAI compat endpoint: %s", method)
+		}
+		return cleanPath, nil
+	}
+
 	if !strings.HasPrefix(cleanPath, "/v1beta/models") {
 		return "", fmt.Errorf("unsupported endpoint: %s", requestPath)
 	}

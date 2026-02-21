@@ -38,7 +38,7 @@ func AllowedProvidersByClientModel(clientModel string) []string {
 func AllowedProvidersByProtocol(protocol string) []string {
 	switch strings.ToLower(strings.TrimSpace(protocol)) {
 	case string(ProtocolOpenAI):
-		base := []string{"google", "codex"}
+		base := []string{"google", "codex", "gemini"}
 		compatProviders := catalog.ProviderIDsByCapability(catalog.CapabilityOpenAIChat)
 		return mergeProviders(base, compatProviders)
 	case string(ProtocolGenAI):
