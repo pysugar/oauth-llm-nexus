@@ -181,11 +181,17 @@ func main() {
 		}
 	})
 
-	// OpenAI-compatible explicit provider path:
-	// POST /{provider}/v1/chat/completions
-	r.Route("/{provider}/v1", func(r chi.Router) {
+	// Generic transparent proxy for OpenAI-compatible providers: /{provider}/*
+	// The sub-path is forwarded as-is to the provider's upstream (RootURL + subpath).
+	// Fixed top-level routes (/v1, /anthropic, /genai, /v1beta) take priority over this
+	// wildcard because chi matches more-specific (literal) segments first.
+	//
+	// Examples:
+	//   POST /openrouter/v1/chat/completions  → https://openrouter.ai/api/v1/chat/completions
+	//   POST /openrouter/v1/messages          → https://openrouter.ai/api/v1/messages
+	r.Route("/{provider}", func(r chi.Router) {
 		r.Use(middleware.APIKeyAuth(database))
-		r.Post("/chat/completions", handlers.OpenAICompatChatProxyHandlerWithMonitor(proxyMonitor))
+		r.HandleFunc("/*", handlers.GenericCompatProxyHandlerWithMonitor(proxyMonitor))
 	})
 
 	// Anthropic-compatible API

@@ -35,6 +35,7 @@ func TestForwardChatCompletions_InjectsServerAuthAndStaticHeaders(t *testing.T) 
 		"openrouter",
 		"server-key",
 		"https://openrouter.ai/api/v1",
+		"https://openrouter.ai/api",
 		10*time.Second,
 		map[string]string{"HTTP-Referer": "https://example.local"},
 		client,
@@ -71,7 +72,7 @@ func TestForwardChatCompletions_InjectsServerAuthAndStaticHeaders(t *testing.T) 
 }
 
 func TestForwardChatCompletions_RejectsNonPost(t *testing.T) {
-	provider := NewProvider("openrouter", "server-key", "https://example.com/v1", 10*time.Second, nil)
+	provider := NewProvider("openrouter", "server-key", "https://example.com/v1", "https://example.com", 10*time.Second, nil)
 	if _, err := provider.ForwardChatCompletions(context.Background(), http.MethodGet, nil, nil, nil); err == nil {
 		t.Fatal("expected non-post request to be rejected")
 	}

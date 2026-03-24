@@ -19,16 +19,19 @@ type Provider struct {
 	id            string
 	apiKey        string
 	baseURL       string
+	// rootURL is baseURL with the trailing version segment stripped (e.g. https://openrouter.ai/api).
+	// Used by ForwardRequest to forward arbitrary sub-paths transparently.
+	rootURL       string
 	staticHeaders map[string]string
 	httpClient    *http.Client
 }
 
-func NewProvider(id, apiKey, baseURL string, timeout time.Duration, staticHeaders map[string]string) *Provider {
-	return NewProviderWithClient(id, apiKey, baseURL, timeout, staticHeaders, nil)
+func NewProvider(id, apiKey, baseURL, rootURL string, timeout time.Duration, staticHeaders map[string]string) *Provider {
+	return NewProviderWithClient(id, apiKey, baseURL, rootURL, timeout, staticHeaders, nil)
 }
 
 func NewProviderWithClient(
-	id, apiKey, baseURL string,
+	id, apiKey, baseURL, rootURL string,
 	timeout time.Duration,
 	staticHeaders map[string]string,
 	httpClient *http.Client,
@@ -47,6 +50,7 @@ func NewProviderWithClient(
 		id:            strings.ToLower(strings.TrimSpace(id)),
 		apiKey:        strings.TrimSpace(apiKey),
 		baseURL:       strings.TrimRight(strings.TrimSpace(baseURL), "/"),
+		rootURL:       strings.TrimRight(strings.TrimSpace(rootURL), "/"),
 		staticHeaders: headers,
 		httpClient:    httpClient,
 	}
@@ -54,6 +58,58 @@ func NewProviderWithClient(
 
 func (p *Provider) IsEnabled() bool {
 	return p != nil && p.id != "" && p.baseURL != "" && p.apiKey != ""
+}
+
+// ForwardRequest transparently forwards any HTTP request to {rootURL}{subpath}.
+// subpath should begin with "/", e.g. "/v1/messages" or "/v1/chat/completions".
+func (p *Provider) ForwardRequest(
+	ctx context.Context,
+	method string,
+	subpath string,
+	incomingQuery url.Values,
+	incomingHeaders http.Header,
+	body []byte,
+) (*http.Response, error) {
+	if !p.IsEnabled() {
+		return nil, fmt.Errorf("openai compat provider is not enabled")
+	}
+
+	rootBase := p.rootURL
+	if rootBase == "" {
+		// Fallback: use baseURL as-is if rootURL was not set
+		rootBase = p.baseURL
+	}
+
+	target, err := url.Parse(rootBase + subpath)
+	if err != nil {
+		return nil, fmt.Errorf("invalid target URL: %w", err)
+	}
+	if incomingQuery != nil {
+		target.RawQuery = keyproxy.CloneValues(incomingQuery).Encode()
+	}
+
+	var bodyReader *bytes.Reader
+	if len(body) > 0 {
+		bodyReader = bytes.NewReader(body)
+	} else {
+		bodyReader = bytes.NewReader(nil)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, target.String(), bodyReader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build request: %w", err)
+	}
+
+	copyForwardHeaders(req.Header, incomingHeaders)
+	req.Header.Set("Authorization", "Bearer "+p.apiKey)
+	for k, v := range p.staticHeaders {
+		req.Header.Set(k, v)
+	}
+	if strings.TrimSpace(req.Header.Get("Content-Type")) == "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	return p.httpClient.Do(req)
 }
 
 func (p *Provider) ForwardChatCompletions(

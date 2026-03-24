@@ -18,26 +18,39 @@ import (
 	"github.com/pysugar/oauth-llm-nexus/internal/upstream/openaicompat"
 )
 
-type openAICompatForwarder interface {
-	ForwardChatCompletions(
+// genericCompatForwarder is the interface used by the generic transparent proxy.
+type genericCompatForwarder interface {
+	ForwardRequest(
 		ctx context.Context,
 		method string,
+		subpath string,
 		incomingQuery url.Values,
 		incomingHeaders http.Header,
 		body []byte,
 	) (*http.Response, error)
 }
 
-var newOpenAICompatForwarder = func(info catalog.ProviderInfo, apiKey string, timeout time.Duration) openAICompatForwarder {
+// newGenericCompatForwarder is a factory var to allow injection in tests.
+var newGenericCompatForwarder = func(info catalog.ProviderInfo, apiKey string, timeout time.Duration) genericCompatForwarder {
 	return openaicompat.NewProvider(info.ID, apiKey, info.BaseURL, info.RootURL, timeout, info.StaticHeaders)
 }
 
-func OpenAICompatChatProxyHandler() http.HandlerFunc {
+// GenericCompatProxyHandler returns an http.HandlerFunc that transparently forwards
+// any request under /{provider}/* to the configured upstream, replacing only the
+// Authorization header. The sub-path (everything after /{provider}) is appended to
+// the provider's RootURL (BaseURL with version suffix stripped).
+func GenericCompatProxyHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		providerID := strings.ToLower(strings.TrimSpace(chi.URLParam(r, "provider")))
 		if providerID == "" {
 			writeOpenAIError(w, "Missing provider path parameter", http.StatusBadRequest)
 			return
+		}
+
+		// subpath = everything after /{providerID}, e.g. /v1/messages
+		subpath := strings.TrimPrefix(r.URL.Path, "/"+providerID)
+		if subpath == "" {
+			subpath = "/"
 		}
 
 		bodyBytes, err := io.ReadAll(r.Body)
@@ -47,14 +60,15 @@ func OpenAICompatChatProxyHandler() http.HandlerFunc {
 		}
 
 		requestID := GetOrGenerateRequestID(r)
-		if !forwardOpenAICompatChat(w, r, providerID, bodyBytes, "", requestID) {
+		if !forwardGenericCompatRequest(w, r, providerID, subpath, bodyBytes, requestID) {
 			writeOpenAIError(w, "Unknown OpenAI-compatible provider: "+providerID, http.StatusUnprocessableEntity)
 		}
 	}
 }
 
-func OpenAICompatChatProxyHandlerWithMonitor(pm *monitor.ProxyMonitor) http.HandlerFunc {
-	baseHandler := OpenAICompatChatProxyHandler()
+// GenericCompatProxyHandlerWithMonitor wraps GenericCompatProxyHandler with request logging.
+func GenericCompatProxyHandlerWithMonitor(pm *monitor.ProxyMonitor) http.HandlerFunc {
+	baseHandler := GenericCompatProxyHandler()
 	return func(w http.ResponseWriter, r *http.Request) {
 		if pm == nil || !pm.IsEnabled() {
 			baseHandler(w, r)
@@ -67,6 +81,7 @@ func OpenAICompatChatProxyHandlerWithMonitor(pm *monitor.ProxyMonitor) http.Hand
 		bodyBytes, _ := io.ReadAll(r.Body)
 		r.Body = io.NopCloser(strings.NewReader(string(bodyBytes)))
 
+		// Extract model and stream flag – works for both OpenAI and Anthropic request bodies.
 		var req struct {
 			Model  string `json:"model"`
 			Stream bool   `json:"stream"`
@@ -94,31 +109,11 @@ func OpenAICompatChatProxyHandlerWithMonitor(pm *monitor.ProxyMonitor) http.Hand
 		rec := &responseRecorder{ResponseWriter: w, statusCode: http.StatusOK}
 		baseHandler(rec, r)
 
-		var inputTokens, outputTokens int
-		var errorMsg string
+		inputTokens, outputTokens := extractUsageTokens(rec.body.String())
+		errorMsg := ""
 		respBody := rec.body.String()
-		if rec.statusCode >= 200 && rec.statusCode < 400 {
-			var resp struct {
-				Usage struct {
-					PromptTokens     int `json:"prompt_tokens"`
-					CompletionTokens int `json:"completion_tokens"`
-				} `json:"usage"`
-			}
-			if json.Unmarshal([]byte(respBody), &resp) == nil {
-				inputTokens = resp.Usage.PromptTokens
-				outputTokens = resp.Usage.CompletionTokens
-			}
-		} else {
-			var errResp struct {
-				Error struct {
-					Message string `json:"message"`
-				} `json:"error"`
-			}
-			if json.Unmarshal([]byte(respBody), &errResp) == nil && errResp.Error.Message != "" {
-				errorMsg = errResp.Error.Message
-			} else if len(respBody) < 500 {
-				errorMsg = respBody
-			}
+		if rec.statusCode >= 400 {
+			errorMsg = extractErrorMessage(respBody)
 		}
 
 		pm.LogRequest(models.RequestLog{
@@ -138,12 +133,14 @@ func OpenAICompatChatProxyHandlerWithMonitor(pm *monitor.ProxyMonitor) http.Hand
 	}
 }
 
-func forwardOpenAICompatChat(
+// forwardGenericCompatRequest does the actual transparent forwarding.
+// Returns false if the provider is unknown/not registered.
+func forwardGenericCompatRequest(
 	w http.ResponseWriter,
 	r *http.Request,
 	providerID string,
+	subpath string,
 	bodyBytes []byte,
-	modelOverride string,
 	requestID string,
 ) bool {
 	providerID = strings.ToLower(strings.TrimSpace(providerID))
@@ -161,32 +158,58 @@ func forwardOpenAICompatChat(
 		return true
 	}
 
-	payloadBytes := bodyBytes
-	if strings.TrimSpace(modelOverride) != "" {
-		var payload map[string]interface{}
-		if err := json.Unmarshal(bodyBytes, &payload); err != nil {
-			writeOpenAIError(w, "Invalid request body: "+err.Error(), http.StatusBadRequest)
-			return true
-		}
-		payload["model"] = strings.TrimSpace(modelOverride)
-		rewritten, err := json.Marshal(payload)
-		if err != nil {
-			writeOpenAIError(w, "Failed to rewrite request body", http.StatusInternalServerError)
-			return true
-		}
-		payloadBytes = rewritten
-	}
-
-	proxy := newOpenAICompatForwarder(info, apiKey, timeout)
-	resp, err := proxy.ForwardChatCompletions(r.Context(), r.Method, r.URL.Query(), r.Header, payloadBytes)
+	proxy := newGenericCompatForwarder(info, apiKey, timeout)
+	resp, err := proxy.ForwardRequest(r.Context(), r.Method, subpath, r.URL.Query(), r.Header, bodyBytes)
 	if err != nil {
-		writeOpenAIError(w, "OpenAI-compatible upstream error: "+err.Error(), http.StatusBadGateway)
+		writeOpenAIError(w, "Generic compat upstream error: "+err.Error(), http.StatusBadGateway)
 		return true
 	}
 	defer resp.Body.Close()
 
 	if err := openaicompat.CopyResponse(w, resp); err != nil {
-		log.Printf("❌ [%s] OpenAI-compatible proxy response copy error: provider=%s err=%v", requestID, providerID, err)
+		log.Printf("❌ [%s] Generic compat proxy response copy error: provider=%s path=%s err=%v", requestID, providerID, subpath, err)
 	}
 	return true
+}
+
+// extractUsageTokens parses token usage from either OpenAI or Anthropic response body.
+// OpenAI:    prompt_tokens / completion_tokens
+// Anthropic: input_tokens  / output_tokens
+func extractUsageTokens(respBody string) (inputTokens, outputTokens int) {
+	var openaiResp struct {
+		Usage struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+		} `json:"usage"`
+	}
+	if json.Unmarshal([]byte(respBody), &openaiResp) == nil && openaiResp.Usage.PromptTokens > 0 {
+		return openaiResp.Usage.PromptTokens, openaiResp.Usage.CompletionTokens
+	}
+
+	var anthropicResp struct {
+		Usage struct {
+			InputTokens  int `json:"input_tokens"`
+			OutputTokens int `json:"output_tokens"`
+		} `json:"usage"`
+	}
+	if json.Unmarshal([]byte(respBody), &anthropicResp) == nil {
+		return anthropicResp.Usage.InputTokens, anthropicResp.Usage.OutputTokens
+	}
+	return 0, 0
+}
+
+// extractErrorMessage extracts a human-readable error from an OpenAI or Anthropic error body.
+func extractErrorMessage(respBody string) string {
+	var openaiErr struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.Unmarshal([]byte(respBody), &openaiErr) == nil && openaiErr.Error.Message != "" {
+		return openaiErr.Error.Message
+	}
+	if len(respBody) < 500 {
+		return respBody
+	}
+	return ""
 }

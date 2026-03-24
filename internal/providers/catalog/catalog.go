@@ -15,8 +15,9 @@ import (
 )
 
 const (
-	CapabilityOpenAIChat      = "openai.chat"
-	CapabilityOpenAIResponses = "openai.responses"
+	CapabilityOpenAIChat         = "openai.chat"
+	CapabilityOpenAIResponses    = "openai.responses"
+	CapabilityAnthropicMessages  = "anthropic.messages"
 
 	ModelScopeAllModels         = "all_models"
 	ModelScopeUnknownPrefixOnly = "unknown_prefix_only"
@@ -48,6 +49,9 @@ type ProviderInfo struct {
 	Enabled        bool              `json:"enabled"`
 	RuntimeEnabled bool              `json:"runtime_enabled"`
 	BaseURL        string            `json:"base_url"`
+	// RootURL is BaseURL with the trailing version segment (/v1, /v2, etc.) stripped.
+	// Used by the generic transparent proxy to forward arbitrary sub-paths.
+	RootURL        string            `json:"root_url,omitempty"`
 	AuthMode       string            `json:"auth_mode"`
 	ModelScope     string            `json:"model_scope"`
 	Capabilities   []string          `json:"capabilities"`
@@ -394,6 +398,7 @@ func normalizeConfig(cfg ProviderConfig) (runtimeProvider, bool) {
 		Enabled:        enabled,
 		RuntimeEnabled: enabled && strings.TrimSpace(baseURL) != "" && apiKey != "",
 		BaseURL:        strings.TrimSpace(baseURL),
+		RootURL:        deriveRootURL(strings.TrimSpace(baseURL)),
 		AuthMode:       authMode,
 		ModelScope:     modelScope,
 		Capabilities:   capabilities,
@@ -445,6 +450,20 @@ func normalizeProviderID(id string) string {
 	return strings.ToLower(strings.TrimSpace(id))
 }
 
+// deriveRootURL strips the trailing version segment (/v1, /v1beta, /v2, etc.) from a base URL.
+// Example: https://openrouter.ai/api/v1 → https://openrouter.ai/api
+func deriveRootURL(baseURL string) string {
+	if baseURL == "" {
+		return baseURL
+	}
+	re := regexp.MustCompile(`/v\d+[a-z0-9]*$`)
+	root := re.ReplaceAllString(strings.TrimRight(baseURL, "/"), "")
+	if root == "" {
+		return baseURL
+	}
+	return root
+}
+
 func providerEnvName(id, suffix string) string {
 	upper := strings.ToUpper(id)
 	replacer := strings.NewReplacer("-", "_", ".", "_", "/", "_", " ", "_")
@@ -460,7 +479,7 @@ func defaultProviders() []ProviderConfig {
 			BaseURL:      "https://openrouter.ai/api/v1",
 			AuthMode:     AuthModeBearer,
 			ModelScope:   ModelScopeAllModels,
-			Capabilities: []string{CapabilityOpenAIChat},
+			Capabilities: []string{CapabilityOpenAIChat, CapabilityAnthropicMessages},
 		},
 		{
 			ID:           "nvidia",
