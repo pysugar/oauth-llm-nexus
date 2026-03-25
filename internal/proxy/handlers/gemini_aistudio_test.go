@@ -119,7 +119,7 @@ func TestGeminiAIStudioProxyHandler_PassthroughGenerate(t *testing.T) {
 	}
 
 	oldProvider := GeminiAIStudioProvider
-	GeminiAIStudioProvider = geminikey.NewProviderWithClient("server-key", "https://generativelanguage.googleapis.com", time.Minute, client)
+	GeminiAIStudioProvider = geminikey.NewProviderWithClient([]string{"server-key"}, "https://generativelanguage.googleapis.com", time.Minute, client)
 	defer func() { GeminiAIStudioProvider = oldProvider }()
 
 	reqBody := `{"contents":[{"role":"user","parts":[{"text":"hello"}]}]}`
@@ -171,7 +171,7 @@ func TestGeminiAIStudioProxyHandler_ModelsList(t *testing.T) {
 	}
 
 	oldProvider := GeminiAIStudioProvider
-	GeminiAIStudioProvider = geminikey.NewProviderWithClient("server-key", "https://generativelanguage.googleapis.com", time.Minute, client)
+	GeminiAIStudioProvider = geminikey.NewProviderWithClient([]string{"server-key"}, "https://generativelanguage.googleapis.com", time.Minute, client)
 	defer func() { GeminiAIStudioProvider = oldProvider }()
 
 	req := httptest.NewRequest(http.MethodGet, "/v1beta/models?key=client-key", nil)
@@ -210,7 +210,7 @@ func TestGeminiAIStudioProxyHandler_StreamProxyMode(t *testing.T) {
 	}
 
 	oldProvider := GeminiAIStudioProvider
-	GeminiAIStudioProvider = geminikey.NewProviderWithClient("server-key", "https://generativelanguage.googleapis.com", time.Minute, client)
+	GeminiAIStudioProvider = geminikey.NewProviderWithClient([]string{"server-key"}, "https://generativelanguage.googleapis.com", time.Minute, client)
 	defer func() { GeminiAIStudioProvider = oldProvider }()
 
 	req := httptest.NewRequest(

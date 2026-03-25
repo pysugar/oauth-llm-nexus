@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
@@ -60,10 +61,17 @@ func main() {
 		log.Println("ℹ️ Vertex AI proxy disabled (set NEXUS_VERTEX_API_KEY to enable)")
 	}
 
-	// Initialize Gemini API proxy (auto-enabled when NEXUS_GEMINI_API_KEY or GEMINI_API_KEY is set)
+	// Initialize Gemini API proxy (auto-enabled when NEXUS_GEMINI_API_KEYS, NEXUS_GEMINI_API_KEY or GEMINI_API_KEY is set)
 	geminiAIStudioEnabled := handlers.InitGeminiAIStudioProviderFromEnv()
 	if geminiAIStudioEnabled {
-		log.Println("✅ Gemini API proxy enabled (/v1beta/models/*)")
+		p := handlers.GeminiAIStudioProvider
+		if p.KeyCount() > 1 {
+			log.Printf("✅ Gemini API proxy enabled (/v1beta/models/*) [%d keys: %s]",
+				p.KeyCount(), strings.Join(p.MaskedKeys(), ", "))
+		} else {
+			log.Printf("✅ Gemini API proxy enabled (/v1beta/models/*) [%s]",
+				p.MaskedKeys()[0])
+		}
 	} else {
 		log.Println("ℹ️ Gemini API proxy disabled (set NEXUS_GEMINI_API_KEY or GEMINI_API_KEY to enable)")
 	}

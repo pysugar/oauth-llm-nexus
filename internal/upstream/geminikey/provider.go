@@ -8,6 +8,7 @@ import (
 	"os"
 	pathpkg "path"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pysugar/oauth-llm-nexus/internal/upstream/keyproxy"
@@ -27,20 +28,22 @@ var allowedPostActions = map[string]struct{}{
 }
 
 // Provider transparently proxies Google AI Studio Gemini API requests using
-// server-side API key injection.
+// server-side API key injection. It supports multiple keys with 429-triggered
+// sticky switching for quota expansion.
 type Provider struct {
-	apiKey     string
+	apiKeys    []string
+	activeIdx  atomic.Uint64
 	baseURL    string
 	httpClient *http.Client
 }
 
 // NewProvider creates a Provider with explicit configuration.
-func NewProvider(apiKey, baseURL string, timeout time.Duration) *Provider {
-	return NewProviderWithClient(apiKey, baseURL, timeout, nil)
+func NewProvider(apiKeys []string, baseURL string, timeout time.Duration) *Provider {
+	return NewProviderWithClient(apiKeys, baseURL, timeout, nil)
 }
 
 // NewProviderWithClient creates a Provider with optional custom HTTP client.
-func NewProviderWithClient(apiKey, baseURL string, timeout time.Duration, httpClient *http.Client) *Provider {
+func NewProviderWithClient(apiKeys []string, baseURL string, timeout time.Duration, httpClient *http.Client) *Provider {
 	trimmedBaseURL := strings.TrimSpace(baseURL)
 	if trimmedBaseURL == "" {
 		trimmedBaseURL = defaultBaseURL
@@ -52,18 +55,41 @@ func NewProviderWithClient(apiKey, baseURL string, timeout time.Duration, httpCl
 		httpClient = &http.Client{Timeout: timeout}
 	}
 
+	// Filter out empty keys
+	var validKeys []string
+	for _, k := range apiKeys {
+		trimmed := strings.TrimSpace(k)
+		if trimmed != "" {
+			validKeys = append(validKeys, trimmed)
+		}
+	}
+
 	return &Provider{
-		apiKey:     strings.TrimSpace(apiKey),
+		apiKeys:    validKeys,
 		baseURL:    strings.TrimRight(trimmedBaseURL, "/"),
 		httpClient: httpClient,
 	}
 }
 
 // NewProviderFromEnv creates a provider from environment variables.
-// Priority: NEXUS_GEMINI_API_KEY > GEMINI_API_KEY.
+// Priority: NEXUS_GEMINI_API_KEYS > NEXUS_GEMINI_API_KEY > GEMINI_API_KEY.
 func NewProviderFromEnv() *Provider {
+	// 1. Try NEXUS_GEMINI_API_KEYS (comma-separated multi-key list)
+	multiKeys := strings.TrimSpace(getenv("NEXUS_GEMINI_API_KEYS"))
+	if multiKeys != "" {
+		keys := strings.Split(multiKeys, ",")
+		baseURL := strings.TrimSpace(getenv("NEXUS_GEMINI_BASE_URL"))
+		timeout := parseTimeoutFromEnv("NEXUS_GEMINI_PROXY_TIMEOUT")
+		p := NewProvider(keys, baseURL, timeout)
+		if p.IsEnabled() {
+			return p
+		}
+	}
+
+	// 2. Try NEXUS_GEMINI_API_KEY (single key)
 	apiKey := strings.TrimSpace(getenv("NEXUS_GEMINI_API_KEY"))
 	if apiKey == "" {
+		// 3. Fallback to GEMINI_API_KEY
 		apiKey = strings.TrimSpace(getenv("GEMINI_API_KEY"))
 	}
 	if apiKey == "" {
@@ -72,15 +98,55 @@ func NewProviderFromEnv() *Provider {
 
 	baseURL := strings.TrimSpace(getenv("NEXUS_GEMINI_BASE_URL"))
 	timeout := parseTimeoutFromEnv("NEXUS_GEMINI_PROXY_TIMEOUT")
-	return NewProvider(apiKey, baseURL, timeout)
+	return NewProvider([]string{apiKey}, baseURL, timeout)
 }
 
-// IsEnabled indicates whether provider has valid API key.
+// IsEnabled indicates whether provider has at least one valid API key.
 func (p *Provider) IsEnabled() bool {
-	return p != nil && p.apiKey != ""
+	return p != nil && len(p.apiKeys) > 0
+}
+
+// KeyCount returns the number of configured API keys.
+func (p *Provider) KeyCount() int {
+	if p == nil {
+		return 0
+	}
+	return len(p.apiKeys)
+}
+
+// MaskedKeys returns the configured keys in masked form (***...last6).
+func (p *Provider) MaskedKeys() []string {
+	if p == nil {
+		return nil
+	}
+	masked := make([]string, len(p.apiKeys))
+	for i, k := range p.apiKeys {
+		masked[i] = MaskKey(k)
+	}
+	return masked
+}
+
+// MaskKey returns a masked representation of an API key, showing only the last 6 characters.
+func MaskKey(key string) string {
+	if len(key) <= 6 {
+		return key
+	}
+	return "***..." + key[len(key)-6:]
+}
+
+// activeKey returns the currently active API key.
+func (p *Provider) activeKey() string {
+	idx := p.activeIdx.Load() % uint64(len(p.apiKeys))
+	return p.apiKeys[idx]
+}
+
+// advanceKey atomically advances the active key pointer to the next key.
+func (p *Provider) advanceKey() {
+	p.activeIdx.Add(1)
 }
 
 // Forward proxies request to AI Studio endpoint with server-side API key.
+// On 429 responses, it advances to the next key and retries, up to len(keys) attempts.
 func (p *Provider) Forward(
 	ctx context.Context,
 	method string,
@@ -104,19 +170,43 @@ func (p *Provider) Forward(
 		return nil, fmt.Errorf("invalid target URL: %w", err)
 	}
 
-	req, err := keyproxy.BuildUpstreamRequest(
-		ctx,
-		method,
-		parsedTarget,
-		keyproxy.CloneValues(incomingQuery),
-		incomingHeaders,
-		body,
-		p.apiKey,
-	)
-	if err != nil {
-		return nil, err
+	maxAttempts := len(p.apiKeys)
+	var lastResp *http.Response
+
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		apiKey := p.activeKey()
+
+		req, err := keyproxy.BuildUpstreamRequest(
+			ctx,
+			method,
+			parsedTarget,
+			keyproxy.CloneValues(incomingQuery),
+			incomingHeaders,
+			body,
+			apiKey,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		resp, err := p.httpClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+
+		if resp.StatusCode != http.StatusTooManyRequests || attempt == maxAttempts-1 {
+			// Either success / non-429 error, or last attempt exhausted
+			return resp, nil
+		}
+
+		// Got 429: close this response, advance key, retry
+		resp.Body.Close()
+		lastResp = resp
+		p.advanceKey()
 	}
-	return p.httpClient.Do(req)
+
+	// Should not reach here, but return last response as safety
+	return lastResp, nil
 }
 
 func normalizeAndValidatePath(method string, requestPath string) (string, error) {

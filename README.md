@@ -123,8 +123,9 @@ The server will start on `127.0.0.1:8080` by default (or `:8086` in release mode
 | `NEXUS_VERTEX_API_KEY` | - | Enable Vertex transparent proxy (`/v1/publishers/google/models/*`) |
 | `NEXUS_VERTEX_BASE_URL` | `https://aiplatform.googleapis.com` | Vertex upstream base URL override |
 | `NEXUS_VERTEX_PROXY_TIMEOUT` | `5m` | Upstream timeout for Vertex compatibility proxy |
-| `NEXUS_GEMINI_API_KEY` | - | Preferred key for Gemini API transparent proxy (`/v1beta/models/*`) |
-| `GEMINI_API_KEY` | - | Fallback key for Gemini API transparent proxy when `NEXUS_GEMINI_API_KEY` is unset |
+| `NEXUS_GEMINI_API_KEYS` | - | Comma-separated multi-key list for Gemini API proxy with 429-triggered auto-switching |
+| `NEXUS_GEMINI_API_KEY` | - | Single key for Gemini API transparent proxy (`/v1beta/models/*`) |
+| `GEMINI_API_KEY` | - | Fallback key for Gemini API transparent proxy when neither `NEXUS_GEMINI_API_KEYS` nor `NEXUS_GEMINI_API_KEY` is set |
 | `NEXUS_GEMINI_BASE_URL` | `https://generativelanguage.googleapis.com` | Gemini API upstream base URL override |
 | `NEXUS_GEMINI_PROXY_TIMEOUT` | `5m` | Upstream timeout for Gemini API transparent proxy |
 

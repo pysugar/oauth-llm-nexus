@@ -153,7 +153,7 @@ func TestGeminiAIStudioProxyHandlerWithMonitor_LogsWhenEnabled(t *testing.T) {
 	}
 
 	oldProvider := GeminiAIStudioProvider
-	GeminiAIStudioProvider = geminikey.NewProviderWithClient("server-key", "https://generativelanguage.googleapis.com", time.Minute, client)
+	GeminiAIStudioProvider = geminikey.NewProviderWithClient([]string{"server-key"}, "https://generativelanguage.googleapis.com", time.Minute, client)
 	defer func() { GeminiAIStudioProvider = oldProvider }()
 
 	req := httptest.NewRequest(

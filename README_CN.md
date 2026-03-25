@@ -123,8 +123,9 @@ docker-compose up -d
 | `NEXUS_VERTEX_API_KEY` | - | 启用 Vertex 透明代理（`/v1/publishers/google/models/*`） |
 | `NEXUS_VERTEX_BASE_URL` | `https://aiplatform.googleapis.com` | Vertex 上游基地址覆盖 |
 | `NEXUS_VERTEX_PROXY_TIMEOUT` | `5m` | Vertex 兼容代理上游超时 |
-| `NEXUS_GEMINI_API_KEY` | - | Gemini API 透明代理首选 key（`/v1beta/models/*`） |
-| `GEMINI_API_KEY` | - | 当 `NEXUS_GEMINI_API_KEY` 未设置时，作为 Gemini API 透明代理回退 key |
+| `NEXUS_GEMINI_API_KEYS` | - | 逗号分隔的多 key 列表，Gemini API 代理支持 429 自动切换 |
+| `NEXUS_GEMINI_API_KEY` | - | Gemini API 透明代理单 key（`/v1beta/models/*`） |
+| `GEMINI_API_KEY` | - | 当 `NEXUS_GEMINI_API_KEYS` 和 `NEXUS_GEMINI_API_KEY` 均未设置时的回退 key |
 | `NEXUS_GEMINI_BASE_URL` | `https://generativelanguage.googleapis.com` | Gemini API 上游基地址覆盖 |
 | `NEXUS_GEMINI_PROXY_TIMEOUT` | `5m` | Gemini API 透明代理上游超时 |
 
