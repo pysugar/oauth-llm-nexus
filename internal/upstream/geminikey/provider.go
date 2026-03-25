@@ -75,7 +75,7 @@ func NewProviderWithClient(apiKeys []string, baseURL string, timeout time.Durati
 // Priority: NEXUS_GEMINI_API_KEYS > NEXUS_GEMINI_API_KEY > GEMINI_API_KEY.
 func NewProviderFromEnv() *Provider {
 	// 1. Try NEXUS_GEMINI_API_KEYS (comma-separated multi-key list)
-	multiKeys := strings.TrimSpace(getenv("NEXUS_GEMINI_API_KEYS"))
+	multiKeys := stripQuotes(strings.TrimSpace(getenv("NEXUS_GEMINI_API_KEYS")))
 	if multiKeys != "" {
 		keys := strings.Split(multiKeys, ",")
 		baseURL := strings.TrimSpace(getenv("NEXUS_GEMINI_BASE_URL"))
@@ -138,6 +138,14 @@ func MaskKey(key string) string {
 func (p *Provider) activeKey() string {
 	idx := p.activeIdx.Load() % uint64(len(p.apiKeys))
 	return p.apiKeys[idx]
+}
+
+// ActiveMaskedKey returns the masked form of the currently active key.
+func (p *Provider) ActiveMaskedKey() string {
+	if !p.IsEnabled() {
+		return ""
+	}
+	return MaskKey(p.activeKey())
 }
 
 // advanceKey atomically advances the active key pointer to the next key.
@@ -274,6 +282,17 @@ func parseTimeoutFromEnv(key string) time.Duration {
 		return defaultTimeout
 	}
 	return dur
+}
+
+// stripQuotes removes surrounding double or single quotes from a string.
+// This handles Docker .env files where quotes are included in the value.
+func stripQuotes(s string) string {
+	if len(s) >= 2 {
+		if (s[0] == '"' && s[len(s)-1] == '"') || (s[0] == '\'' && s[len(s)-1] == '\'') {
+			return s[1 : len(s)-1]
+		}
+	}
+	return s
 }
 
 var getenv = func(key string) string {

@@ -375,3 +375,25 @@ func TestMaskedKeys(t *testing.T) {
 		t.Errorf("masked[1] = %q, want %q", masked[1], "***...uvwDEF")
 	}
 }
+
+func TestNewProviderFromEnv_MultiKeys_StripsQuotes(t *testing.T) {
+	oldGetenv := getenv
+	defer func() { getenv = oldGetenv }()
+
+	getenv = func(key string) string {
+		switch key {
+		case "NEXUS_GEMINI_API_KEYS":
+			// Docker .env files include surrounding quotes in the value
+			return `"key-alpha,key-bravo,key-charlie"`
+		default:
+			return ""
+		}
+	}
+	provider := NewProviderFromEnv()
+	if provider == nil || !provider.IsEnabled() {
+		t.Fatal("expected provider enabled with quoted NEXUS_GEMINI_API_KEYS")
+	}
+	if provider.KeyCount() != 3 {
+		t.Fatalf("expected 3 keys after quote stripping, got %d", provider.KeyCount())
+	}
+}
