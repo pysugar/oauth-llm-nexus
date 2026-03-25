@@ -164,11 +164,11 @@ var monitorHistoryHTML = `<!DOCTYPE html>
         let totalPages = 1;
         let searchQuery = '';
         
-        // Always mask sensitive data (emails)
+        // Mask sensitive data: emails get masked, non-email values (e.g. masked API keys) pass through
         function maskEmail(email) {
             if (!email) return '-';
             const parts = email.split('@');
-            if (parts.length !== 2) return 'u***r@example.com';
+            if (parts.length !== 2) return email;
             const local = parts[0];
             const domain = parts[1];
             const maskedLocal = local.charAt(0) + '***' + (local.length > 1 ? local.charAt(local.length - 1) : '');
