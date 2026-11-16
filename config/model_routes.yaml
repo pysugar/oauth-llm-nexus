@@ -113,3 +113,34 @@ routes:
   - client: o3
     provider: google
     target: gemini-3-pro-high
+
+  # ============================================
+  # Multi-Backend API Aggregation Examples
+  # Lower priority numbers are attempted first; remaining active backends act as failover candidates.
+  # Runtime switching is supported via Dashboard or POST /api/gateway/models/{client}/select.
+  # ============================================
+  - client: deepseek-chat
+    provider: deepseek
+    target: deepseek-chat
+    priority: 0
+  - client: deepseek-chat
+    provider: openrouter
+    target: deepseek/deepseek-chat-v3-0324
+    priority: 1
+
+  - client: deepseek-reasoner
+    provider: deepseek
+    target: deepseek-reasoner
+    priority: 0
+  - client: deepseek-reasoner
+    provider: nvidia
+    target: deepseek-ai/deepseek-r1
+    priority: 1
+  - client: deepseek-reasoner
+    provider: amd
+    target: deepseek-ai/DeepSeek-R1
+    priority: 2
+  - client: deepseek-reasoner
+    provider: openrouter
+    target: deepseek/deepseek-r1
+    priority: 3

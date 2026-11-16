@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 
+	"github.com/pysugar/oauth-llm-nexus/internal/gateway/provider"
 	"github.com/pysugar/oauth-llm-nexus/internal/providers/catalog"
 )
 
@@ -12,9 +14,35 @@ type RouteProtocol string
 
 const (
 	ProtocolOpenAI    RouteProtocol = "openai"
+	ProtocolResponses RouteProtocol = "responses"
 	ProtocolGenAI     RouteProtocol = "genai"
 	ProtocolAnthropic RouteProtocol = "anthropic"
 )
+
+var (
+	gatewayProvidersMu sync.RWMutex
+	gatewayProviderIDs []string
+)
+
+// RegisterGatewayProviders updates the list of gateway provider IDs eligible across models and protocols.
+func RegisterGatewayProviders(ids []string) {
+	gatewayProvidersMu.Lock()
+	defer gatewayProvidersMu.Unlock()
+	gatewayProviderIDs = gatewayProviderIDs[:0]
+	for _, id := range ids {
+		norm := NormalizeProvider(id)
+		if norm != "" && !slices.Contains(gatewayProviderIDs, norm) {
+			gatewayProviderIDs = append(gatewayProviderIDs, norm)
+		}
+	}
+}
+
+func currentGatewayProviders() []string {
+	gatewayProvidersMu.RLock()
+	custom := append([]string(nil), gatewayProviderIDs...)
+	gatewayProvidersMu.RUnlock()
+	return mergeProviders(provider.DefaultPresetOrder, custom)
+}
 
 func AllowedProvidersByClientModel(clientModel string) []string {
 	model := strings.ToLower(strings.TrimSpace(clientModel))
@@ -32,19 +60,20 @@ func AllowedProvidersByClientModel(clientModel string) []string {
 	}
 
 	compatProviders := catalog.AllowedProviderIDsForModel(model)
-	return mergeProviders(base, compatProviders)
+	return mergeProviders(base, append(compatProviders, currentGatewayProviders()...))
 }
 
 func AllowedProvidersByProtocol(protocol string) []string {
+	gw := currentGatewayProviders()
 	switch strings.ToLower(strings.TrimSpace(protocol)) {
-	case string(ProtocolOpenAI):
+	case string(ProtocolOpenAI), string(ProtocolResponses):
 		base := []string{"google", "codex", "gemini"}
 		compatProviders := catalog.ProviderIDsByCapability(catalog.CapabilityOpenAIChat)
-		return mergeProviders(base, compatProviders)
+		return mergeProviders(base, append(compatProviders, gw...))
 	case string(ProtocolGenAI):
-		return []string{"google", "vertex", "gemini"}
+		return mergeProviders([]string{"google", "vertex", "gemini"}, gw)
 	case string(ProtocolAnthropic):
-		return []string{"google"}
+		return mergeProviders([]string{"google"}, gw)
 	default:
 		return nil
 	}

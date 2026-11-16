@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -52,5 +53,36 @@ func assertBoolField(t *testing.T, payload map[string]interface{}, key string, e
 	}
 	if got != expected {
 		t.Fatalf("key %q expected %v, got %v", key, expected, got)
+	}
+}
+
+func TestDashboardHandler_IncludesGatewayPanel(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	DashboardHandler(nil).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, needle := range []string{
+		"gateway-providers-grid",
+		"gateway-models-container",
+		"/api/gateway/providers",
+		"/api/gateway/models",
+		"/api/gateway/select",
+		"/api/gateway/policy",
+		"/api/gateway/cooldown/clear",
+		"/api/gateway/test",
+		"gateway-tester-panel",
+		"gateway-model-tabs",
+		"data-gateway-toggle-models",
+		"gateway-quick-client",
+		"quickSwitchGatewayBackend",
+		"runGatewayThreeProtocolTests",
+	} {
+		if !strings.Contains(body, needle) {
+			t.Fatalf("dashboard HTML missing expected gateway hook %q", needle)
+		}
 	}
 }

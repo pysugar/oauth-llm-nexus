@@ -7,10 +7,10 @@ func TestAllowedProvidersByClientModel(t *testing.T) {
 		model string
 		want  []string
 	}{
-		{model: "gpt-4o", want: []string{"codex", "google", "openrouter"}},
+		{model: "gpt-4o", want: []string{"codex", "google", "openai", "openrouter"}},
 		{model: "GEMINI-3-FLASH", want: []string{"google", "vertex", "gemini", "openrouter"}},
-		{model: "claude-sonnet-4-5", want: []string{"google", "openrouter"}},
-		{model: "unknown-model", want: []string{"google", "nvidia", "openrouter"}},
+		{model: "claude-sonnet-4-5", want: []string{"google", "openrouter", "deepseek"}},
+		{model: "unknown-model", want: []string{"google", "nvidia", "openrouter", "amd", "ollama"}},
 	}
 
 	for _, tc := range tests {
@@ -33,6 +33,9 @@ func TestValidateRouteProvider(t *testing.T) {
 	if err := ValidateRouteProvider("gpt-4o", "openrouter"); err != nil {
 		t.Fatalf("expected gpt -> openrouter to be valid, got err=%v", err)
 	}
+	if err := ValidateRouteProvider("gpt-4o", "nvidia"); err != nil {
+		t.Fatalf("expected gpt -> nvidia via gateway to be valid, got err=%v", err)
+	}
 	if err := ValidateRouteProvider("gemini-3-flash-preview", "gemini"); err != nil {
 		t.Fatalf("expected gemini -> gemini to be valid, got err=%v", err)
 	}
@@ -45,11 +48,8 @@ func TestValidateRouteProvider(t *testing.T) {
 	if err := ValidateRouteProvider("claude-opus-4-6", "codex"); err == nil {
 		t.Fatal("expected claude -> codex to be invalid")
 	}
-	if err := ValidateRouteProvider("my-custom-model", "nvidia"); err != nil {
-		t.Fatalf("expected unknown -> nvidia to be valid, got err=%v", err)
-	}
-	if err := ValidateRouteProvider("gpt-4o", "nvidia"); err == nil {
-		t.Fatal("expected gpt -> nvidia to be invalid")
+	if err := ValidateRouteProvider("my-custom-model", "amd"); err != nil {
+		t.Fatalf("expected unknown -> amd to be valid, got err=%v", err)
 	}
 }
 
@@ -69,8 +69,11 @@ func TestValidateProviderForProtocol(t *testing.T) {
 	if err := ValidateProviderForProtocol("gemini", string(ProtocolGenAI)); err != nil {
 		t.Fatalf("expected gemini for genai to be valid, got err=%v", err)
 	}
-	if err := ValidateProviderForProtocol("openrouter", string(ProtocolGenAI)); err == nil {
-		t.Fatal("expected openrouter for genai to be invalid")
+	if err := ValidateProviderForProtocol("openrouter", string(ProtocolGenAI)); err != nil {
+		t.Fatalf("expected openrouter for genai via gateway translation to be valid, got err=%v", err)
+	}
+	if err := ValidateProviderForProtocol("deepseek", string(ProtocolAnthropic)); err != nil {
+		t.Fatalf("expected deepseek for anthropic to be valid, got err=%v", err)
 	}
 	if err := ValidateProviderForProtocol("codex", string(ProtocolGenAI)); err == nil {
 		t.Fatal("expected codex for genai to be invalid")

@@ -72,32 +72,37 @@ func NewProviderWithClient(apiKeys []string, baseURL string, timeout time.Durati
 }
 
 // NewProviderFromEnv creates a provider from environment variables.
-// Priority: NEXUS_GEMINI_API_KEYS > NEXUS_GEMINI_API_KEY > GEMINI_API_KEY.
+// Priority: NEXUS_GEMINI_API_KEYS > GEMINI_API_KEYS > NEXUS_GEMINI_API_KEY > GEMINI_API_KEY.
 func NewProviderFromEnv() *Provider {
-	// 1. Try NEXUS_GEMINI_API_KEYS (comma-separated multi-key list)
-	multiKeys := stripQuotes(strings.TrimSpace(getenv("NEXUS_GEMINI_API_KEYS")))
-	if multiKeys != "" {
-		keys := strings.Split(multiKeys, ",")
-		baseURL := strings.TrimSpace(getenv("NEXUS_GEMINI_BASE_URL"))
-		timeout := parseTimeoutFromEnv("NEXUS_GEMINI_PROXY_TIMEOUT")
+	baseURL := strings.TrimSpace(getenv("NEXUS_GEMINI_BASE_URL"))
+	timeout := parseTimeoutFromEnv("NEXUS_GEMINI_PROXY_TIMEOUT")
+
+	for _, multiEnv := range []string{"NEXUS_GEMINI_API_KEYS", "GEMINI_API_KEYS"} {
+		multiKeys := stripQuotes(strings.TrimSpace(getenv(multiEnv)))
+		if multiKeys == "" {
+			continue
+		}
+		keys := strings.FieldsFunc(multiKeys, func(r rune) bool {
+			return r == ',' || r == ';' || r == '\n' || r == '\r'
+		})
+		for i, k := range keys {
+			keys[i] = stripQuotes(strings.TrimSpace(k))
+		}
 		p := NewProvider(keys, baseURL, timeout)
 		if p.IsEnabled() {
 			return p
 		}
 	}
 
-	// 2. Try NEXUS_GEMINI_API_KEY (single key)
-	apiKey := strings.TrimSpace(getenv("NEXUS_GEMINI_API_KEY"))
+	// Single-key fallback: NEXUS_GEMINI_API_KEY > GEMINI_API_KEY
+	apiKey := stripQuotes(strings.TrimSpace(getenv("NEXUS_GEMINI_API_KEY")))
 	if apiKey == "" {
-		// 3. Fallback to GEMINI_API_KEY
-		apiKey = strings.TrimSpace(getenv("GEMINI_API_KEY"))
+		apiKey = stripQuotes(strings.TrimSpace(getenv("GEMINI_API_KEY")))
 	}
 	if apiKey == "" {
 		return nil
 	}
 
-	baseURL := strings.TrimSpace(getenv("NEXUS_GEMINI_BASE_URL"))
-	timeout := parseTimeoutFromEnv("NEXUS_GEMINI_PROXY_TIMEOUT")
 	return NewProvider([]string{apiKey}, baseURL, timeout)
 }
 
@@ -202,12 +207,12 @@ func (p *Provider) Forward(
 			return nil, err
 		}
 
-		if resp.StatusCode != http.StatusTooManyRequests || attempt == maxAttempts-1 {
-			// Either success / non-429 error, or last attempt exhausted
+		if (resp.StatusCode != http.StatusTooManyRequests && resp.StatusCode != http.StatusServiceUnavailable) || attempt == maxAttempts-1 {
+			// Either success / non-retriable error, or last attempt exhausted
 			return resp, nil
 		}
 
-		// Got 429: close this response, advance key, retry
+		// Got 429/503: close this response, advance key, retry
 		resp.Body.Close()
 		lastResp = resp
 		p.advanceKey()

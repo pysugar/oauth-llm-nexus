@@ -10,11 +10,12 @@
 
 -   **Multi-Protocol Support**:
     -   **OpenAI Compatible**: `/v1/chat/completions`, `/v1/responses` (Works with Cursor, Open WebUI, etc.)
-    -   **Anthropic Compatible**: `/anthropic/v1/messages` (Works with Claude Code, Aider, etc.)
+    -   **Anthropic Compatible**: `/anthropic/v1/messages`, `/v1/messages` (Works with Claude Code, Aider, etc.)
     -   **Google GenAI Compatible**: `/genai/v1beta/models` (Works with official Google SDKs)
+    -   **Gemini API Unified / Transparent Proxy**: `/v1beta/models/*` (Works natively or translated across any backend)
     -   **Vertex AI Transparent Proxy**: `/v1/publishers/google/models/*` (server-side Vertex key injection)
-    -   **Gemini API Transparent Proxy**: `/v1beta/models/*` (server-side Gemini key injection)
     -   **Codex Adapter (provider=codex)**: OpenAI-facing `/v1/chat/completions` and `/v1/responses` with stream-first behavior
+-   **Multi-Backend API Aggregation & Runtime Switching**: Aggregate **OpenAI**, **OpenRouter**, **NVIDIA NIM**, **AMD Radeon Token Factory**, **Ollama**, **DeepSeek API**, and **Google Gemini API** behind any of the 4 client protocols (`config/providers.yaml`), with sticky multi-key rotation, adaptive cooldown, ordered failover or pinned policy, and instant Dashboard / API backend switching (`docs/design_proposals/api-aggregation-gateway.md`).
 -   **Smart Model Mapping**: Configurable routing from client model names to backend models via Dashboard.
 -   **Account Pool Management**: Link multiple Google accounts to pool quotas and increase limits.
 -   **User-Specific Quota Routing**: Route requests to specific accounts using `X-Nexus-Account` header for quota isolation.
@@ -375,12 +376,13 @@ If you're running in an air-gapped or firewall-restricted environment:
 
 | Endpoint | Protocol | Description |
 |:---------|:---------|:------------|
-| `GET /` | - | Dashboard UI |
+| `GET /ui` | - | Gateway Console UI (Providers, Model Matrix, 4-Protocol Tester, Connect) |
+| `GET /` | - | Legacy Dashboard UI (OAuth accounts & routes) |
 | `POST /v1/chat/completions` | OpenAI | Chat completions |
-| `POST /v1/responses` | OpenAI | Responses API |
+| `POST /v1/responses` | OpenAI | Responses API (with cross-backend `previous_response_id` bridge) |
 | `GET /v1/models` | OpenAI | List models |
 | `GET /v1/codex/quota` | OpenAI | Codex quota and account information |
-| `POST /anthropic/v1/messages` | Anthropic | Messages API |
+| `POST /anthropic/v1/messages` | Anthropic | Messages API (also available at `POST /v1/messages`) |
 | `GET /anthropic/v1/models` | Anthropic | List available Claude models |
 | `POST /genai/v1beta/models/{model}:generateContent` | GenAI | Generate content |
 | `POST /genai/v1beta/models/{model}:streamGenerateContent` | GenAI | Generate content (streaming) |
@@ -395,17 +397,50 @@ If you're running in an air-gapped or firewall-restricted environment:
 | `POST /v1beta/models/{model}:countTokens` | Gemini API | Count tokens |
 | `POST /v1beta/models/{model}:embedContent` | Gemini API | Single embedding |
 | `POST /v1beta/models/{model}:batchEmbedContents` | Gemini API | Batch embeddings |
+| `POST /v1beta/openai/chat/completions` | Gemini API | OpenAI Chat compat route under `/v1beta` |
 | `GET /api/accounts` | Internal | List linked accounts |
 | `GET /api/model-routes` | Internal | List model routes |
+| `GET /api/gateway/providers` | Internal | List gateway backends, per-key statuses, cooldowns, live stats, and models |
+| `PATCH /api/gateway/providers/{id}` | Internal | Update runtime flags (`enabled`, `free_only`, `include_non_chat`, `prefer`, `key_strategy`), add/remove keys |
+| `POST /api/gateway/providers/{id}/refresh` | Internal | Refresh cached upstream model catalog for a backend |
+| `GET /api/gateway/stats` / `POST /api/gateway/stats/reset` | Internal | Read or reset always-on per-provider / per-model usage & latency counters |
+| `GET /api/gateway/models` | Internal | List unified models with active backend & `failover`/`pinned` policy |
+| `GET /api/gateway/models/matrix` | Internal | List supporting backends grouped by canonical model ID |
+| `POST /api/gateway/models/{client}/failover` | Internal | Sync all supporting backends for a model into an ordered failover chain |
+| `POST /api/gateway/select` | Internal | Switch active backend for a client model at runtime |
+| `PUT /api/gateway/policy` | Internal | Update per-model routing strategy (`failover` \| `pinned`) |
+| `POST /api/gateway/cooldown/clear` | Internal | Clear backend and per-key cooldown timers |
+| `POST /api/gateway/test` | Internal | Live 4-protocol compatibility probe (`openai-chat`, `openai-responses`, `anthropic`, `gemini`) |
 | `GET /monitor` | Internal | Request monitor dashboard |
 
-### Request Headers
+### Request & Response Headers
 
-| Header | Required | Description |
-|:-------|:---------|:------------|
-| `Authorization` | Yes | API key in format `Bearer sk-xxx` |
-| `X-Nexus-Account` | No | Route to specific account by email or ID |
-| `X-Request-ID` | No | Custom request ID for tracing |
+| Header | Direction | Description |
+|:-------|:----------|:------------|
+| `Authorization` | Request (Required) | API key in format `Bearer sk-xxx` |
+| `X-Nexus-Provider` | Request (Optional) | Force request to a specific backend (`openai`, `openrouter`, `nvidia`, `amd`, `ollama`, `deepseek`, `gemini`, etc.) |
+| `X-Nexus-Account` | Request (Optional) | Route to specific legacy account by email or ID |
+| `X-Request-ID` | Request (Optional) | Custom request ID for tracing |
+| `X-Nexus-Provider` | Response | Resolved upstream backend ID |
+| `X-Nexus-Upstream-Model` | Response | Resolved target model sent upstream |
+| `X-Nexus-Route` | Response | Execution path (`passthrough`, `translated:<proto>`, or `legacy-oauth`) |
+| `X-Nexus-Route-Source` | Response | Route decision source (`header`, `prefix`, `db`, `catalog`, `legacy-default`) |
+
+## 🔀 Multi-Backend API Aggregation
+
+`oauth-llm-nexus` supports routing any of the 4 frontend protocols (`/v1/chat/completions`, `/v1/responses`, `/anthropic/v1/messages` or `/v1/messages`, `/v1beta/models/*`) across 7 built-in upstream presets configured in [`config/providers.yaml`](config/providers.yaml) and env vars (`NEXUS_<ID>_API_KEYS`, `<ID>_API_KEYS`, `NEXUS_<ID>_API_KEY`, `<ID>_API_KEY`) with `round-robin` or `sticky` multi-key relay and canonical model-to-backends discovery (`/ui`):
+
+| Provider ID | Default Endpoint | Env Key Variable | Native Protocols |
+|:------------|:-----------------|:-----------------|:-----------------|
+| `openai` | `https://api.openai.com/v1` | `NEXUS_OPENAI_API_KEY` | `openai-chat`, `openai-responses` |
+| `openrouter` | `https://openrouter.ai/api/v1` | `NEXUS_OPENROUTER_API_KEY` | `openai-chat`, `anthropic` |
+| `nvidia` | `https://integrate.api.nvidia.com/v1` | `NEXUS_NVIDIA_API_KEY` | `openai-chat` |
+| `amd` | `https://developer.amd.com.cn/radeon/api/v1` | `NEXUS_AMD_API_KEY` / `AMD_API_KEY` | `openai-chat`, `anthropic` |
+| `ollama` | `http://localhost:11434/v1` | *(no key required)* | `openai-chat`, `anthropic` |
+| `deepseek` | `https://api.deepseek.com/v1` | `NEXUS_DEEPSEEK_API_KEY` / `DEEPSEEK_API_KEY` | `openai-chat`, `anthropic` |
+| `gemini` | `https://generativelanguage.googleapis.com/v1beta` | `NEXUS_GEMINI_API_KEYS` / `GEMINI_API_KEYS` / `GEMINI_API_KEY` | `gemini` |
+
+See [`docs/design_proposals/api-aggregation-gateway.md`](docs/design_proposals/api-aggregation-gateway.md) for IR codec architecture, runtime switching examples, and protocol translation details.
 
 ## 🤝 Contributing
 

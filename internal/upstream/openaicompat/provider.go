@@ -18,6 +18,7 @@ const defaultTimeout = 180 * time.Second
 type Provider struct {
 	id            string
 	apiKey        string
+	allowEmptyKey bool
 	baseURL       string
 	// rootURL is baseURL with the trailing version segment stripped (e.g. https://openrouter.ai/api).
 	// Used by ForwardRequest to forward arbitrary sub-paths transparently.
@@ -56,8 +57,18 @@ func NewProviderWithClient(
 	}
 }
 
+// SetAllowEmptyKey permits keyless local backends such as Ollama.
+func (p *Provider) SetAllowEmptyKey(allow bool) {
+	if p != nil {
+		p.allowEmptyKey = allow
+	}
+}
+
 func (p *Provider) IsEnabled() bool {
-	return p != nil && p.id != "" && p.baseURL != "" && p.apiKey != ""
+	if p == nil || p.id == "" || p.baseURL == "" {
+		return false
+	}
+	return p.allowEmptyKey || p.apiKey != ""
 }
 
 // ForwardRequest transparently forwards any HTTP request to {rootURL}{subpath}.
@@ -101,7 +112,9 @@ func (p *Provider) ForwardRequest(
 	}
 
 	copyForwardHeaders(req.Header, incomingHeaders)
-	req.Header.Set("Authorization", "Bearer "+p.apiKey)
+	if p.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+p.apiKey)
+	}
 	for k, v := range p.staticHeaders {
 		req.Header.Set(k, v)
 	}
@@ -140,7 +153,9 @@ func (p *Provider) ForwardChatCompletions(
 	}
 
 	copyForwardHeaders(req.Header, incomingHeaders)
-	req.Header.Set("Authorization", "Bearer "+p.apiKey)
+	if p.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+p.apiKey)
+	}
 	for k, v := range p.staticHeaders {
 		req.Header.Set(k, v)
 	}

@@ -1,20 +1,26 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/pysugar/oauth-llm-nexus/internal/auth/google"
 	"github.com/pysugar/oauth-llm-nexus/internal/auth/token"
 	"github.com/pysugar/oauth-llm-nexus/internal/db"
+	gwprovider "github.com/pysugar/oauth-llm-nexus/internal/gateway/provider"
+	gwserver "github.com/pysugar/oauth-llm-nexus/internal/gateway/server"
 	"github.com/pysugar/oauth-llm-nexus/internal/providers/catalog"
 	"github.com/pysugar/oauth-llm-nexus/internal/proxy/handlers"
 	"github.com/pysugar/oauth-llm-nexus/internal/proxy/middleware"
 	"github.com/pysugar/oauth-llm-nexus/internal/proxy/monitor"
+	"github.com/pysugar/oauth-llm-nexus/internal/ui"
 	"github.com/pysugar/oauth-llm-nexus/internal/upstream"
 )
 
@@ -76,6 +82,90 @@ func main() {
 		log.Println("ℹ️ Gemini API proxy disabled (set NEXUS_GEMINI_API_KEY or GEMINI_API_KEY to enable)")
 	}
 
+	// Initialize unified multi-backend API aggregation gateway
+	gatewayRegistry, regErr := gwprovider.NewRegistry()
+	if regErr != nil {
+		log.Printf("⚠️ Gateway provider registry loaded with defaults: %v", regErr)
+	}
+	var gatewayIDs []string
+	var compatSpecs []catalog.GatewayProviderSpec
+	for _, p := range gatewayRegistry.List() {
+		gatewayIDs = append(gatewayIDs, p.ID)
+		var caps []string
+		if p.Endpoints.OpenAIChat != "" {
+			caps = append(caps, catalog.CapabilityOpenAIChat)
+		}
+		if p.Endpoints.OpenAIResponses != "" {
+			caps = append(caps, catalog.CapabilityOpenAIResponses)
+		}
+		if p.Endpoints.Anthropic != "" {
+			caps = append(caps, catalog.CapabilityAnthropicMessages)
+		}
+		apiKey := ""
+		if p.Keys != nil {
+			apiKey = p.Keys.Current()
+		}
+		authMode := p.AuthMode
+		if p.NoKey {
+			authMode = catalog.AuthModeNone
+		}
+		compatSpecs = append(compatSpecs, catalog.GatewayProviderSpec{
+			ID:             p.ID,
+			Enabled:        p.Enabled,
+			RuntimeEnabled: p.Available(),
+			BaseURL:        p.BaseURL(),
+			AuthMode:       authMode,
+			Capabilities:   caps,
+			StaticHeaders:  p.StaticHeaders,
+			APIKey:         apiKey,
+			Timeout:        p.Timeout,
+		})
+	}
+	db.RegisterGatewayProviders(gatewayIDs)
+	catalog.RegisterGatewayProviders(compatSpecs)
+	handlers.SetGatewayProviderRegistry(gatewayRegistry)
+
+	var legacyGeminiHandler http.Handler
+	if geminiAIStudioEnabled {
+		legacyGeminiHandler = handlers.GeminiAIStudioProxyHandlerWithMonitor(proxyMonitor)
+	}
+	gatewayServer := gwserver.New(gatewayRegistry, database, proxyMonitor, gwserver.LegacyHandlers{
+		OpenAIChat:        handlers.OpenAIChatHandlerWithMonitor(tokenManager, upstreamClient, proxyMonitor),
+		OpenAIResponses:   handlers.OpenAIResponsesHandlerWithMonitor(database, tokenManager, upstreamClient, proxyMonitor),
+		AnthropicMessages: handlers.ClaudeMessagesHandlerWithMonitor(tokenManager, upstreamClient, proxyMonitor),
+		GeminiAIStudio:    legacyGeminiHandler,
+		Available: func(providerID string) bool {
+			switch providerID {
+			case "google":
+				return db.HasActiveOAuthAccounts(database)
+			case "codex":
+				return handlers.CodexProvider != nil
+			case "vertex":
+				return handlers.VertexAIStudioProvider != nil && handlers.VertexAIStudioProvider.IsEnabled()
+			case "gemini":
+				return handlers.GeminiAIStudioProvider != nil && handlers.GeminiAIStudioProvider.IsEnabled()
+			default:
+				return false
+			}
+		},
+	})
+	log.Printf("✅ Gateway server initialized (%d providers, %d available)", len(gatewayRegistry.List()), len(gatewayRegistry.Available()))
+
+	// Warm upstream model catalogs concurrently in the background so first-request routing has 0ms discovery overhead.
+	go func() {
+		warmCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		var wg sync.WaitGroup
+		for _, p := range gatewayRegistry.Available() {
+			wg.Add(1)
+			go func(prov *gwprovider.Provider) {
+				defer wg.Done()
+				_, _ = gatewayRegistry.Catalog().Refresh(warmCtx, prov)
+			}(p)
+		}
+		wg.Wait()
+	}()
+
 	// Create router
 	r := chi.NewRouter()
 	r.Use(chimiddleware.Logger)
@@ -105,6 +195,11 @@ func main() {
 
 	// Dashboard (protected if NEXUS_ADMIN_PASSWORD is set)
 	r.With(optionalAdminAuth).Get("/", handlers.DashboardHandler(database))
+
+	// Standalone Magpie-inspired Gateway UI console (protected if NEXUS_ADMIN_PASSWORD is set)
+	uiHandler := ui.Handler()
+	r.With(optionalAdminAuth).Get("/ui", uiHandler.ServeHTTP)
+	r.With(optionalAdminAuth).Get("/ui/*", uiHandler.ServeHTTP)
 
 	// Tools page (protected if NEXUS_ADMIN_PASSWORD is set)
 	r.With(optionalAdminAuth).Get("/tools", handlers.ToolsPageHandler())
@@ -164,6 +259,23 @@ func main() {
 		r.Get("/providers", handlers.ProvidersHandler())
 		r.Get("/providers/allowed", handlers.AllowedProvidersHandler())
 
+		// API Aggregation Gateway Admin API
+		r.Get("/gateway/providers", gatewayServer.HandleListProviders)
+		r.Patch("/gateway/providers/{id}", gatewayServer.HandleUpdateProvider)
+		r.Post("/gateway/providers/{id}/refresh", gatewayServer.HandleRefreshProvider)
+		r.Get("/gateway/stats", gatewayServer.HandleGatewayStats)
+		r.Post("/gateway/stats/reset", gatewayServer.HandleResetGatewayStats)
+		r.Get("/gateway/models", gatewayServer.HandleListGatewayModels)
+		r.Get("/gateway/models/matrix", gatewayServer.HandleModelsMatrix)
+		r.Get("/gateway/models/{client}", gatewayServer.HandleGetGatewayModel)
+		r.Post("/gateway/models/{client}/select", gatewayServer.HandleSelectModelBackend)
+		r.Post("/gateway/models/{client}/failover", gatewayServer.HandleSyncModelFailover)
+		r.Put("/gateway/models/{client}/policy", gatewayServer.HandleSetModelPolicy)
+		r.Post("/gateway/select", gatewayServer.HandleSelectModelBackend)
+		r.Put("/gateway/policy", gatewayServer.HandleSetModelPolicy)
+		r.Post("/gateway/cooldown/clear", gatewayServer.HandleClearCooldown)
+		r.Post("/gateway/test", gatewayServer.HandleGatewayTest)
+
 		// Request Monitor
 		r.Get("/request-logs", handlers.GetRequestLogsHandler(proxyMonitor))
 		r.Get("/request-logs/history", handlers.GetRequestLogsHistoryHandler(proxyMonitor))
@@ -177,12 +289,13 @@ func main() {
 	// Protected Routes (API Key Required)
 	// ============================================
 
-	// OpenAI-compatible API
+	// OpenAI-compatible API (plus root Anthropic /v1/messages alias)
 	r.Route("/v1", func(r chi.Router) {
 		r.Use(middleware.APIKeyAuth(database))
-		r.Post("/chat/completions", handlers.OpenAIChatHandlerWithMonitor(tokenManager, upstreamClient, proxyMonitor))
-		r.Get("/models", handlers.OpenAIModelsListHandler(database))
-		r.Post("/responses", handlers.OpenAIResponsesHandlerWithMonitor(database, tokenManager, upstreamClient, proxyMonitor))
+		r.Post("/chat/completions", gatewayServer.HandleOpenAIChat)
+		r.Get("/models", gatewayServer.HandleOpenAIModelsList)
+		r.Post("/responses", gatewayServer.HandleOpenAIResponses)
+		r.Post("/messages", gatewayServer.HandleAnthropicMessages)
 		r.Get("/codex/quota", handlers.CodexQuotaHandler())
 		if vertexAIStudioEnabled {
 			r.Post("/publishers/google/models/*", handlers.VertexAIStudioProxyHandlerWithMonitor(proxyMonitor))
@@ -196,7 +309,7 @@ func main() {
 	//
 	// Examples:
 	//   POST /openrouter/v1/chat/completions  → https://openrouter.ai/api/v1/chat/completions
-	//   POST /openrouter/v1/messages          → https://openrouter.ai/api/v1/messages
+	//   POST /amd/v1/chat/completions         → https://developer.amd.com.cn/radeon/api/v1/chat/completions
 	r.Route("/{provider}", func(r chi.Router) {
 		r.Use(middleware.APIKeyAuth(database))
 		r.HandleFunc("/*", handlers.GenericCompatProxyHandlerWithMonitor(proxyMonitor))
@@ -206,12 +319,12 @@ func main() {
 	r.Route("/anthropic", func(r chi.Router) {
 		r.Use(middleware.APIKeyAuth(database))
 		r.Route("/v1", func(r chi.Router) {
-			r.Post("/messages", handlers.ClaudeMessagesHandlerWithMonitor(tokenManager, upstreamClient, proxyMonitor))
-			r.Get("/models", handlers.ClaudeModelsHandler(database))
+			r.Post("/messages", gatewayServer.HandleAnthropicMessages)
+			r.Get("/models", gatewayServer.HandleAnthropicModelsList)
 		})
 	})
 
-	// GenAI-compatible API
+	// GenAI-compatible API (legacy Cloud Code OAuth)
 	r.Route("/genai", func(r chi.Router) {
 		r.Use(middleware.APIKeyAuth(database))
 		r.Route("/v1beta/models", func(r chi.Router) {
@@ -221,7 +334,7 @@ func main() {
 		})
 	})
 
-	// Gemini API:
+	// Unified Gemini API frontend (translates to any backend or delegates non-generation actions):
 	// /v1beta/models
 	// /v1beta/models/{model}
 	// /v1beta/models/{model}:generateContent
@@ -229,14 +342,14 @@ func main() {
 	// /v1beta/models/{model}:countTokens
 	// /v1beta/models/{model}:embedContent
 	// /v1beta/models/{model}:batchEmbedContents
-	if geminiAIStudioEnabled {
-		r.Route("/v1beta", func(r chi.Router) {
-			r.Use(middleware.APIKeyAuth(database))
-			r.Get("/models", handlers.GeminiAIStudioProxyHandlerWithMonitor(proxyMonitor))
-			r.Get("/models/*", handlers.GeminiAIStudioProxyHandlerWithMonitor(proxyMonitor))
-			r.Post("/models/*", handlers.GeminiAIStudioProxyHandlerWithMonitor(proxyMonitor))
-		})
-	}
+	// /v1beta/openai/chat/completions
+	r.Route("/v1beta", func(r chi.Router) {
+		r.Use(middleware.APIKeyAuth(database))
+		r.Get("/models", gatewayServer.HandleGeminiModels)
+		r.Get("/models/*", gatewayServer.HandleGeminiModels)
+		r.Post("/models/*", gatewayServer.HandleGeminiModels)
+		r.Post("/openai/chat/completions", gatewayServer.HandleOpenAIChat)
+	})
 
 	// Start server
 	host := os.Getenv("HOST")
@@ -259,15 +372,14 @@ func main() {
 	}
 
 	log.Printf("🚀 OAuth-LLM-Nexus starting on http://%s", addr)
-	log.Printf("📊 Dashboard: http://%s", displayURL)
+	log.Printf("📊 Gateway UI: http://%s/ui", displayURL)
+	log.Printf("📊 Dashboard (Legacy): http://%s", displayURL)
 	log.Printf("🔌 OpenAI API: http://%s/v1", displayURL)
-	log.Printf("🔌 Anthropic API: http://%s/anthropic/v1", displayURL)
+	log.Printf("🔌 Anthropic API: http://%s/anthropic/v1 (and /v1/messages)", displayURL)
+	log.Printf("🔌 Gemini API: http://%s/v1beta/models", displayURL)
 	log.Printf("🔌 GenAI API: http://%s/genai/v1beta", displayURL)
 	if vertexAIStudioEnabled {
 		log.Printf("🔌 Vertex AI API: http://%s/v1/publishers/google/models/{model}:<action>", displayURL)
-	}
-	if geminiAIStudioEnabled {
-		log.Printf("🔌 Gemini API: http://%s/v1beta/models", displayURL)
 	}
 
 	if err := http.ListenAndServe(addr, r); err != nil {

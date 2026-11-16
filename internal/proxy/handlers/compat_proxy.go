@@ -32,7 +32,11 @@ type genericCompatForwarder interface {
 
 // newGenericCompatForwarder is a factory var to allow injection in tests.
 var newGenericCompatForwarder = func(info catalog.ProviderInfo, apiKey string, timeout time.Duration) genericCompatForwarder {
-	return openaicompat.NewProvider(info.ID, apiKey, info.BaseURL, info.RootURL, timeout, info.StaticHeaders)
+	p := openaicompat.NewProvider(info.ID, apiKey, info.BaseURL, info.RootURL, timeout, info.StaticHeaders)
+	if info.AuthMode == catalog.AuthModeNone {
+		p.SetAllowEmptyKey(true)
+	}
+	return p
 }
 
 // GenericCompatProxyHandler returns an http.HandlerFunc that transparently forwards

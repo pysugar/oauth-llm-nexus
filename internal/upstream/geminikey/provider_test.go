@@ -397,3 +397,49 @@ func TestNewProviderFromEnv_MultiKeys_StripsQuotes(t *testing.T) {
 		t.Fatalf("expected 3 keys after quote stripping, got %d", provider.KeyCount())
 	}
 }
+
+func TestNewProviderFromEnv_GeminiAPIKeysAnd503Relay(t *testing.T) {
+	oldGetenv := getenv
+	defer func() { getenv = oldGetenv }()
+
+	getenv = func(key string) string {
+		if key == "GEMINI_API_KEYS" {
+			return "gem-k1;gem-k2"
+		}
+		return ""
+	}
+	p := NewProviderFromEnv()
+	if p == nil || p.KeyCount() != 2 {
+		t.Fatalf("expected 2 keys from GEMINI_API_KEYS, got %+v", p)
+	}
+
+	var seen []string
+	client := &http.Client{
+		Timeout: time.Minute,
+		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			k := r.URL.Query().Get("key")
+			seen = append(seen, k)
+			if k == "gem-k1" {
+				return &http.Response{
+					StatusCode: http.StatusServiceUnavailable,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(bytes.NewBufferString(`{"error":{"message":"high demand"}}`)),
+				}, nil
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(bytes.NewBufferString(`{"ok":true}`)),
+			}, nil
+		}),
+	}
+	p2 := NewProviderWithClient([]string{"gem-k1", "gem-k2"}, "", time.Minute, client)
+	resp, err := p2.Forward(context.Background(), http.MethodPost, "/v1beta/models/gemini-4-hydrogen:generateContent", nil, http.Header{}, []byte(`{}`))
+	if err != nil {
+		t.Fatalf("Forward 503 relay error: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || len(seen) != 2 || seen[0] != "gem-k1" || seen[1] != "gem-k2" {
+		t.Fatalf("expected 503 relay [gem-k1, gem-k2] -> 200, code=%d seen=%v", resp.StatusCode, seen)
+	}
+}

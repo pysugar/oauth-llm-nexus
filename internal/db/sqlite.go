@@ -24,8 +24,10 @@ import (
 // Key format: "clientModel:targetProvider" -> "targetModel"
 var (
 	modelRouteCache = make(map[string]string)
-	// providerRouteCache maps clientModel -> provider for quick provider lookup
+	// providerRouteCache maps clientModel -> primary provider (first priority/id wins)
 	providerRouteCache  = make(map[string]string)
+	orderedRoutesCache  = make(map[string][]models.ModelRoute)
+	modelPolicyCache    = make(map[string]string)
 	modelRouteCacheLock sync.RWMutex
 )
 
@@ -43,7 +45,7 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 	}
 
 	// Auto-migrate all models
-	if err := db.AutoMigrate(&models.Account{}, &models.Config{}, &models.ModelRoute{}); err != nil {
+	if err := db.AutoMigrate(&models.Account{}, &models.Config{}, &models.ModelRoute{}, &models.ModelPolicy{}); err != nil {
 		return nil, err
 	}
 
@@ -101,8 +103,9 @@ func RegenerateAPIKey(db *gorm.DB) string {
 // YAMLRoute represents a single route entry in YAML
 type YAMLRoute struct {
 	Client   string `yaml:"client"`   // Client-facing model name
-	Provider string `yaml:"provider"` // Backend OAuth provider (e.g., "google")
+	Provider string `yaml:"provider"` // Backend provider (e.g., "google", "openai", "deepseek")
 	Target   string `yaml:"target"`   // Backend model name
+	Priority int    `yaml:"priority"` // Optional ordering priority (lower wins)
 }
 
 // YAMLConfig represents the structure of model_routes.yaml
@@ -184,6 +187,7 @@ func ensureModelRoutes(db *gorm.DB) {
 			ClientModel:    route.Client,
 			TargetProvider: provider,
 			TargetModel:    route.Target,
+			Priority:       route.Priority,
 			IsActive:       true,
 		})
 	}
@@ -194,28 +198,54 @@ func ensureModelRoutes(db *gorm.DB) {
 
 // loadModelRouteCache loads all active routes into memory cache
 // Cache key format: "clientModel:targetProvider"
+// RefreshModelRouteCache reloads active routes and model policies into memory.
+func RefreshModelRouteCache(db *gorm.DB) {
+	loadModelRouteCache(db)
+}
+
 func loadModelRouteCache(db *gorm.DB) {
 	var routes []models.ModelRoute
 	db.Where("is_active = ?", true).
-		Order("id asc").
+		Order("priority asc, id asc").
 		Find(&routes)
+
+	policies := make(map[string]string)
+	if db.Migrator().HasTable(&models.ModelPolicy{}) {
+		var policyRows []models.ModelPolicy
+		db.Find(&policyRows)
+		for _, p := range policyRows {
+			policies[p.ClientModel] = normalizePolicyStrategy(p.Strategy)
+		}
+	}
 
 	modelRouteCacheLock.Lock()
 	defer modelRouteCacheLock.Unlock()
 
 	modelRouteCache = make(map[string]string)
 	providerRouteCache = make(map[string]string)
+	orderedRoutesCache = make(map[string][]models.ModelRoute)
+	modelPolicyCache = policies
+
 	for _, r := range routes {
 		provider := NormalizeProvider(r.TargetProvider)
+		r.TargetProvider = provider
 		key := r.ClientModel + ":" + provider
 		modelRouteCache[key] = r.TargetModel
-		// Also cache clientModel -> provider mapping (first wins)
+		orderedRoutesCache[r.ClientModel] = append(orderedRoutesCache[r.ClientModel], r)
+		// Also cache clientModel -> primary provider mapping (highest priority / lowest id wins)
 		if _, exists := providerRouteCache[r.ClientModel]; !exists {
 			providerRouteCache[r.ClientModel] = provider
 		}
-		log.Printf("  - %s -> %s (%s)", r.ClientModel, r.TargetModel, provider)
+		log.Printf("  - %s -> %s (%s, priority=%d)", r.ClientModel, r.TargetModel, provider, r.Priority)
 	}
 	log.Printf("📋 Loaded %d model routes into cache", len(routes))
+}
+
+func normalizePolicyStrategy(s string) string {
+	if strings.EqualFold(strings.TrimSpace(s), models.StrategyPinned) {
+		return models.StrategyPinned
+	}
+	return models.StrategyFailover
 }
 
 func formatSensitiveAPIKey(apiKey string) string {
@@ -309,11 +339,165 @@ func normalizeProtocolForLog(protocol string) string {
 	return p
 }
 
-// GetAllModelRoutes returns all routes from database
+// GetAllModelRoutes returns all routes from database ordered by client_model and priority.
 func GetAllModelRoutes(db *gorm.DB) []models.ModelRoute {
 	var routes []models.ModelRoute
-	db.Order("target_provider, client_model").Find(&routes)
+	db.Order("client_model, priority asc, id asc").Find(&routes)
 	return routes
+}
+
+// GetModelCandidates returns ordered active candidate routes for clientModel.
+func GetModelCandidates(clientModel string) []models.ModelRoute {
+	modelRouteCacheLock.RLock()
+	defer modelRouteCacheLock.RUnlock()
+	src := orderedRoutesCache[clientModel]
+	if len(src) == 0 {
+		return nil
+	}
+	out := make([]models.ModelRoute, len(src))
+	copy(out, src)
+	return out
+}
+
+// GetAllModelCandidates returns a snapshot of all ordered active routes keyed by clientModel.
+func GetAllModelCandidates() map[string][]models.ModelRoute {
+	modelRouteCacheLock.RLock()
+	defer modelRouteCacheLock.RUnlock()
+	out := make(map[string][]models.ModelRoute, len(orderedRoutesCache))
+	for k, v := range orderedRoutesCache {
+		cp := make([]models.ModelRoute, len(v))
+		copy(cp, v)
+		out[k] = cp
+	}
+	return out
+}
+
+// SelectModelProvider promotes targetProvider to Priority 0 for clientModel and shifts other
+// candidates down in deterministic order, creating the route if it does not yet exist.
+func SelectModelProvider(db *gorm.DB, clientModel, targetProvider, targetModel string) error {
+	clientModel = strings.TrimSpace(clientModel)
+	targetProvider = NormalizeProvider(targetProvider)
+	if clientModel == "" || targetProvider == "" {
+		return fmt.Errorf("clientModel and targetProvider are required")
+	}
+
+	err := db.Transaction(func(tx *gorm.DB) error {
+		var existing []models.ModelRoute
+		if err := tx.Where("client_model = ?", clientModel).Order("priority asc, id asc").Find(&existing).Error; err != nil {
+			return err
+		}
+
+		var selected *models.ModelRoute
+		var others []models.ModelRoute
+		for i := range existing {
+			if NormalizeProvider(existing[i].TargetProvider) == targetProvider {
+				copyRow := existing[i]
+				selected = &copyRow
+			} else {
+				others = append(others, existing[i])
+			}
+		}
+
+		if selected == nil {
+			mapped := strings.TrimSpace(targetModel)
+			if mapped == "" {
+				mapped = clientModel
+			}
+			row := models.ModelRoute{
+				ClientModel:    clientModel,
+				TargetProvider: targetProvider,
+				TargetModel:    mapped,
+				Priority:       0,
+				IsActive:       true,
+			}
+			if err := tx.Create(&row).Error; err != nil {
+				return err
+			}
+		} else {
+			updates := map[string]any{
+				"priority":  0,
+				"is_active": true,
+			}
+			if m := strings.TrimSpace(targetModel); m != "" {
+				updates["target_model"] = m
+			}
+			if err := tx.Model(&models.ModelRoute{}).Where("id = ?", selected.ID).Updates(updates).Error; err != nil {
+				return err
+			}
+		}
+
+		for idx, other := range others {
+			if err := tx.Model(&models.ModelRoute{}).Where("id = ?", other.ID).Update("priority", idx+1).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	loadModelRouteCache(db)
+	return nil
+}
+
+// GetModelPolicy returns the routing strategy ("failover" or "pinned") for clientModel.
+func GetModelPolicy(clientModel string) string {
+	modelRouteCacheLock.RLock()
+	defer modelRouteCacheLock.RUnlock()
+	if s, ok := modelPolicyCache[clientModel]; ok && s != "" {
+		return s
+	}
+	return models.StrategyFailover
+}
+
+// GetAllModelPolicies returns all configured per-model strategies.
+func GetAllModelPolicies() map[string]string {
+	modelRouteCacheLock.RLock()
+	defer modelRouteCacheLock.RUnlock()
+	out := make(map[string]string, len(modelPolicyCache))
+	for k, v := range modelPolicyCache {
+		out[k] = v
+	}
+	return out
+}
+
+// SetModelPolicy persists the routing strategy for clientModel and updates the cache.
+func SetModelPolicy(db *gorm.DB, clientModel, strategy string) error {
+	clientModel = strings.TrimSpace(clientModel)
+	if clientModel == "" {
+		return fmt.Errorf("client_model is required")
+	}
+	norm := strings.ToLower(strings.TrimSpace(strategy))
+	if norm != models.StrategyFailover && norm != models.StrategyPinned {
+		return fmt.Errorf("invalid strategy %q (must be %q or %q)", strategy, models.StrategyFailover, models.StrategyPinned)
+	}
+
+	var existing models.ModelPolicy
+	res := db.Where("client_model = ?", clientModel).First(&existing)
+	if res.Error == nil {
+		if err := db.Model(&existing).Update("strategy", norm).Error; err != nil {
+			return err
+		}
+	} else {
+		if err := db.Create(&models.ModelPolicy{
+			ClientModel: clientModel,
+			Strategy:    norm,
+		}).Error; err != nil {
+			return err
+		}
+	}
+	loadModelRouteCache(db)
+	return nil
+}
+
+// HasActiveOAuthAccounts returns true when at least one active legacy OAuth account exists.
+func HasActiveOAuthAccounts(db *gorm.DB) bool {
+	if db == nil || !db.Migrator().HasTable(&models.Account{}) {
+		return false
+	}
+	var count int64
+	db.Model(&models.Account{}).Where("is_active = ?", true).Count(&count)
+	return count > 0
 }
 
 // CreateModelRoute creates a new route and refreshes cache

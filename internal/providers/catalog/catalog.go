@@ -23,6 +23,7 @@ const (
 	ModelScopeUnknownPrefixOnly = "unknown_prefix_only"
 
 	AuthModeBearer = "bearer"
+	AuthModeNone   = "none"
 
 	defaultTimeout = 180 * time.Second
 )
@@ -107,6 +108,76 @@ func ResetForTest() {
 	initialized = false
 	providerByID = nil
 	providerList = nil
+}
+
+// GatewayProviderSpec describes a gateway provider registered into the compat catalog bridge.
+type GatewayProviderSpec struct {
+	ID             string
+	Enabled        bool
+	RuntimeEnabled bool
+	BaseURL        string
+	RootURL        string
+	AuthMode       string
+	Capabilities   []string
+	StaticHeaders  map[string]string
+	APIKey         string
+	Timeout        time.Duration
+}
+
+// RegisterGatewayProviders merges gateway providers into the legacy compat catalog
+// so /{provider}/* transparent forwarding works for all gateway presets.
+func RegisterGatewayProviders(specs []GatewayProviderSpec) {
+	ensureInitialized()
+
+	stateMu.Lock()
+	defer stateMu.Unlock()
+
+	if providerByID == nil {
+		providerByID = make(map[string]runtimeProvider)
+	}
+	for _, s := range specs {
+		id := normalizeProviderID(s.ID)
+		if id == "" || strings.TrimSpace(s.BaseURL) == "" {
+			continue
+		}
+		if existing, exists := providerByID[id]; exists && existing.apiKey != "" {
+			continue
+		}
+		rootURL := strings.TrimRight(strings.TrimSpace(s.RootURL), "/")
+		if rootURL == "" {
+			rootURL = deriveRootURL(strings.TrimSpace(s.BaseURL))
+		}
+		timeout := s.Timeout
+		if timeout <= 0 {
+			timeout = defaultTimeout
+		}
+		authMode := strings.TrimSpace(strings.ToLower(s.AuthMode))
+		if authMode == "" {
+			authMode = AuthModeBearer
+		}
+		info := ProviderInfo{
+			ID:             id,
+			Enabled:        s.Enabled,
+			RuntimeEnabled: s.RuntimeEnabled,
+			BaseURL:        strings.TrimSpace(s.BaseURL),
+			RootURL:        rootURL,
+			AuthMode:       authMode,
+			ModelScope:     ModelScopeAllModels,
+			Capabilities:   normalizeCapabilities(s.Capabilities),
+			StaticHeaders:  normalizeHeaders(s.StaticHeaders),
+			APIKeyEnv:      providerEnvName(id, "API_KEY"),
+			BaseURLEnv:     providerEnvName(id, "BASE_URL"),
+		}
+		if _, exists := providerByID[id]; !exists {
+			providerList = append(providerList, id)
+		}
+		providerByID[id] = runtimeProvider{
+			info:    info,
+			apiKey:  strings.TrimSpace(s.APIKey),
+			timeout: timeout,
+		}
+	}
+	sort.Strings(providerList)
 }
 
 // GetProviders returns configured OpenAI-compatible providers.

@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Nexus Gateway UI</title>
+  <link rel="icon" href="/ui/favicon.svg" type="image/svg+xml">
+  <script>
+    (function () {
+      try {
+        var theme = localStorage.getItem("nexus.ui.theme") || "auto";
+        if (theme === "light" || theme === "dark") {
+          document.documentElement.setAttribute("data-theme", theme);
+        }
+      } catch (_) {}
+    })();
+  </script>
+  <link rel="stylesheet" href="/ui/app.css">
+</head>
+<body>
+  <header class="top">
+    <div class="top-left">
+      <a href="/ui#providers" class="brand">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="4" width="18" height="6" rx="1.8"/>
+            <rect x="3" y="14" width="18" height="6" rx="1.8"/>
+            <circle cx="7" cy="7" r="1" fill="currentColor" stroke="none"/>
+            <circle cx="7" cy="17" r="1" fill="currentColor" stroke="none"/>
+          </svg>
+        </span>
+        <span class="brand-name">Nexus</span>
+        <span class="status-pill" id="globalStatusPill">
+          <i class="dot"></i>
+          <span id="globalStatusText">Loading…</span>
+        </span>
+      </a>
+    </div>
+
+    <nav class="seg nav-seg" id="mainNav" aria-label="Main navigation">
+      <button type="button" class="seg-btn on" data-view="providers"></button>
+      <button type="button" class="seg-btn" data-view="routing"></button>
+      <button type="button" class="seg-btn" data-view="tester"></button>
+      <button type="button" class="seg-btn" data-view="connect"></button>
+    </nav>
+
+    <div class="top-actions">
+      <button type="button" class="btn subtle" id="clearAllCooldownsBtn" hidden></button>
+      <button type="button" class="btn subtle" id="syncAllBtn" title="Refresh all gateway state">↻ <span id="syncBtnLabel"></span></button>
+      <button type="button" class="btn subtle mono" id="langToggleBtn">中 / EN</button>
+      <button type="button" class="btn subtle" id="themeToggleBtn">Theme</button>
+      <a href="/" class="btn subtle link-legacy" id="legacyLink">Legacy ↗</a>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <!-- View 1: Providers & Available Models -->
+    <section class="view" id="view-providers" data-view-panel="providers">
+      <div class="split-layout">
+        <aside class="rail card">
+          <div class="rail-head">
+            <h2 id="providersRailTitle"></h2>
+            <span class="muted-count" id="providersRailCount">0</span>
+          </div>
+          <div class="rail-list" id="providersList"></div>
+          <div class="rail-foot" id="providersRailFoot"></div>
+        </aside>
+
+        <div class="detail-pane" id="providerDetailPane">
+          <div class="empty-state card" id="providerDetailEmpty">Loading providers…</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- View 2: Routing & Model Switching -->
+    <section class="view" id="view-routing" data-view-panel="routing" hidden>
+      <div class="card panel">
+        <div class="panel-head">
+          <div>
+            <h2 id="routeEditorTitle"></h2>
+            <p class="sub" id="routeEditorSub"></p>
+          </div>
+        </div>
+        <div class="form-grid" id="routeBindForm">
+          <div class="field">
+            <label for="bindClientModel" id="lblClientModel"></label>
+            <input type="text" id="bindClientModel" list="allModelOptions" placeholder="gpt-4o-mini / claude-sonnet-4-5">
+          </div>
+          <div class="field">
+            <label for="bindProvider" id="lblBackendProvider"></label>
+            <select id="bindProvider"></select>
+          </div>
+          <div class="field">
+            <label for="bindTargetModel" id="lblTargetModel"></label>
+            <input type="text" id="bindTargetModel" list="bindProviderModels" placeholder="Defaults to client model">
+            <datalist id="bindProviderModels"></datalist>
+          </div>
+          <div class="field">
+            <label for="bindStrategy" id="lblStrategy"></label>
+            <select id="bindStrategy">
+              <option value="failover">Failover</option>
+              <option value="pinned">Pinned</option>
+            </select>
+          </div>
+          <div class="field form-actions">
+            <button type="button" class="btn primary" id="bindSelectBtn"></button>
+            <button type="button" class="btn" id="bindAddBackupBtn"></button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card panel">
+        <div class="toolbar">
+          <div class="seg" id="routingFilterTabs">
+            <button type="button" class="seg-btn on" data-rtab="routes"></button>
+            <button type="button" class="seg-btn" data-rtab="matrix"></button>
+            <button type="button" class="seg-btn" data-rtab="catalog"></button>
+            <button type="button" class="seg-btn" data-rtab="legacy"></button>
+            <button type="button" class="seg-btn" data-rtab="all"></button>
+          </div>
+          <div class="toolbar-right">
+            <button type="button" class="toggle-pill" id="matrixMultiOnlyBtn" hidden>
+              <i class="toggle-dot"></i>
+              <span id="matrixMultiOnlyLabel"></span>
+            </button>
+            <div class="search-box">
+              <input type="search" id="routingSearchInput" placeholder="Filter model, provider, or target…">
+            </div>
+          </div>
+        </div>
+        <div class="routes-list" id="routingModelsList"></div>
+      </div>
+    </section>
+
+    <!-- View 3: 3-Protocol Compatibility Tester -->
+    <section class="view" id="view-tester" data-view-panel="tester" hidden>
+      <div class="card panel">
+        <div class="panel-head">
+          <div>
+            <h2 id="testerTitle"></h2>
+            <p class="sub" id="testerSub"></p>
+          </div>
+          <div class="seg" id="testerModeSeg">
+            <button type="button" class="seg-btn on" data-tmode="sync">Sync JSON</button>
+            <button type="button" class="seg-btn" data-tmode="stream">Stream SSE</button>
+            <button type="button" class="seg-btn" data-tmode="tools">Tool Call</button>
+          </div>
+        </div>
+
+        <div class="tester-controls">
+          <div class="field grow">
+            <label for="testerModelInput" id="lblTesterModel"></label>
+            <input type="text" id="testerModelInput" list="allModelOptions" placeholder="gemini-4-hydrogen / deepseek-r1 / gpt-5.4-nano">
+          </div>
+          <div class="field">
+            <label for="testerProviderSelect" id="lblTesterProvider"></label>
+            <select id="testerProviderSelect">
+              <option value="">Auto (Follow Route / Catalog)</option>
+            </select>
+          </div>
+          <div class="field grow">
+            <label for="testerPromptInput" id="lblTesterPrompt"></label>
+            <input type="text" id="testerPromptInput" value="Reply briefly with OK.">
+          </div>
+        </div>
+
+        <div class="tester-cta-row">
+          <button type="button" class="btn primary" id="testAllThreeBtn"></button>
+          <button type="button" class="btn" data-single-proto="openai-chat">OpenAI Chat</button>
+          <button type="button" class="btn" data-single-proto="openai-responses">OpenAI Responses</button>
+          <button type="button" class="btn" data-single-proto="anthropic">Anthropic Messages</button>
+          <button type="button" class="btn" data-single-proto="gemini">Google Gemini</button>
+        </div>
+      </div>
+
+      <div class="card tester-summary-bar" id="testerSummaryBar" hidden></div>
+      <div class="protocol-grid" id="testerResultsGrid"></div>
+    </section>
+
+    <!-- View 4: Client Connect Snippets & Recent Calls -->
+    <section class="view" id="view-connect" data-view-panel="connect" hidden>
+      <div class="card panel">
+        <div class="panel-head">
+          <div>
+            <h2 id="connectTitle"></h2>
+            <p class="sub" id="connectSub"></p>
+          </div>
+          <div class="seg" id="connectFlavorSeg">
+            <button type="button" class="seg-btn on" data-flavor="openai-chat">OpenAI Chat</button>
+            <button type="button" class="seg-btn" data-flavor="openai-responses">Responses</button>
+            <button type="button" class="seg-btn" data-flavor="anthropic">Anthropic</button>
+            <button type="button" class="seg-btn" data-flavor="gemini">Gemini</button>
+          </div>
+        </div>
+
+        <div class="connect-meta" id="connectMeta"></div>
+
+        <div class="snip-tabs-row">
+          <div class="seg" id="connectLangSeg">
+            <button type="button" class="seg-btn on" data-clang="shell">Shell env</button>
+            <button type="button" class="seg-btn" data-clang="curl">curl</button>
+            <button type="button" class="seg-btn" data-clang="python">Python SDK</button>
+          </div>
+          <button type="button" class="btn" id="copySnippetBtn"></button>
+        </div>
+        <pre class="code-block" id="connectSnippetPre"><code id="connectSnippetCode"></code></pre>
+      </div>
+
+      <div class="card panel">
+        <div class="panel-head">
+          <div>
+            <h2 id="activityTitle"></h2>
+            <p class="sub" id="activitySub"></p>
+          </div>
+          <div class="top-actions">
+            <button type="button" class="btn" id="toggleLoggingBtn"></button>
+            <button type="button" class="btn subtle" id="refreshLogsBtn">↻</button>
+          </div>
+        </div>
+        <div id="activityLogsList"></div>
+      </div>
+    </section>
+  </main>
+
+  <datalist id="allModelOptions"></datalist>
+  <div class="toast" id="toast" hidden></div>
+  <script src="/ui/app.js"></script>
+</body>
+</html>

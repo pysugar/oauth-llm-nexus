@@ -1,0 +1,77 @@
+# Gateway upstream API provider configuration.
+# API keys are injected via environment variables: NEXUS_<PROVIDER_ID>_API_KEY,
+# NEXUS_<PROVIDER_ID>_API_KEYS, <PROVIDER_ID>_API_KEYS (e.g. GEMINI_API_KEYS),
+# or <PROVIDER_ID>_API_KEY (comma/semicolon-separated).
+# Presets supply built-in endpoints, auth modes, key strategies, and codec quirks.
+
+providers:
+  - id: openai
+    preset: openai
+    display_name: OpenAI
+    enabled: true
+    endpoints:
+      openai_chat: https://api.openai.com/v1
+      openai_responses: https://api.openai.com/v1
+    native: [openai-chat, openai-responses]
+    prefer: openai-chat
+
+  - id: openrouter
+    preset: openrouter
+    display_name: OpenRouter
+    enabled: true
+    free_only: true
+    endpoints:
+      openai_chat: https://openrouter.ai/api/v1
+      anthropic: https://openrouter.ai/api
+    native: [openai-chat, anthropic]
+    prefer: openai-chat
+
+  - id: nvidia
+    preset: nvidia
+    display_name: NVIDIA NIM
+    enabled: true
+    endpoints:
+      openai_chat: https://integrate.api.nvidia.com/v1
+    native: [openai-chat]
+    prefer: openai-chat
+
+  - id: amd
+    preset: amd
+    display_name: AMD Radeon Token Factory
+    enabled: true
+    endpoints:
+      openai_chat: https://developer.amd.com.cn/radeon/api/v1
+      anthropic: https://developer.amd.com.cn/radeon/api
+    native: [openai-chat, anthropic]
+    prefer: openai-chat
+
+  - id: ollama
+    preset: ollama
+    display_name: Ollama Local
+    enabled: true
+    endpoints:
+      openai_chat: http://localhost:11434/v1
+      anthropic: http://localhost:11434
+    native: [openai-chat, anthropic]
+    prefer: openai-chat
+    no_key: true
+
+  - id: deepseek
+    preset: deepseek
+    display_name: DeepSeek API
+    enabled: true
+    endpoints:
+      openai_chat: https://api.deepseek.com/v1
+      anthropic: https://api.deepseek.com/anthropic
+    native: [openai-chat, anthropic]
+    prefer: openai-chat
+
+  - id: gemini
+    preset: gemini
+    display_name: Google Gemini API
+    enabled: true
+    key_strategy: round-robin
+    endpoints:
+      gemini: https://generativelanguage.googleapis.com/v1beta
+    native: [gemini]
+    prefer: gemini

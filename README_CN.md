@@ -10,11 +10,12 @@
 
 -   **多协议支持**：
     -   **OpenAI 兼容**：`/v1/chat/completions`、`/v1/responses`（支持 Cursor、Open WebUI 等）
-    -   **Anthropic 兼容**：`/anthropic/v1/messages`（支持 Claude Code、Aider 等）
+    -   **Anthropic 兼容**：`/anthropic/v1/messages`、`/v1/messages`（支持 Claude Code、Aider 等）
     -   **Google GenAI 兼容**：`/genai/v1beta/models`（支持官方 Google SDK）
+    -   **Gemini API 统一前端 / 透明代理**：`/v1beta/models/*`（支持原样透传或跨后端协议转换）
     -   **Vertex AI 透明代理**：`/v1/publishers/google/models/*`（服务端注入 Vertex key）
-    -   **Gemini API 透明代理**：`/v1beta/models/*`（服务端注入 Gemini key）
     -   **Codex 适配（provider=codex）**：对外提供 OpenAI 风格 `/v1/chat/completions` 与 `/v1/responses`，采用 stream-first 策略
+-   **多后端 API 聚合与运行时切换**：将 **OpenAI**、**OpenRouter**、**NVIDIA NIM**、**AMD Radeon Token Factory**、**Ollama**、**DeepSeek API** 与 **Google Gemini API** 统一接入 4 种客户端协议（`config/providers.yaml`），支持多 Key 轮询、指数冷却、有序故障转移 / 固定策略，以及通过 Dashboard 与 Admin API 实时切换后端（详见 [设计文档](docs/design_proposals/api-aggregation-gateway.md)）。
 -   **智能模型映射**：通过 Dashboard 配置客户端模型名到后端模型的路由。
 -   **账号池管理**：链接多个 Google 账号以池化配额，提升限制。
 -   **用户级配额路由**：使用 `X-Nexus-Account` 请求头将请求路由到指定账号，实现配额隔离。
@@ -375,12 +376,13 @@ brew services restart oauth-llm-nexus
 
 | 端点 | 协议 | 描述 |
 |:---------|:---------|:------------|
-| `GET /` | - | 仪表盘 UI |
+| `GET /ui` | - | Gateway 控制台 UI（后端与模型、多后端矩阵、四协议测试台、接入与日志） |
+| `GET /` | - | 经典仪表盘 UI（OAuth 账号与路由管理） |
 | `POST /v1/chat/completions` | OpenAI | 聊天补全 |
-| `POST /v1/responses` | OpenAI | Responses API |
+| `POST /v1/responses` | OpenAI | Responses API（支持跨后端 `previous_response_id` 会话桥接） |
 | `GET /v1/models` | OpenAI | 列出模型 |
 | `GET /v1/codex/quota` | OpenAI | Codex 配额与账号信息 |
-| `POST /anthropic/v1/messages` | Anthropic | Messages API |
+| `POST /anthropic/v1/messages` | Anthropic | Messages API（亦支持 `POST /v1/messages`） |
 | `GET /anthropic/v1/models` | Anthropic | 列出 Claude 模型 |
 | `POST /genai/v1beta/models/{model}:generateContent` | GenAI | 生成内容 |
 | `POST /genai/v1beta/models/{model}:streamGenerateContent` | GenAI | 流式生成内容 |
@@ -395,17 +397,50 @@ brew services restart oauth-llm-nexus
 | `POST /v1beta/models/{model}:countTokens` | Gemini API | 计算 token |
 | `POST /v1beta/models/{model}:embedContent` | Gemini API | 单条向量嵌入 |
 | `POST /v1beta/models/{model}:batchEmbedContents` | Gemini API | 批量向量嵌入 |
+| `POST /v1beta/openai/chat/completions` | Gemini API | `/v1beta` 下 OpenAI Chat 兼容入口 |
 | `GET /api/accounts` | 内部 | 列出已链接账号 |
 | `GET /api/model-routes` | 内部 | 列出模型路由 |
+| `GET /api/gateway/providers` | 内部 | 列出聚合网关后端、每把 Key 健康状态、冷却、实时统计及缓存模型 |
+| `PATCH /api/gateway/providers/{id}` | 内部 | 热更新后端开关（`enabled`/`free_only`/`include_non_chat`/`prefer`/`key_strategy`）与密钥池 |
+| `POST /api/gateway/providers/{id}/refresh` | 内部 | 刷新指定后端的线上模型目录 |
+| `GET /api/gateway/stats` / `POST /api/gateway/stats/reset` | 内部 | 查询或重置常驻多维度请求 / 延迟 / Token 统计 |
+| `GET /api/gateway/models` | 内部 | 列出统一模型、当前主后端与 `failover`/`pinned` 策略 |
+| `GET /api/gateway/models/matrix` | 内部 | 按归一化模型 ID 聚合列出所有支持的后端矩阵 |
+| `POST /api/gateway/models/{client}/failover` | 内部 | 将指定模型支持的所有后端一键同步为多后端 Failover 链 |
+| `POST /api/gateway/select` | 内部 | 运行时将客户端模型切换到指定后端 |
+| `PUT /api/gateway/policy` | 内部 | 更新模型路由策略（`failover` \| `pinned`） |
+| `POST /api/gateway/cooldown/clear` | 内部 | 清除后端及每把 Key 的冷却状态 |
+| `POST /api/gateway/test` | 内部 | 四协议在线兼容性探针（Chat / Responses / Anthropic / Gemini） |
 | `GET /monitor` | 内部 | 请求监控面板 |
 
-### 请求头
+### 请求与响应头
 
-| 请求头 | 必需 | 描述 |
+| 请求/响应头 | 方向 | 描述 |
 |:-------|:---------|:------------|
-| `Authorization` | 是 | API key，格式 `Bearer sk-xxx` |
-| `X-Nexus-Account` | 否 | 通过邮箱或 ID 路由到指定账号 |
-| `X-Request-ID` | 否 | 自定义请求 ID 用于追踪 |
+| `Authorization` | 请求（必需） | API key，格式 `Bearer sk-xxx` |
+| `X-Nexus-Provider` | 请求（可选） | 强制指定上游后端（如 `openai`、`openrouter`、`nvidia`、`amd`、`ollama`、`deepseek`、`gemini` 等） |
+| `X-Nexus-Account` | 请求（可选） | 通过邮箱或 ID 路由到指定遗留 OAuth 账号 |
+| `X-Request-ID` | 请求（可选） | 自定义请求 ID 用于追踪 |
+| `X-Nexus-Provider` | 响应 | 实际命中的上游后端 ID |
+| `X-Nexus-Upstream-Model` | 响应 | 实际发送到上游的模型名 |
+| `X-Nexus-Route` | 响应 | 路由执行模式（`passthrough`、`translated:<proto>` 或 `legacy-oauth`） |
+| `X-Nexus-Route-Source` | 响应 | 路由决策来源（`header`、`prefix`、`db`、`catalog`、`legacy-default`） |
+
+## 🔀 多后端 API 聚合网关
+
+`oauth-llm-nexus` 支持将 4 种客户端入口协议（`/v1/chat/completions`、`/v1/responses`、`/anthropic/v1/messages` 与 `/v1/messages`、`/v1beta/models/*`）统一路由或跨协议转换到以下 7 个内置后端（配置文件见 [`config/providers.yaml`](config/providers.yaml)，支持从 `NEXUS_<ID>_API_KEYS`、`<ID>_API_KEYS`（如 `GEMINI_API_KEYS`）、`NEXUS_<ID>_API_KEY`、`<ID>_API_KEY` 合并去重加载多把密钥，并支持 `round-robin` 轮询分摊与 `sticky` 接力及 `/ui` 多后端矩阵视图）：
+
+| 后端 ID | 默认地址 | 密钥环境变量 | 原生协议 |
+|:--------|:---------|:-------------|:---------|
+| `openai` | `https://api.openai.com/v1` | `NEXUS_OPENAI_API_KEY` | `openai-chat`, `openai-responses` |
+| `openrouter` | `https://openrouter.ai/api/v1` | `NEXUS_OPENROUTER_API_KEY` | `openai-chat`, `anthropic` |
+| `nvidia` | `https://integrate.api.nvidia.com/v1` | `NEXUS_NVIDIA_API_KEY` | `openai-chat` |
+| `amd` | `https://developer.amd.com.cn/radeon/api/v1` | `NEXUS_AMD_API_KEY` / `AMD_API_KEY` | `openai-chat`, `anthropic` |
+| `ollama` | `http://localhost:11434/v1` | *（无需密钥）* | `openai-chat`, `anthropic` |
+| `deepseek` | `https://api.deepseek.com/v1` | `NEXUS_DEEPSEEK_API_KEY` / `DEEPSEEK_API_KEY` | `openai-chat`, `anthropic` |
+| `gemini` | `https://generativelanguage.googleapis.com/v1beta` | `NEXUS_GEMINI_API_KEYS` / `GEMINI_API_KEYS` / `GEMINI_API_KEY` | `gemini` |
+
+更多关于 IR 协议转换架构、运行时切换与故障转移的细节请参阅 [`docs/design_proposals/api-aggregation-gateway.md`](docs/design_proposals/api-aggregation-gateway.md)。
 
 ## 🤝 贡献
 

@@ -14,6 +14,7 @@ type ModelRoute struct {
 	ClientModel    string    `gorm:"uniqueIndex:idx_model_provider;not null" json:"client_model"`    // e.g., "gpt-4"
 	TargetProvider string    `gorm:"uniqueIndex:idx_model_provider;not null;default:'google'" json:"target_provider"` // e.g., "google"
 	TargetModel    string    `gorm:"not null" json:"target_model"`                                   // e.g., "gemini-3-pro-high"
+	Priority       int       `gorm:"default:0" json:"priority"`                                      // Lower value means higher priority
 	IsActive       bool      `gorm:"default:true" json:"is_active"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`

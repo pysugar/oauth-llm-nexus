@@ -406,6 +406,79 @@ var dashboardHTML = `<!DOCTYPE html>
             </div>
         </div>
 
+        <!-- Gateway Backends & Model Switching Card -->
+        <div class="bg-gray-800 rounded-xl p-4 mb-6">
+            <div class="flex flex-wrap justify-between items-center gap-2 mb-3">
+                <div>
+                    <h3 class="text-sm font-semibold text-gray-200">🔌 Gateway Backends, Models &amp; Protocol Compatibility <span class="text-xs text-gray-500 ml-1">(OpenAI / OpenRouter / NVIDIA / AMD / Ollama / DeepSeek / Gemini)</span></h3>
+                    <p class="text-[11px] text-gray-500 mt-0.5">Click any backend's Models drawer to browse &amp; test available models, click a model to fill Switcher / 3-Protocol Tester, or switch routes at runtime.</p>
+                </div>
+                <div class="flex items-center gap-2">
+                    <span id="gateway-status-badge" class="text-xs text-gray-400"></span>
+                    <button id="gateway-clear-cooldowns-btn" onclick="clearGatewayCooldown('')" class="text-xs bg-amber-600/80 hover:bg-amber-600 px-3 py-1 rounded">🧹 Clear Cooldowns</button>
+                    <button onclick="loadGatewayDashboard()" class="text-xs bg-gray-600 hover:bg-gray-500 px-3 py-1 rounded">↻ Refresh</button>
+                </div>
+            </div>
+
+            <div id="gateway-providers-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+                <div class="text-xs text-gray-400">Loading gateway backends...</div>
+            </div>
+
+            <!-- 3-Protocol Compatibility Tester -->
+            <div id="gateway-tester-panel" class="border-t border-gray-700 pt-3 mb-4">
+                <div class="flex flex-wrap justify-between items-center gap-2 mb-2">
+                    <div class="text-xs font-semibold text-gray-300">🧪 3-Protocol Compatibility Tester <span class="text-gray-500 font-normal">(OpenAI Chat / OpenAI Responses / Anthropic Messages)</span></div>
+                    <span class="text-[11px] text-gray-500">Tests live routing + codec translation via <code>/api/gateway/test</code></span>
+                </div>
+                <div class="flex flex-wrap items-center gap-2 mb-2 bg-gray-900/60 border border-gray-700/80 rounded-lg p-2.5 text-xs">
+                    <input id="gateway-test-model" type="text" placeholder="Model ID (e.g. gpt-4o-mini, deepseek-chat)" class="bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white w-56 focus:outline-none focus:border-blue-500">
+                    <select id="gateway-test-provider" class="bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white focus:outline-none focus:border-blue-500">
+                        <option value="">Auto (Follow Route / Catalog)</option>
+                    </select>
+                    <input id="gateway-test-prompt" type="text" value="Reply briefly with OK." placeholder="Prompt" class="bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white w-48 focus:outline-none focus:border-blue-500">
+                    <button onclick="runGatewayThreeProtocolTests()" class="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded font-medium">🚀 Test All 3</button>
+                    <button onclick="runSingleGatewayProtocolTest('openai-chat')" class="bg-gray-700 hover:bg-gray-600 text-gray-100 px-2.5 py-1 rounded">Chat</button>
+                    <button onclick="runSingleGatewayProtocolTest('openai-responses')" class="bg-gray-700 hover:bg-gray-600 text-gray-100 px-2.5 py-1 rounded">Responses</button>
+                    <button onclick="runSingleGatewayProtocolTest('anthropic')" class="bg-gray-700 hover:bg-gray-600 text-gray-100 px-2.5 py-1 rounded">Messages</button>
+                    <button onclick="runSingleGatewayProtocolTest('gemini')" class="bg-gray-700 hover:bg-gray-600 text-gray-100 px-2.5 py-1 rounded">Gemini</button>
+                </div>
+                <div id="gateway-test-results" class="bg-gray-900/50 border border-gray-700/70 rounded-lg overflow-x-auto">
+                    <div class="text-xs text-gray-500 px-3 py-2">Pick any model from a backend card above (or enter a model ID) and click <strong>Test All 3</strong> to verify Chat Completions, Responses, and Anthropic Messages compatibility.</div>
+                </div>
+            </div>
+
+            <div class="border-t border-gray-700 pt-3">
+                <div class="flex flex-wrap justify-between items-center gap-2 mb-2">
+                    <div class="flex flex-wrap items-center gap-2">
+                        <div class="text-xs font-semibold text-gray-300">🔀 Model Mappings &amp; Runtime Switching <span id="gateway-model-count" class="text-gray-500 font-normal"></span></div>
+                        <div id="gateway-model-tabs" class="inline-flex rounded overflow-hidden border border-gray-700 text-[11px]">
+                            <button data-gateway-tab="all" class="px-2 py-0.5 bg-blue-600 text-white font-semibold">All</button>
+                            <button data-gateway-tab="routes" class="px-2 py-0.5 bg-gray-800 text-gray-300 hover:bg-gray-700">Explicit Routes</button>
+                            <button data-gateway-tab="ready" class="px-2 py-0.5 bg-gray-800 text-gray-300 hover:bg-gray-700">Ready Catalog</button>
+                        </div>
+                    </div>
+                    <input id="gateway-model-filter" type="text" placeholder="Filter models or providers..." oninput="filterGatewayModels()" class="bg-gray-900 border border-gray-700 rounded px-2.5 py-1 text-xs text-white w-56 focus:outline-none focus:border-blue-500">
+                </div>
+                <div class="flex flex-wrap items-center gap-2 mb-3 bg-gray-900/60 border border-gray-700/80 rounded-lg p-2 text-xs">
+                    <input id="gateway-quick-client" type="text" placeholder="Client model (e.g. gpt-4o)" class="bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white w-44 focus:outline-none focus:border-blue-500">
+                    <span class="text-gray-500">→</span>
+                    <select id="gateway-quick-provider" class="bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white focus:outline-none focus:border-blue-500">
+                        <option value="openai">openai</option>
+                    </select>
+                    <input id="gateway-quick-target" type="text" placeholder="Target model (optional)" class="bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white w-48 focus:outline-none focus:border-blue-500">
+                    <select id="gateway-quick-strategy" class="bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white focus:outline-none focus:border-blue-500">
+                        <option value="">Keep policy</option>
+                        <option value="failover">Failover</option>
+                        <option value="pinned">Pinned</option>
+                    </select>
+                    <button onclick="quickSwitchGatewayBackend()" class="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded font-medium">⚡ Switch</button>
+                </div>
+                <div id="gateway-models-container" class="max-h-96 overflow-y-auto space-y-2 text-sm">
+                    <div class="text-xs text-gray-400">Loading gateway models...</div>
+                </div>
+            </div>
+        </div>
+
         <!-- Model Routes Card -->
         <div class="bg-gray-800 rounded-xl p-4 mb-6">
             <div class="flex justify-between items-center mb-2">
@@ -942,10 +1015,18 @@ var dashboardHTML = `<!DOCTYPE html>
                     return 'vertex';
                 case 'codex':
                     return 'codex';
+                case 'openai':
+                    return 'openai';
                 case 'openrouter':
                     return 'openrouter';
                 case 'nvidia':
                     return 'nvidia';
+                case 'amd':
+                    return 'amd (tokenfactory)';
+                case 'ollama':
+                    return 'ollama';
+                case 'deepseek':
+                    return 'deepseek';
                 default:
                     return provider;
             }
@@ -958,10 +1039,10 @@ var dashboardHTML = `<!DOCTYPE html>
 
         function fallbackAllowedProvidersForClientModel(clientModel) {
             const model = (clientModel || '').trim().toLowerCase();
-            if (model.startsWith('gpt')) return ['codex', 'google', 'openrouter'];
-            if (model.startsWith('gemini')) return ['google', 'gemini', 'vertex', 'openrouter'];
-            if (model.startsWith('claude')) return ['google', 'openrouter'];
-            return ['google', 'nvidia', 'openrouter'];
+            if (model.startsWith('gpt')) return ['codex', 'google', 'openai', 'openrouter', 'nvidia', 'amd', 'ollama', 'deepseek', 'gemini'];
+            if (model.startsWith('gemini')) return ['google', 'gemini', 'vertex', 'openrouter', 'nvidia', 'amd', 'ollama', 'openai', 'deepseek'];
+            if (model.startsWith('claude')) return ['google', 'openrouter', 'openai', 'nvidia', 'amd', 'ollama', 'deepseek', 'gemini'];
+            return ['google', 'openai', 'openrouter', 'nvidia', 'amd', 'ollama', 'deepseek', 'gemini'];
         }
 
         async function fetchAllowedProvidersForClientModel(clientModel) {
@@ -1113,6 +1194,7 @@ var dashboardHTML = `<!DOCTYPE html>
                 if (res.ok) {
                     hideRouteModal();
                     loadModelRoutes();
+                    loadGatewayDashboard();
                 } else {
                     const err = await res.json();
                     alert('Error: ' + (err.error || 'Failed to save'));
@@ -1126,7 +1208,10 @@ var dashboardHTML = `<!DOCTYPE html>
             if (!confirm('Delete this route?')) return;
             try {
                 const res = await fetch('/api/model-routes/' + id, { method: 'DELETE' });
-                if (res.ok) loadModelRoutes();
+                if (res.ok) {
+                    loadModelRoutes();
+                    loadGatewayDashboard();
+                }
             } catch (e) {
                 alert('Failed to delete: ' + e.message);
             }
@@ -1138,6 +1223,7 @@ var dashboardHTML = `<!DOCTYPE html>
                 const res = await fetch('/api/model-routes/reset', { method: 'POST' });
                 if (res.ok) {
                     loadModelRoutes();
+                    loadGatewayDashboard();
                     alert('Model routes reset to defaults!');
                 }
             } catch (e) {
@@ -1287,13 +1373,812 @@ var dashboardHTML = `<!DOCTYPE html>
             }
         }
 
+        // Gateway Aggregation Functions
+        let gatewayProvidersCache = [];
+        let gatewayModelsCache = [];
+        let gatewayExpandedProviders = {};
+        let gatewayProviderQueries = {};
+        let gatewayModelProbes = {};
+        let gatewayModelTab = 'all';
+        let gatewayProtocolResults = {};
+
+        function formatRelativeSeconds(sec) {
+            const n = Number(sec || 0);
+            if (!Number.isFinite(n) || n <= 0) return '0s';
+            if (n < 60) return Math.ceil(n) + 's';
+            const mins = Math.floor(n / 60);
+            const rem = Math.ceil(n % 60);
+            return mins + 'm' + (rem > 0 ? rem + 's' : '');
+        }
+
+        function primaryEndpointSummary(p) {
+            const eps = p && p.endpoints ? p.endpoints : {};
+            const parts = [];
+            if (eps.openai_chat) parts.push('chat: ' + eps.openai_chat);
+            if (eps.openai_responses && eps.openai_responses !== eps.openai_chat) parts.push('resp: ' + eps.openai_responses);
+            if (eps.anthropic) parts.push('anth: ' + eps.anthropic);
+            if (eps.gemini) parts.push('gem: ' + eps.gemini);
+            return parts.join(' | ');
+        }
+
+        function fillGatewayModelSelection(modelId, providerId) {
+            if (!modelId) return;
+            const quickClient = document.getElementById('gateway-quick-client');
+            const quickTarget = document.getElementById('gateway-quick-target');
+            const quickProv = document.getElementById('gateway-quick-provider');
+            const testModel = document.getElementById('gateway-test-model');
+            const testProv = document.getElementById('gateway-test-provider');
+
+            if (quickClient) quickClient.value = modelId;
+            if (quickTarget) quickTarget.value = modelId;
+            if (providerId && quickProv) quickProv.value = providerId;
+            if (testModel) testModel.value = modelId;
+            if (testProv) testProv.value = providerId || '';
+        }
+
+        function buildProviderModelsListHTML(p) {
+            const allModels = Array.isArray(p.models) ? p.models : [];
+            const query = (gatewayProviderQueries[p.id] || '').trim().toLowerCase();
+            const filtered = query
+                ? allModels.filter((id) => id.toLowerCase().includes(query))
+                : allModels;
+
+            if (allModels.length === 0) {
+                return '<div class="text-[11px] text-gray-500 italic py-2">No discovered models yet. Check key/endpoint and click Refresh.</div>';
+            }
+            if (filtered.length === 0) {
+                return '<div class="text-[11px] text-gray-500 italic py-2">No models matching "' + escapeInlineHtml(query) + '".</div>';
+            }
+
+            let html = '<div class="text-[10px] text-gray-400 mb-1 flex justify-between items-center">';
+            html += '<span>Showing ' + filtered.length + ' / ' + allModels.length + (p.free_only ? ' (free only)' : '') + '</span>';
+            html += '<span>Click ID to select · Test runs Chat</span>';
+            html += '</div>';
+            html += '<div class="max-h-56 overflow-y-auto space-y-1 pr-1">';
+            filtered.forEach((modelId) => {
+                const probeKey = p.id + '|' + modelId;
+                const probe = gatewayModelProbes[probeKey];
+                let dotClass = 'bg-gray-600';
+                let metaHTML = '';
+                if (probe) {
+                    if (probe.state === 'wait') {
+                        dotClass = 'bg-amber-400 animate-pulse';
+                        metaHTML = '<span class="text-[10px] text-amber-300">testing...</span>';
+                    } else if (probe.state === 'ok') {
+                        dotClass = 'bg-green-400';
+                        metaHTML = '<span class="text-[10px] text-green-300 font-mono">' + Number(probe.ms || 0) + 'ms</span>';
+                    } else {
+                        dotClass = 'bg-red-400';
+                        metaHTML = '<span class="text-[10px] text-red-300 truncate max-w-[110px]" title="' + escapeInlineHtml(probe.summary || 'failed') + '">HTTP ' + Number(probe.status || 0) + '</span>';
+                    }
+                }
+
+                html += '<div class="flex items-center justify-between gap-1.5 bg-gray-900/70 hover:bg-gray-900 border border-gray-700/70 rounded px-2 py-1">';
+                html += '<div class="flex items-center gap-1.5 min-w-0 flex-1">';
+                html += '<span class="w-2 h-2 rounded-full flex-shrink-0 ' + dotClass + '"></span>';
+                html += '<button data-gateway-pick-model="' + escapeInlineHtml(modelId) + '" data-gateway-pick-provider="' + escapeInlineHtml(p.id) + '" title="Fill Switcher & 3-Protocol Tester" class="text-left text-[11px] font-mono text-blue-300 hover:underline truncate">' + escapeInlineHtml(modelId) + '</button>';
+                html += '</div>';
+                html += '<div class="flex items-center gap-1.5 flex-shrink-0">';
+                html += metaHTML;
+                html += '<button data-gateway-probe-model="' + escapeInlineHtml(modelId) + '" data-gateway-probe-provider="' + escapeInlineHtml(p.id) + '" class="text-[10px] bg-gray-700 hover:bg-emerald-600 text-gray-200 hover:text-white px-1.5 py-0.5 rounded">Test</button>';
+                html += '</div>';
+                html += '</div>';
+            });
+            html += '</div>';
+            return html;
+        }
+
+        function refreshProviderModelsDrawer(providerId) {
+            const p = gatewayProvidersCache.find((item) => item.id === providerId);
+            const body = document.getElementById('gateway-prov-models-' + providerId);
+            if (!p || !body) return;
+            body.innerHTML = buildProviderModelsListHTML(p);
+        }
+
+        function renderGatewayProviders(providers) {
+            const grid = document.getElementById('gateway-providers-grid');
+            if (!grid) return;
+            if (!Array.isArray(providers) || providers.length === 0) {
+                grid.innerHTML = '<div class="col-span-full text-xs text-gray-500">No gateway providers configured.</div>';
+                return;
+            }
+
+            let html = '';
+            providers.forEach((p) => {
+                const cd = p.cooldown && p.cooldown.cooling_down ? p.cooldown : null;
+                let badgeClass = 'bg-gray-700 text-gray-300';
+                let badgeText = 'No Key';
+                if (!p.enabled) {
+                    badgeClass = 'bg-gray-700 text-gray-400';
+                    badgeText = 'Disabled';
+                } else if (cd) {
+                    badgeClass = 'bg-red-900/60 text-red-200 border border-red-700/70';
+                    badgeText = 'Cooldown ' + formatRelativeSeconds(cd.remaining_seconds);
+                } else if (p.available) {
+                    badgeClass = 'bg-green-900/50 text-green-300 border border-green-700/60';
+                    badgeText = p.no_key ? 'Ready (No Key)' : 'Ready';
+                }
+
+                const nativeList = Array.isArray(p.native) && p.native.length > 0 ? p.native.join(', ') : (p.prefer || '-');
+                const keysText = p.no_key
+                    ? 'no auth'
+                    : (p.key_count > 0 ? p.key_count + ' key' + (p.key_count > 1 ? 's' : '') : '0 keys');
+                const maskedTitle = Array.isArray(p.masked_keys) && p.masked_keys.length > 0
+                    ? ' title="' + escapeInlineHtml(p.masked_keys.join(', ')) + '"'
+                    : '';
+                const expanded = !!gatewayExpandedProviders[p.id];
+                const colSpanClass = expanded ? 'sm:col-span-2 lg:col-span-2' : '';
+                const epSummary = primaryEndpointSummary(p);
+
+                html += '<div class="bg-gray-700/40 border border-gray-700 rounded-lg p-3 flex flex-col justify-between gap-2 ' + colSpanClass + '">';
+                html += '<div>';
+                html += '<div class="flex items-start justify-between gap-2">';
+                html += '<div class="min-w-0">';
+                html += '<div class="text-xs font-semibold text-white truncate">' + escapeInlineHtml(p.display_name || p.id) + '</div>';
+                html += '<div class="text-[11px] text-gray-400 font-mono truncate">' + escapeInlineHtml(p.id) + ' · ' + escapeInlineHtml(p.prefer || '-') + '</div>';
+                html += '</div>';
+                html += '<span class="text-[11px] px-2 py-0.5 rounded whitespace-nowrap ' + badgeClass + '">' + escapeInlineHtml(badgeText) + '</span>';
+                html += '</div>';
+
+                html += '<div class="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] text-gray-400">';
+                html += '<span class="bg-gray-800/80 px-1.5 py-0.5 rounded"' + maskedTitle + '>🔑 ' + escapeInlineHtml(keysText) + '</span>';
+                html += '<span class="bg-gray-800/80 px-1.5 py-0.5 rounded">📦 ' + Number(p.model_count || 0) + ' models</span>';
+                if (p.free_only) {
+                    html += '<span class="bg-emerald-900/50 text-emerald-300 border border-emerald-700/50 px-1.5 py-0.5 rounded">Free Only</span>';
+                }
+                html += '</div>';
+                html += '<div class="mt-1 text-[10px] text-gray-500 truncate" title="' + escapeInlineHtml(nativeList) + '">native: ' + escapeInlineHtml(nativeList) + '</div>';
+                if (epSummary) {
+                    html += '<div class="mt-0.5 text-[10px] text-gray-500 font-mono truncate" title="' + escapeInlineHtml(epSummary) + '">' + escapeInlineHtml(epSummary) + '</div>';
+                }
+
+                if (cd && cd.reason) {
+                    html += '<div class="mt-1 text-[10px] text-red-300 truncate" title="' + escapeInlineHtml(cd.reason) + '">⚠️ ' + escapeInlineHtml(cd.reason) + ' (x' + Number(cd.failures || 1) + ')</div>';
+                } else if (p.catalog_error) {
+                    html += '<div class="mt-1 text-[10px] text-yellow-300 truncate" title="' + escapeInlineHtml(p.catalog_error) + '">⚠️ ' + escapeInlineHtml(p.catalog_error) + '</div>';
+                }
+
+                if (expanded) {
+                    html += '<div class="mt-2 pt-2 border-t border-gray-700/80">';
+                    html += '<input type="text" data-gateway-provider-search="' + escapeInlineHtml(p.id) + '" value="' + escapeInlineHtml(gatewayProviderQueries[p.id] || '') + '" placeholder="Filter ' + escapeInlineHtml(p.id) + ' models..." class="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1 text-[11px] text-white mb-1.5 focus:outline-none focus:border-blue-500">';
+                    html += '<div id="gateway-prov-models-' + escapeInlineHtml(p.id) + '">' + buildProviderModelsListHTML(p) + '</div>';
+                    html += '</div>';
+                }
+                html += '</div>';
+
+                html += '<div class="flex flex-wrap items-center justify-between gap-1.5 pt-1 border-t border-gray-700/70">';
+                html += '<div class="flex items-center gap-1.5">';
+                html += '<button data-gateway-toggle-models="' + escapeInlineHtml(p.id) + '" class="text-[11px] ' + (expanded ? 'bg-blue-600 text-white' : 'bg-gray-600 hover:bg-gray-500 text-gray-100') + ' px-2 py-0.5 rounded">' + (expanded ? '▾ Hide Models' : '▸ Models (' + Number(p.model_count || 0) + ')') + '</button>';
+                html += '<button data-gateway-refresh-provider="' + escapeInlineHtml(p.id) + '" class="text-[11px] bg-gray-700 hover:bg-gray-600 text-gray-200 px-2 py-0.5 rounded">↻</button>';
+                html += '</div>';
+                if (cd) {
+                    html += '<button data-gateway-clear-provider="' + escapeInlineHtml(p.id) + '" class="text-[11px] bg-amber-600/80 hover:bg-amber-600 text-white px-2 py-0.5 rounded">Clear CD</button>';
+                } else {
+                    html += '<span class="text-[10px] text-gray-500">' + (p.catalog_fetched_at ? 'synced' : '') + '</span>';
+                }
+                html += '</div>';
+                html += '</div>';
+            });
+            grid.innerHTML = html;
+        }
+
+        function setGatewayModelTab(tab) {
+            gatewayModelTab = tab || 'all';
+            const tabsEl = document.getElementById('gateway-model-tabs');
+            if (tabsEl) {
+                tabsEl.querySelectorAll('[data-gateway-tab]').forEach((btn) => {
+                    const isActive = btn.getAttribute('data-gateway-tab') === gatewayModelTab;
+                    btn.className = 'px-2 py-0.5 ' + (isActive ? 'bg-blue-600 text-white font-semibold' : 'bg-gray-800 text-gray-300 hover:bg-gray-700');
+                });
+            }
+            renderGatewayModels(gatewayModelsCache);
+        }
+
+        function classifyGatewayModel(m) {
+            const cands = Array.isArray(m && m.candidates) ? m.candidates : [];
+            const hasExplicitDB = cands.some((c) => c.source === 'db' && !c.legacy);
+            const hasCatalog = cands.some((c) => c.source === 'catalog');
+            const hasReady = cands.some((c) => c.available);
+            const isLegacyOnly = cands.length > 0 && cands.every((c) => c.legacy);
+            return { hasExplicitDB, hasCatalog, hasReady, isLegacyOnly };
+        }
+
+        function filterGatewayModels() {
+            renderGatewayModels(gatewayModelsCache);
+        }
+
+        function renderGatewayModels(models) {
+            const container = document.getElementById('gateway-models-container');
+            const countEl = document.getElementById('gateway-model-count');
+            const filterEl = document.getElementById('gateway-model-filter');
+            if (!container) return;
+
+            const query = filterEl ? filterEl.value.trim().toLowerCase() : '';
+            const allModels = Array.isArray(models) ? models.slice() : [];
+
+            allModels.sort((a, b) => {
+                const ca = classifyGatewayModel(a);
+                const cb = classifyGatewayModel(b);
+                if (ca.hasExplicitDB !== cb.hasExplicitDB) return ca.hasExplicitDB ? -1 : 1;
+                if (ca.hasReady !== cb.hasReady) return ca.hasReady ? -1 : 1;
+                return (a.client_model || '').localeCompare(b.client_model || '');
+            });
+
+            let routeCount = 0;
+            let readyCount = 0;
+            allModels.forEach((m) => {
+                const cls = classifyGatewayModel(m);
+                if (cls.hasExplicitDB) routeCount++;
+                if (cls.hasReady) readyCount++;
+            });
+
+            const tabsEl = document.getElementById('gateway-model-tabs');
+            if (tabsEl) {
+                const btnAll = tabsEl.querySelector('[data-gateway-tab="all"]');
+                const btnRoutes = tabsEl.querySelector('[data-gateway-tab="routes"]');
+                const btnReady = tabsEl.querySelector('[data-gateway-tab="ready"]');
+                if (btnAll) btnAll.textContent = 'All (' + allModels.length + ')';
+                if (btnRoutes) btnRoutes.textContent = 'Explicit Routes (' + routeCount + ')';
+                if (btnReady) btnReady.textContent = 'Ready Catalog (' + readyCount + ')';
+            }
+
+            const tabFiltered = allModels.filter((m) => {
+                const cls = classifyGatewayModel(m);
+                if (gatewayModelTab === 'routes') return cls.hasExplicitDB;
+                if (gatewayModelTab === 'ready') return cls.hasReady;
+                return true;
+            });
+
+            const filtered = query
+                ? tabFiltered.filter((m) => {
+                    if ((m.client_model || '').toLowerCase().includes(query)) return true;
+                    if ((m.active_provider || '').toLowerCase().includes(query)) return true;
+                    return Array.isArray(m.candidates) && m.candidates.some((c) =>
+                        (c.provider || '').toLowerCase().includes(query) ||
+                        (c.target_model || '').toLowerCase().includes(query)
+                    );
+                })
+                : tabFiltered;
+
+            if (countEl) {
+                countEl.textContent = '(' + filtered.length + '/' + allModels.length + ')';
+            }
+
+            if (filtered.length === 0) {
+                container.innerHTML = '<div class="text-xs text-gray-500 italic py-2">No matching gateway models in this view. Switch tab above or use Quick Switch to create a model route.</div>';
+                return;
+            }
+
+            let html = '';
+            filtered.forEach((m) => {
+                const strategy = (m.strategy || 'failover').toLowerCase();
+                const isPinned = strategy === 'pinned';
+                const activeProvider = m.active_provider || '';
+                const cls = classifyGatewayModel(m);
+                let kindBadge = '<span class="text-[10px] bg-gray-800 text-gray-400 px-1.5 py-0.5 rounded">Catalog</span>';
+                if (cls.hasExplicitDB) {
+                    kindBadge = '<span class="text-[10px] bg-indigo-900/60 text-indigo-300 border border-indigo-700/50 px-1.5 py-0.5 rounded">Explicit Route</span>';
+                } else if (cls.isLegacyOnly) {
+                    kindBadge = '<span class="text-[10px] bg-gray-800 text-amber-300/80 px-1.5 py-0.5 rounded">Legacy OAuth</span>';
+                }
+
+                html += '<div class="bg-gray-700/35 border border-gray-700/80 rounded-lg p-2.5">';
+                html += '<div class="flex flex-wrap items-center justify-between gap-2 mb-2">';
+                html += '<div class="flex flex-wrap items-center gap-2 min-w-0">';
+                html += '<code data-gateway-fill-model="' + escapeInlineHtml(m.client_model) + '" data-gateway-fill-provider="' + escapeInlineHtml(activeProvider) + '" title="Click to fill Switcher & Tester" class="cursor-pointer hover:underline text-xs font-semibold text-blue-300 truncate">' + escapeInlineHtml(m.client_model) + '</code>';
+                html += kindBadge;
+                if (activeProvider) {
+                    html += '<span class="text-[11px] bg-blue-900/50 text-blue-200 border border-blue-700/60 px-2 py-0.5 rounded">active: ' + escapeInlineHtml(activeProvider) + '</span>';
+                } else {
+                    html += '<span class="text-[11px] bg-gray-800 text-gray-400 px-2 py-0.5 rounded">no active backend</span>';
+                }
+                html += '</div>';
+
+                html += '<div class="flex items-center gap-2">';
+                html += '<button data-gateway-test-all="' + escapeInlineHtml(m.client_model) + '" data-gateway-test-prov="' + escapeInlineHtml(activeProvider) + '" class="text-[10px] bg-emerald-700/80 hover:bg-emerald-600 text-white px-2 py-0.5 rounded">🧪 Test 3 APIs</button>';
+                html += '<div class="inline-flex rounded overflow-hidden border border-gray-600 text-[11px]">';
+                html += '<button data-gateway-policy-model="' + escapeInlineHtml(m.client_model) + '" data-gateway-policy-strategy="failover" class="px-2 py-0.5 ' + (!isPinned ? 'bg-blue-600 text-white font-semibold' : 'bg-gray-800 text-gray-300 hover:bg-gray-700') + '">Failover</button>';
+                html += '<button data-gateway-policy-model="' + escapeInlineHtml(m.client_model) + '" data-gateway-policy-strategy="pinned" class="px-2 py-0.5 ' + (isPinned ? 'bg-purple-600 text-white font-semibold' : 'bg-gray-800 text-gray-300 hover:bg-gray-700') + '">Pinned</button>';
+                html += '</div>';
+                html += '</div>';
+                html += '</div>';
+
+                html += '<div class="flex flex-wrap gap-1.5">';
+                const candidates = Array.isArray(m.candidates) ? m.candidates : [];
+                candidates.forEach((c, idx) => {
+                    const isActive = c.provider === activeProvider;
+                    const cd = c.cooldown && c.cooldown.cooling_down ? c.cooldown : null;
+                    let dotClass = 'bg-gray-500';
+                    let statusNote = 'unavailable';
+                    if (cd) {
+                        dotClass = 'bg-amber-400';
+                        statusNote = 'cooldown ' + formatRelativeSeconds(cd.remaining_seconds);
+                    } else if (c.available) {
+                        dotClass = 'bg-green-400';
+                        statusNote = 'ready';
+                    }
+
+                    const chipBorder = isActive
+                        ? 'border-blue-500 bg-blue-950/50'
+                        : 'border-gray-600 bg-gray-800/80';
+                    const targetLabel = c.target_model && c.target_model !== m.client_model
+                        ? ' → ' + c.target_model
+                        : '';
+
+                    html += '<div class="inline-flex items-center gap-1.5 border rounded px-2 py-1 text-[11px] ' + chipBorder + '" title="' + escapeInlineHtml(statusNote + ' · source: ' + (c.source || '-')) + '">';
+                    html += '<span class="text-[10px] text-gray-500">#' + (idx + 1) + '</span>';
+                    html += '<span class="w-2 h-2 rounded-full ' + dotClass + '"></span>';
+                    html += '<span class="font-medium text-gray-100">' + escapeInlineHtml(c.provider) + '</span>';
+                    if (targetLabel) {
+                        html += '<code class="text-[10px] text-green-300">' + escapeInlineHtml(targetLabel) + '</code>';
+                    }
+                    html += '<span class="text-[10px] text-gray-500">' + escapeInlineHtml(c.source || '') + (c.legacy ? (c.available ? '·oauth' : '·no-auth') : '') + '</span>';
+                    if (isActive) {
+                        html += '<span class="text-[10px] text-blue-300 font-semibold">★ Active</span>';
+                    } else {
+                        html += '<button data-gateway-select-model="' + escapeInlineHtml(m.client_model) + '" data-gateway-select-provider="' + escapeInlineHtml(c.provider) + '" data-gateway-select-target="' + escapeInlineHtml(c.target_model || m.client_model) + '" class="ml-1 bg-gray-700 hover:bg-blue-600 text-gray-200 hover:text-white px-1.5 py-0.5 rounded text-[10px]">Use</button>';
+                    }
+                    html += '</div>';
+                });
+                html += '</div>';
+                html += '</div>';
+            });
+            container.innerHTML = html;
+        }
+
+        const gatewayProtocolDefs = [
+            { id: 'openai-chat', label: 'OpenAI Chat Completions', path: '/v1/chat/completions' },
+            { id: 'openai-responses', label: 'OpenAI Responses API', path: '/v1/responses' },
+            { id: 'anthropic', label: 'Anthropic Messages API', path: '/anthropic/v1/messages' },
+            { id: 'gemini', label: 'Google Gemini API', path: '/v1beta/models/{model}:generateContent' }
+        ];
+
+        function renderGatewayProtocolResults() {
+            const box = document.getElementById('gateway-test-results');
+            if (!box) return;
+            const activeEntries = gatewayProtocolDefs.filter((def) => !!gatewayProtocolResults[def.id]);
+            if (activeEntries.length === 0) return;
+
+            let html = '<table class="w-full text-left border-collapse text-xs">';
+            html += '<thead><tr class="border-b border-gray-700 text-[11px] text-gray-400">';
+            html += '<th class="py-1.5 px-2.5">Protocol</th>';
+            html += '<th class="py-1.5 px-2.5">Status</th>';
+            html += '<th class="py-1.5 px-2.5">Backend → Model</th>';
+            html += '<th class="py-1.5 px-2.5">Translation / Route</th>';
+            html += '<th class="py-1.5 px-2.5">Latency</th>';
+            html += '<th class="py-1.5 px-2.5">Output / Error</th>';
+            html += '</tr></thead><tbody>';
+
+            activeEntries.forEach((def) => {
+                const st = gatewayProtocolResults[def.id];
+                let statusBadge = '<span class="px-1.5 py-0.5 rounded bg-amber-900/50 text-amber-300">Testing...</span>';
+                let routeBadge = '<span class="text-gray-500">-</span>';
+                let backendText = '<span class="text-gray-500">-</span>';
+                let latencyText = '-';
+                let outputText = '<span class="text-gray-500">Sending probe...</span>';
+
+                if (st && st.state !== 'wait') {
+                    const ok = !!st.ok;
+                    statusBadge = ok
+                        ? '<span class="px-1.5 py-0.5 rounded bg-green-900/60 text-green-300 font-semibold">HTTP ' + Number(st.status_code || 200) + ' OK</span>'
+                        : '<span class="px-1.5 py-0.5 rounded bg-red-900/60 text-red-300 font-semibold">HTTP ' + Number(st.status_code || 0) + ' ERR</span>';
+                    if (st.provider) {
+                        backendText = '<span class="font-semibold text-blue-300">' + escapeInlineHtml(st.provider) + '</span> → <code class="text-green-300">' + escapeInlineHtml(st.upstream_model || st.model || '-') + '</code>';
+                    }
+                    if (st.route) {
+                        const isPass = st.route === 'passthrough';
+                        routeBadge = '<span class="px-1.5 py-0.5 rounded ' + (isPass ? 'bg-green-900/40 text-green-300' : 'bg-purple-900/50 text-purple-300') + '">' + escapeInlineHtml(st.route) + '</span>';
+                        if (st.route_source) {
+                            routeBadge += ' <span class="text-[10px] text-gray-500">(' + escapeInlineHtml(st.route_source) + ')</span>';
+                        }
+                    }
+                    latencyText = Number(st.duration_ms || 0) + ' ms';
+                    if (ok) {
+                        const preview = st.text || st.snippet || st.summary || 'OK';
+                        outputText = '<span class="text-gray-200" title="' + escapeInlineHtml(st.snippet || preview) + '">' + escapeInlineHtml(preview) + '</span>';
+                    } else {
+                        const errMsg = st.error || st.summary || st.snippet || 'Request failed';
+                        outputText = '<span class="text-red-300" title="' + escapeInlineHtml(st.snippet || errMsg) + '">' + escapeInlineHtml(errMsg) + '</span>';
+                    }
+                }
+
+                html += '<tr class="border-b border-gray-800/80">';
+                html += '<td class="py-1.5 px-2.5"><div class="font-medium text-gray-200">' + escapeInlineHtml(def.label) + '</div><div class="text-[10px] font-mono text-gray-500">' + escapeInlineHtml(st.path || def.path) + '</div></td>';
+                html += '<td class="py-1.5 px-2.5 whitespace-nowrap">' + statusBadge + '</td>';
+                html += '<td class="py-1.5 px-2.5 font-mono text-[11px]">' + backendText + '</td>';
+                html += '<td class="py-1.5 px-2.5 whitespace-nowrap text-[11px]">' + routeBadge + '</td>';
+                html += '<td class="py-1.5 px-2.5 whitespace-nowrap font-mono text-gray-300">' + latencyText + '</td>';
+                html += '<td class="py-1.5 px-2.5 max-w-xs truncate text-[11px]">' + outputText + '</td>';
+                html += '</tr>';
+            });
+            html += '</tbody></table>';
+            box.innerHTML = html;
+        }
+
+        async function executeGatewayProtocolProbe(protocol, model, provider, prompt) {
+            gatewayProtocolResults[protocol] = { state: 'wait', model: model };
+            renderGatewayProtocolResults();
+            try {
+                const res = await fetch('/api/gateway/test', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        protocol: protocol,
+                        model: model,
+                        provider: provider || '',
+                        prompt: prompt || 'Reply briefly with OK.'
+                    })
+                });
+                const data = await res.json();
+                gatewayProtocolResults[protocol] = Object.assign({ state: data.ok ? 'ok' : 'err' }, data);
+            } catch (e) {
+                gatewayProtocolResults[protocol] = {
+                    state: 'err',
+                    ok: false,
+                    protocol: protocol,
+                    model: model,
+                    status_code: 0,
+                    duration_ms: 0,
+                    error: e.message
+                };
+            }
+            renderGatewayProtocolResults();
+        }
+
+        async function runSingleGatewayProtocolTest(protocol) {
+            const modelEl = document.getElementById('gateway-test-model');
+            const provEl = document.getElementById('gateway-test-provider');
+            const promptEl = document.getElementById('gateway-test-prompt');
+            const model = modelEl ? modelEl.value.trim() : '';
+            const provider = provEl ? provEl.value.trim() : '';
+            const prompt = promptEl ? promptEl.value.trim() : '';
+            if (!model) {
+                alert('Please select or enter a Model ID first.');
+                return;
+            }
+            await executeGatewayProtocolProbe(protocol, model, provider, prompt);
+        }
+
+        async function runGatewayThreeProtocolTests() {
+            const modelEl = document.getElementById('gateway-test-model');
+            const provEl = document.getElementById('gateway-test-provider');
+            const promptEl = document.getElementById('gateway-test-prompt');
+            const model = modelEl ? modelEl.value.trim() : '';
+            const provider = provEl ? provEl.value.trim() : '';
+            const prompt = promptEl ? promptEl.value.trim() : '';
+            if (!model) {
+                alert('Please select or enter a Model ID first.');
+                return;
+            }
+            gatewayProtocolResults = {};
+            await Promise.all([
+                executeGatewayProtocolProbe('openai-chat', model, provider, prompt),
+                executeGatewayProtocolProbe('openai-responses', model, provider, prompt),
+                executeGatewayProtocolProbe('anthropic', model, provider, prompt)
+            ]);
+        }
+
+        async function probeSingleProviderModel(modelId, providerId) {
+            if (!modelId || !providerId) return;
+            const probeKey = providerId + '|' + modelId;
+            gatewayModelProbes[probeKey] = { state: 'wait' };
+            refreshProviderModelsDrawer(providerId);
+            try {
+                const res = await fetch('/api/gateway/test', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        protocol: 'openai-chat',
+                        model: modelId,
+                        provider: providerId,
+                        prompt: 'Reply briefly with OK.'
+                    })
+                });
+                const data = await res.json();
+                gatewayModelProbes[probeKey] = {
+                    state: data.ok ? 'ok' : 'err',
+                    status: data.status_code || res.status,
+                    ms: data.duration_ms || 0,
+                    summary: data.ok ? (data.text || data.summary) : (data.error || data.summary)
+                };
+            } catch (e) {
+                gatewayModelProbes[probeKey] = { state: 'err', status: 0, ms: 0, summary: e.message };
+            }
+            refreshProviderModelsDrawer(providerId);
+        }
+
+        async function loadGatewayDashboard() {
+            const badge = document.getElementById('gateway-status-badge');
+            try {
+                const [provRes, modRes] = await Promise.all([
+                    fetch('/api/gateway/providers', { cache: 'no-cache' }),
+                    fetch('/api/gateway/models', { cache: 'no-cache' })
+                ]);
+                if (provRes.status === 404 || modRes.status === 404) {
+                    if (badge) badge.textContent = 'Gateway admin API unavailable';
+                    return;
+                }
+                if (provRes.ok) {
+                    const provData = await provRes.json();
+                    gatewayProvidersCache = provData.providers || [];
+                    renderGatewayProviders(gatewayProvidersCache);
+                    populateGatewayQuickProviders(gatewayProvidersCache);
+                }
+                if (modRes.ok) {
+                    const modData = await modRes.json();
+                    gatewayModelsCache = modData.models || [];
+                    renderGatewayModels(gatewayModelsCache);
+                }
+                const testModelEl = document.getElementById('gateway-test-model');
+                if (testModelEl && !testModelEl.value.trim()) {
+                    const firstActive = gatewayModelsCache.find((m) => !!m.active_provider);
+                    if (firstActive) {
+                        testModelEl.value = firstActive.client_model;
+                    } else {
+                        const firstReadyProv = gatewayProvidersCache.find((p) => p.available && Array.isArray(p.models) && p.models.length > 0);
+                        if (firstReadyProv) {
+                            testModelEl.value = firstReadyProv.models[0];
+                        }
+                    }
+                }
+                if (badge) {
+                    const readyCount = gatewayProvidersCache.filter((p) => p.available).length;
+                    badge.textContent = readyCount + '/' + gatewayProvidersCache.length + ' backends ready';
+                }
+            } catch (e) {
+                if (badge) badge.textContent = 'Failed to load gateway state';
+            }
+        }
+
+        async function refreshGatewayProviderModels(providerId, btnEl) {
+            if (!providerId) return;
+            const oldText = btnEl ? btnEl.textContent : '';
+            if (btnEl) {
+                btnEl.disabled = true;
+                btnEl.textContent = '...';
+            }
+            try {
+                const res = await fetch('/api/gateway/providers/' + encodeURIComponent(providerId) + '/refresh', {
+                    method: 'POST'
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    alert('Refresh ' + providerId + ' failed: ' + (data.error || res.statusText));
+                }
+            } catch (e) {
+                alert('Refresh failed: ' + e.message);
+            } finally {
+                if (btnEl) {
+                    btnEl.disabled = false;
+                    btnEl.textContent = oldText || '↻';
+                }
+                await loadGatewayDashboard();
+            }
+        }
+
+        function populateGatewayQuickProviders(providers) {
+            const selQuick = document.getElementById('gateway-quick-provider');
+            const selTest = document.getElementById('gateway-test-provider');
+            const items = Array.isArray(providers) ? providers : [];
+
+            if (selQuick) {
+                const prev = selQuick.value;
+                selQuick.innerHTML = '';
+                items.forEach((p) => {
+                    const opt = document.createElement('option');
+                    opt.value = p.id;
+                    opt.textContent = p.id + (p.available ? '' : ' (unconfigured)');
+                    selQuick.appendChild(opt);
+                });
+                ['google', 'codex', 'vertex'].forEach((leg) => {
+                    const opt = document.createElement('option');
+                    opt.value = leg;
+                    opt.textContent = leg + ' (legacy)';
+                    selQuick.appendChild(opt);
+                });
+                if (prev) selQuick.value = prev;
+            }
+
+            if (selTest) {
+                const prevTest = selTest.value;
+                selTest.innerHTML = '<option value="">Auto (Follow Route / Catalog)</option>';
+                items.forEach((p) => {
+                    const opt = document.createElement('option');
+                    opt.value = p.id;
+                    opt.textContent = p.id + (p.available ? '' : ' (unconfigured)');
+                    selTest.appendChild(opt);
+                });
+                if (prevTest) selTest.value = prevTest;
+            }
+        }
+
+        async function quickSwitchGatewayBackend() {
+            const clientEl = document.getElementById('gateway-quick-client');
+            const provEl = document.getElementById('gateway-quick-provider');
+            const targetEl = document.getElementById('gateway-quick-target');
+            const stratEl = document.getElementById('gateway-quick-strategy');
+            const clientModel = clientEl ? clientEl.value.trim() : '';
+            const provider = provEl ? provEl.value.trim() : '';
+            const targetModel = targetEl ? targetEl.value.trim() : '';
+            const strategy = stratEl ? stratEl.value.trim() : '';
+            if (!clientModel || !provider) {
+                alert('Please specify both Client Model and Provider.');
+                return;
+            }
+            if (strategy) {
+                await setGatewayModelStrategy(clientModel, strategy);
+            }
+            await selectGatewayBackend(clientModel, provider, targetModel || clientModel);
+        }
+
+        async function selectGatewayBackend(clientModel, provider, targetModel) {
+            if (!clientModel || !provider) return;
+            try {
+                const res = await fetch('/api/gateway/select', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        client_model: clientModel,
+                        provider: provider,
+                        target_model: targetModel || clientModel,
+                        clear_cooldown: true
+                    })
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    alert('Switch failed: ' + (data.error || res.statusText));
+                    return;
+                }
+                await Promise.all([loadGatewayDashboard(), loadModelRoutes()]);
+            } catch (e) {
+                alert('Switch failed: ' + e.message);
+            }
+        }
+
+        async function setGatewayModelStrategy(clientModel, strategy) {
+            if (!clientModel || !strategy) return;
+            try {
+                const res = await fetch('/api/gateway/policy', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        client_model: clientModel,
+                        strategy: strategy
+                    })
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    alert('Policy update failed: ' + (data.error || res.statusText));
+                    return;
+                }
+                await loadGatewayDashboard();
+            } catch (e) {
+                alert('Policy update failed: ' + e.message);
+            }
+        }
+
+        async function clearGatewayCooldown(providerId) {
+            try {
+                const payload = providerId ? { provider: providerId } : {};
+                const res = await fetch('/api/gateway/cooldown/clear', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                if (!res.ok) {
+                    const data = await res.json();
+                    alert('Clear cooldown failed: ' + (data.error || res.statusText));
+                    return;
+                }
+                await loadGatewayDashboard();
+            } catch (e) {
+                alert('Clear cooldown failed: ' + e.message);
+            }
+        }
+
+        function initGatewayDashboardBindings() {
+            const grid = document.getElementById('gateway-providers-grid');
+            if (grid) {
+                grid.addEventListener('click', (e) => {
+                    const toggleBtn = e.target.closest('[data-gateway-toggle-models]');
+                    if (toggleBtn) {
+                        const pid = toggleBtn.getAttribute('data-gateway-toggle-models');
+                        gatewayExpandedProviders[pid] = !gatewayExpandedProviders[pid];
+                        renderGatewayProviders(gatewayProvidersCache);
+                        return;
+                    }
+                    const refreshBtn = e.target.closest('[data-gateway-refresh-provider]');
+                    if (refreshBtn) {
+                        refreshGatewayProviderModels(refreshBtn.getAttribute('data-gateway-refresh-provider'), refreshBtn);
+                        return;
+                    }
+                    const clearBtn = e.target.closest('[data-gateway-clear-provider]');
+                    if (clearBtn) {
+                        clearGatewayCooldown(clearBtn.getAttribute('data-gateway-clear-provider'));
+                        return;
+                    }
+                    const pickBtn = e.target.closest('[data-gateway-pick-model]');
+                    if (pickBtn) {
+                        const m = pickBtn.getAttribute('data-gateway-pick-model');
+                        const p = pickBtn.getAttribute('data-gateway-pick-provider');
+                        fillGatewayModelSelection(m, p);
+                        return;
+                    }
+                    const probeBtn = e.target.closest('[data-gateway-probe-model]');
+                    if (probeBtn) {
+                        probeSingleProviderModel(
+                            probeBtn.getAttribute('data-gateway-probe-model'),
+                            probeBtn.getAttribute('data-gateway-probe-provider')
+                        );
+                    }
+                });
+                grid.addEventListener('input', (e) => {
+                    const searchInput = e.target.closest('[data-gateway-provider-search]');
+                    if (searchInput) {
+                        const pid = searchInput.getAttribute('data-gateway-provider-search');
+                        gatewayProviderQueries[pid] = searchInput.value || '';
+                        refreshProviderModelsDrawer(pid);
+                    }
+                });
+            }
+
+            const tabsEl = document.getElementById('gateway-model-tabs');
+            if (tabsEl) {
+                tabsEl.addEventListener('click', (e) => {
+                    const tabBtn = e.target.closest('[data-gateway-tab]');
+                    if (tabBtn) {
+                        setGatewayModelTab(tabBtn.getAttribute('data-gateway-tab'));
+                    }
+                });
+            }
+
+            const modelsEl = document.getElementById('gateway-models-container');
+            if (modelsEl) {
+                modelsEl.addEventListener('click', (e) => {
+                    const testAllBtn = e.target.closest('[data-gateway-test-all]');
+                    if (testAllBtn) {
+                        const m = testAllBtn.getAttribute('data-gateway-test-all');
+                        const p = testAllBtn.getAttribute('data-gateway-test-prov') || '';
+                        fillGatewayModelSelection(m, p);
+                        runGatewayThreeProtocolTests();
+                        return;
+                    }
+                    const useBtn = e.target.closest('[data-gateway-select-provider]');
+                    if (useBtn) {
+                        selectGatewayBackend(
+                            useBtn.getAttribute('data-gateway-select-model'),
+                            useBtn.getAttribute('data-gateway-select-provider'),
+                            useBtn.getAttribute('data-gateway-select-target')
+                        );
+                        return;
+                    }
+                    const policyBtn = e.target.closest('[data-gateway-policy-strategy]');
+                    if (policyBtn) {
+                        setGatewayModelStrategy(
+                            policyBtn.getAttribute('data-gateway-policy-model'),
+                            policyBtn.getAttribute('data-gateway-policy-strategy')
+                        );
+                        return;
+                    }
+                    const fillEl = e.target.closest('[data-gateway-fill-model]');
+                    if (fillEl) {
+                        const m = fillEl.getAttribute('data-gateway-fill-model') || '';
+                        const p = fillEl.getAttribute('data-gateway-fill-provider') || '';
+                        fillGatewayModelSelection(m, p);
+                    }
+                });
+            }
+        }
+
         // Initial Load
         window.addEventListener('load', () => {
             initRouteProviderPolicyBindings();
+            initGatewayDashboardBindings();
             refreshRouteProviderOptions('google');
             loadAll();
             loadAPIKey();
             loadSupportStatus();
+            loadGatewayDashboard();
             loadModelRoutes();
             loadLoggingStatus();
             loadRequestLogs(true);
@@ -1306,7 +2191,10 @@ var dashboardHTML = `<!DOCTYPE html>
         });
         
         // Polling
-        setInterval(loadAll, 60000);
+        setInterval(() => {
+            loadAll();
+            loadGatewayDashboard();
+        }, 60000);
         setInterval(() => {
             loadRequestLogs();
         }, REQUEST_LOGS_POLL_INTERVAL_MS); // Refresh logs every 10s
