@@ -60,6 +60,7 @@
 
 9. **Multi-Caller Gateway Keys & Per-Key Usage Quotas**
    - Allow issuing multiple named Nexus client keys (`sk-nexus-...`) for different local agents or LAN devices, tracking token usage per caller key with optional daily limits and loopback-trust toggle.
+   - **Status (2026-11-19)**: named `sk-nx-...` client keys with provider/model allowlists, in-memory per-key request/token counters, and `/api/gateway/keys` are implemented (see `api-aggregation-gateway.md` § Client Keys). Daily quotas and the loopback-trust toggle remain open.
 
 10. **Outbound Secret & PII Redaction Guard (`redact`)**
     - Before forwarding prompts to external or free tier providers (e.g., OpenRouter free models), optionally scan and mask secret patterns (`sk-...`, `ghp_...`, AWS keys, private keys) with reversible placeholders that are restored in the downstream response.

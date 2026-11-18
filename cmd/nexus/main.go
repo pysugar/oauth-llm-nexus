@@ -288,6 +288,11 @@ func main() {
 		r.Put("/gateway/policy", gatewayServer.HandleSetModelPolicy)
 		r.Post("/gateway/cooldown/clear", gatewayServer.HandleClearCooldown)
 		r.Post("/gateway/test", gatewayServer.HandleGatewayTest)
+		// Named per-caller client keys with provider/model allowlists (plaintext shown once on create)
+		r.Get("/gateway/keys", gatewayServer.HandleListClientKeys)
+		r.Post("/gateway/keys", gatewayServer.HandleCreateClientKey)
+		r.Patch("/gateway/keys/{id}", gatewayServer.HandleUpdateClientKey)
+		r.Delete("/gateway/keys/{id}", gatewayServer.HandleDeleteClientKey)
 
 		// Request Monitor
 		r.Get("/request-logs", handlers.GetRequestLogsHandler(proxyMonitor))
@@ -310,9 +315,12 @@ func main() {
 		r.Post("/responses", gatewayServer.HandleOpenAIResponses)
 		r.Post("/messages", gatewayServer.HandleAnthropicMessages)
 		r.Post("/embeddings", gatewayServer.HandleOpenAIEmbeddings)
-		r.Get("/codex/quota", handlers.CodexQuotaHandler())
+		// Raw (non-gateway) routes below bypass model routing; restricted client keys are gated
+		// on the provider they always reach.
+		r.With(middleware.RequireProvider(middleware.StaticProvider("codex"))).Get("/codex/quota", handlers.CodexQuotaHandler())
 		if vertexAIStudioEnabled {
-			r.Post("/publishers/google/models/*", handlers.VertexAIStudioProxyHandlerWithMonitor(proxyMonitor))
+			r.With(middleware.RequireProvider(middleware.StaticProvider("vertex"))).
+				Post("/publishers/google/models/*", handlers.VertexAIStudioProxyHandlerWithMonitor(proxyMonitor))
 		}
 	})
 
@@ -326,6 +334,7 @@ func main() {
 	//   POST /amd/v1/chat/completions         → https://developer.amd.com.cn/radeon/api/v1/chat/completions
 	r.Route("/{provider}", func(r chi.Router) {
 		r.Use(middleware.APIKeyAuth(database))
+		r.Use(middleware.RequireProvider(func(r *http.Request) string { return chi.URLParam(r, "provider") }))
 		r.HandleFunc("/*", handlers.GenericCompatProxyHandlerWithMonitor(proxyMonitor))
 	})
 
@@ -341,6 +350,7 @@ func main() {
 	// GenAI-compatible API (legacy Cloud Code OAuth)
 	r.Route("/genai", func(r chi.Router) {
 		r.Use(middleware.APIKeyAuth(database))
+		r.Use(middleware.RequireProvider(middleware.StaticProvider("google")))
 		r.Route("/v1beta/models", func(r chi.Router) {
 			r.Get("/", handlers.GenAIModelsListHandlerWithMonitor(tokenManager, upstreamClient, proxyMonitor))
 			r.Post("/{model}:generateContent", handlers.GenAIHandlerWithMonitor(tokenManager, upstreamClient, proxyMonitor))

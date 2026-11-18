@@ -38,6 +38,24 @@ type ModelMetricSnapshot struct {
 	LastUsedAt   string `json:"last_used_at,omitempty"`
 }
 
+// KeyMetricSnapshot describes aggregated telemetry for one gateway client key (caller).
+type KeyMetricSnapshot struct {
+	Name            string `json:"name"`
+	Requests        int64  `json:"requests"`
+	Success         int64  `json:"success"`
+	Errors          int64  `json:"errors"`
+	InputTokens     int64  `json:"input_tokens"`
+	OutputTokens    int64  `json:"output_tokens"`
+	CachedTokens    int64  `json:"cached_tokens"`
+	ReasoningTokens int64  `json:"reasoning_tokens"`
+	AvgLatencyMS    int64  `json:"avg_latency_ms"`
+	LastProvider    string `json:"last_provider,omitempty"`
+	LastModel       string `json:"last_model,omitempty"`
+	LastStatus      int    `json:"last_status,omitempty"`
+	LastError       string `json:"last_error,omitempty"`
+	LastUsedAt      string `json:"last_used_at,omitempty"`
+}
+
 // MetricsSnapshot summarizes always-on gateway request, latency, and token metrics.
 type MetricsSnapshot struct {
 	StartedAt       string                   `json:"started_at"`
@@ -50,6 +68,7 @@ type MetricsSnapshot struct {
 	ReasoningTokens int64                    `json:"reasoning_tokens"`
 	Providers       []ProviderMetricSnapshot `json:"providers"`
 	Models          []ModelMetricSnapshot    `json:"models"`
+	Keys            []KeyMetricSnapshot      `json:"keys"`
 }
 
 type providerMetricState struct {
@@ -78,6 +97,22 @@ type modelMetricState struct {
 	lastUsedAt     time.Time
 }
 
+type keyMetricState struct {
+	requests        int64
+	success         int64
+	errors          int64
+	inputTokens     int64
+	outputTokens    int64
+	cachedTokens    int64
+	reasoningTokens int64
+	totalLatencyMS  int64
+	lastProvider    string
+	lastModel       string
+	lastStatus      int
+	lastError       string
+	lastUsedAt      time.Time
+}
+
 // Metrics maintains always-on lightweight request, latency, and token counters in memory
 // regardless of whether verbose RequestLog payload persistence is enabled.
 type Metrics struct {
@@ -92,6 +127,7 @@ type Metrics struct {
 	reasoningTokens int64
 	byProvider      map[string]*providerMetricState
 	byModel         map[string]*modelMetricState
+	byKey           map[string]*keyMetricState
 }
 
 // NewMetrics initializes an empty gateway telemetry collector.
@@ -100,6 +136,7 @@ func NewMetrics() *Metrics {
 		startedAt:  time.Now().UTC(),
 		byProvider: make(map[string]*providerMetricState),
 		byModel:    make(map[string]*modelMetricState),
+		byKey:      make(map[string]*keyMetricState),
 	}
 }
 
@@ -230,6 +267,7 @@ func (m *Metrics) Snapshot() MetricsSnapshot {
 		ReasoningTokens: m.reasoningTokens,
 		Providers:       make([]ProviderMetricSnapshot, 0, len(m.byProvider)),
 		Models:          make([]ModelMetricSnapshot, 0, len(m.byModel)),
+		Keys:            make([]KeyMetricSnapshot, 0, len(m.byKey)),
 	}
 
 	provKeys := make([]string, 0, len(m.byProvider))
@@ -267,6 +305,15 @@ func (m *Metrics) Snapshot() MetricsSnapshot {
 		}
 		out.Models = append(out.Models, msSnap)
 	}
+
+	keyNames := make([]string, 0, len(m.byKey))
+	for k := range m.byKey {
+		keyNames = append(keyNames, k)
+	}
+	sort.Strings(keyNames)
+	for _, k := range keyNames {
+		out.Keys = append(out.Keys, toKeySnapshot(k, m.byKey[k]))
+	}
 	return out
 }
 
@@ -287,6 +334,7 @@ func (m *Metrics) Reset() {
 	m.reasoningTokens = 0
 	m.byProvider = make(map[string]*providerMetricState)
 	m.byModel = make(map[string]*modelMetricState)
+	m.byKey = make(map[string]*keyMetricState)
 }
 
 func (m *Metrics) ensureProviderLocked(id string) *providerMetricState {
@@ -328,6 +376,99 @@ func toProviderSnapshot(id string, ps *providerMetricState) ProviderMetricSnapsh
 	}
 	if !ps.lastUsedAt.IsZero() {
 		snap.LastUsedAt = ps.lastUsedAt.Format(time.RFC3339)
+	}
+	return snap
+}
+
+// RecordKeySuccess attributes a completed request to the client key keyName (no-op when empty,
+// i.e. authentication is disabled).
+func (m *Metrics) RecordKeySuccess(keyName, providerID, clientModel string, status int, latency time.Duration, usage ir.Usage) {
+	if m == nil || keyName == "" {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ks := m.touchKeyLocked(keyName, providerID, clientModel, status, latency)
+	ks.success++
+	ks.inputTokens += int64(usage.InputTokens)
+	ks.outputTokens += int64(usage.OutputTokens)
+	ks.cachedTokens += int64(usage.CacheReadTokens)
+	ks.reasoningTokens += int64(usage.ReasoningTokens)
+	ks.lastError = ""
+}
+
+// RecordKeyError attributes a failed or denied request to the client key keyName.
+func (m *Metrics) RecordKeyError(keyName, providerID, clientModel string, status int, latency time.Duration, errMsg string) {
+	if m == nil || keyName == "" {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ks := m.touchKeyLocked(keyName, providerID, clientModel, status, latency)
+	ks.errors++
+	ks.lastError = errMsg
+}
+
+// KeySnapshot returns current metrics for the client key keyName, or nil if it has no requests yet.
+func (m *Metrics) KeySnapshot(keyName string) *KeyMetricSnapshot {
+	if m == nil || keyName == "" {
+		return nil
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	ks, ok := m.byKey[keyName]
+	if !ok {
+		return nil
+	}
+	snap := toKeySnapshot(keyName, ks)
+	return &snap
+}
+
+func (m *Metrics) touchKeyLocked(keyName, providerID, clientModel string, status int, latency time.Duration) *keyMetricState {
+	ks, ok := m.byKey[keyName]
+	if !ok {
+		ks = &keyMetricState{}
+		m.byKey[keyName] = ks
+	}
+	ms := latency.Milliseconds()
+	if ms < 0 {
+		ms = 0
+	}
+	ks.requests++
+	ks.totalLatencyMS += ms
+	if providerID != "" {
+		ks.lastProvider = providerID
+	}
+	if clientModel != "" {
+		ks.lastModel = clientModel
+	}
+	ks.lastStatus = status
+	ks.lastUsedAt = time.Now().UTC()
+	return ks
+}
+
+func toKeySnapshot(name string, ks *keyMetricState) KeyMetricSnapshot {
+	avg := int64(0)
+	if ks.requests > 0 {
+		avg = ks.totalLatencyMS / ks.requests
+	}
+	snap := KeyMetricSnapshot{
+		Name:            name,
+		Requests:        ks.requests,
+		Success:         ks.success,
+		Errors:          ks.errors,
+		InputTokens:     ks.inputTokens,
+		OutputTokens:    ks.outputTokens,
+		CachedTokens:    ks.cachedTokens,
+		ReasoningTokens: ks.reasoningTokens,
+		AvgLatencyMS:    avg,
+		LastProvider:    ks.lastProvider,
+		LastModel:       ks.lastModel,
+		LastStatus:      ks.lastStatus,
+		LastError:       ks.lastError,
+	}
+	if !ks.lastUsedAt.IsZero() {
+		snap.LastUsedAt = ks.lastUsedAt.Format(time.RFC3339)
 	}
 	return snap
 }

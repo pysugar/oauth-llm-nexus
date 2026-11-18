@@ -120,7 +120,7 @@ The `/api/gateway/*` endpoints (protected by `NEXUS_ADMIN_PASSWORD` when set) ex
 | `PATCH /api/gateway/providers/{id}` | Mutate runtime provider settings (`enabled`, `free_only`, `include_non_chat`, `prefer`, `key_strategy`), add/remove API keys (`add_api_key`, `remove_api_key`), clear cooldowns, and refresh catalog. Changes are persisted to SQLite (`configs.gateway_provider_overrides`) and replayed at startup, taking precedence over `providers.yaml`/env; UI-added keys are stored verbatim in the local DB, removed env keys only as SHA-256 fingerprints |
 | `DELETE /api/gateway/providers/{id}/overrides` | Forget persisted runtime overrides for `{id}` (config/env defaults apply after restart) |
 | `POST /api/gateway/providers/{id}/refresh` | Refresh live upstream model catalog for provider `{id}` |
-| `GET /api/gateway/stats` / `POST /api/gateway/stats/reset` | Read or reset lightweight always-on per-provider & per-model request/latency/token counters |
+| `GET /api/gateway/stats` / `POST /api/gateway/stats/reset` | Read or reset lightweight always-on per-provider, per-model & per-client-key (`keys`) request/latency/token counters |
 | `GET /api/gateway/models` | List unified models with active backend, exact + canonical candidates, and `failover`/`pinned` policy |
 | `GET /api/gateway/models/matrix` | Inverted model-to-backends matrix grouped by `CanonicalModelID` (filterable by `?q=` and `?multi_only=true`) |
 | `GET /api/gateway/models/{client}` | Inspect all supporting candidates (DB routes + canonical catalog matches) for a single model |
@@ -129,6 +129,34 @@ The `/api/gateway/*` endpoints (protected by `NEXUS_ADMIN_PASSWORD` when set) ex
 | `PUT /api/gateway/policy` / `PUT /api/gateway/models/{client}/policy` | Toggle per-model strategy between `"failover"` and `"pinned"` |
 | `POST /api/gateway/cooldown/clear` | Clear cooldowns (provider-level and per-key) for one provider or all providers |
 | `POST /api/gateway/test` | Execute a live protocol compatibility probe (`openai-chat`, `openai-responses`, `anthropic`, `gemini`, supporting `stream` & `tools`) with optional pinned `provider` |
+| `GET /api/gateway/keys` | List client keys (masked, never the secret) plus the read-only `legacy` key, with allowlists, `last_used_at`, and per-key `stats` |
+| `POST /api/gateway/keys` | Issue a named client key; the plaintext `api_key` is returned **only in this response** |
+| `PATCH /api/gateway/keys/{id}` | Update `allowed_providers`, `allowed_models` (`[]` clears = unrestricted; omitted = unchanged) or `disabled`; `{id}` is the numeric id or the name |
+| `DELETE /api/gateway/keys/{id}` | Revoke a client key immediately |
+
+### Client Keys & Caller Allowlists (`internal/auth/clientkey`)
+
+Several callers (a personal knowledge-management app, coding agents, LAN devices) can each get their own gateway credential, so a privacy-sensitive caller can be confined to trusted backends (e.g. `pkm-app` → `ollama` + `gemini`, never free OpenRouter models).
+
+- **Storage**: `client_keys` table (`models.ClientKey`, migrated by `db.InitDB`): `name` (unique, `[A-Za-z0-9][A-Za-z0-9._-]{0,63}`, `legacy` reserved), `key_hash` (hex SHA-256 — the plaintext is never stored), `key_hint` (masked display), `allowed_providers` / `allowed_models` (JSON arrays; empty = unrestricted), `disabled`, `created_at`, `last_used_at` (written at most once per minute per key). Keys look like `sk-nx-<48 hex>` (192 bits). Lookups are cached per DB handle and invalidated on every mutation.
+- **Authentication** (`middleware.APIKeyAuth`): the same credential sources as before (`Authorization: Bearer`, `x-api-key`, `x-goog-api-key`, `?key=`). The legacy `configs.api_key` keeps working as the unrestricted `legacy` caller; client keys resolve by hash. Disabled keys get `401 "API key is disabled"`. Auth is skipped only when neither a legacy key nor any client key exists. The resolved `clientkey.Caller` travels in the request context.
+- **Model allowlist**: checked against the client-facing `model` string before routing — exact (case-sensitive) or `prefix*`. `ollama/llama3` and `llama3` are different entries.
+- **Provider allowlist**: applied to the resolved `router.Plan` in `handleInference` (all four protocols) and `HandleOpenAIEmbeddings` before any upstream is contacted. Disallowed gateway candidates are dropped (failover continues over the permitted ones); legacy OAuth delegation counts as provider `google` / `codex` / `vertex`, and a permitted legacy fallback is promoted when no gateway candidate remains. Explicit `X-Nexus-Provider` / `<provider>/<model>` selection cannot escape the allowlist. Gemini non-generation actions (`countTokens`, `embedContent`, `batchEmbedContents`) always count as provider `gemini`.
+- **Denials** return `403` in the caller's protocol (`permission_error` for OpenAI/Anthropic, `PERMISSION_DENIED` for Gemini, code `forbidden_by_key_policy`) and are counted as errors in the key's stats.
+- **Raw routes**: `/{provider}/*`, `/genai/*` (`google`), `/v1/publishers/google/models/*` (`vertex`) and `/v1/codex/quota` (`codex`) bypass model routing, so `middleware.RequireProvider` requires the served provider to be allowlisted and rejects keys that carry a model allowlist outright.
+- **Limitation**: filtering happens after resolution, so a restricted caller does not trigger fall-through the router would otherwise skip (e.g. a DB alias that only targets disallowed providers returns `403` rather than falling back to catalog discovery on an allowed provider; with the `pinned` strategy only the pinned backend is considered). Add an explicit route for the allowed provider in that case. Model listings (`/v1/models`) are not filtered per key.
+- **Admin access**: `/api/gateway/keys` sits behind `NEXUS_ADMIN_PASSWORD` like the rest of `/api`; set it whenever the gateway listens beyond loopback (`HOST=0.0.0.0`).
+
+```bash
+# Issue a key for the PKM app that may only reach local/trusted backends
+curl -s -X POST localhost:8080/api/gateway/keys -H 'Content-Type: application/json' \
+  -d '{"name":"pkm-app","allowed_providers":["ollama","gemini"],"allowed_models":["notes-*","kb-embed"]}'
+# → 201 {"key":{"id":1,"name":"pkm-app","masked_key":"sk-nx-ab…9f3c",...},"api_key":"sk-nx-…","note":"store this key now; ..."}
+
+curl -s -X PATCH localhost:8080/api/gateway/keys/pkm-app -d '{"allowed_models":[]}'   # clear model allowlist
+curl -s -X PATCH localhost:8080/api/gateway/keys/1 -d '{"disabled":true}'            # suspend
+curl -s -X DELETE localhost:8080/api/gateway/keys/pkm-app                           # revoke
+```
 
 The standalone Magpie-inspired console at **`GET /ui`** (`internal/ui/`) consumes these endpoints alongside `/api/model-routes`, `/api/config/apikey`, and `/api/request-logs` to provide:
 - Split-pane **Providers & Catalog** inspection with per-key health pills, `round-robin` / `sticky` key relay switch, live `Enabled` / `Free Only` / `Include Non-Chat` switches, preferred protocol selector, inline `+ Add` / `×` key management, real-time telemetry tiles, and inline model probing

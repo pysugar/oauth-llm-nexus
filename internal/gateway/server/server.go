@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pysugar/oauth-llm-nexus/internal/auth/clientkey"
 	"github.com/pysugar/oauth-llm-nexus/internal/db/models"
 	"github.com/pysugar/oauth-llm-nexus/internal/gateway/codec"
 	"github.com/pysugar/oauth-llm-nexus/internal/gateway/codecs"
@@ -90,7 +91,12 @@ func (s *Server) HandleGeminiModels(w http.ResponseWriter, r *http.Request) {
 	default:
 		// Non-generation actions (countTokens, embedContent, batchEmbedContents, etc.):
 		// forward via configured gateway Gemini provider first (supports custom base URL & key ring),
-		// falling back to the legacy Gemini AI Studio proxy if initialized.
+		// falling back to the legacy Gemini AI Studio proxy if initialized. Both always reach Gemini.
+		if ge := checkCallerDirect(clientkey.FromContext(r.Context()), "gemini", modelID); ge != nil {
+			s.recordError(r, "", modelID, ge.HTTPStatus, 0, ge.Message) // denied before any upstream: not a provider error
+			s.writeError(w, codecs.MustFor(ir.ProtoGemini), ge)
+			return
+		}
 		if s.forwardGeminiProviderAction(w, r, modelID, action) {
 			return
 		}
@@ -222,10 +228,19 @@ func (s *Server) handleInference(
 		irReq.Stream = streamHint
 	}
 
-	headerProvider := r.Header.Get("X-Nexus-Provider")
-	plan, ge := s.Router.Resolve(r.Context(), irReq.Model, headerProvider)
+	// Client key allowlists: the model alias is checked before routing, providers (including
+	// legacy OAuth delegation targets) are filtered from the resolved plan before any upstream call.
+	caller := clientkey.FromContext(r.Context())
+	var plan *router.Plan
+	ge = checkCallerModel(caller, irReq.Model)
+	if ge == nil {
+		plan, ge = s.Router.Resolve(r.Context(), irReq.Model, r.Header.Get("X-Nexus-Provider"))
+	}
+	if ge == nil {
+		ge = applyCallerPolicy(caller, plan)
+	}
 	if ge != nil {
-		s.Metrics.RecordError("", irReq.Model, ge.HTTPStatus, time.Since(startTime), ge.Message)
+		s.recordError(r, "", irReq.Model, ge.HTTPStatus, time.Since(startTime), ge.Message)
 		s.logMonitorError(r, clientProto, irReq.Model, "", rawBody, ge.HTTPStatus, startTime, ge.Message)
 		s.writeError(w, clientCodec, ge)
 		return
@@ -235,12 +250,12 @@ func (s *Server) handleInference(
 	if plan.LegacyProvider != "" {
 		r.Body = io.NopCloser(bytes.NewReader(rawBody))
 		if s.delegateLegacy(w, r, clientProto, plan) {
-			s.Metrics.RecordSuccess(plan.LegacyProvider, irReq.Model, http.StatusOK, time.Since(startTime), ir.Usage{})
+			s.recordSuccess(r, plan.LegacyProvider, irReq.Model, http.StatusOK, time.Since(startTime), ir.Usage{})
 			return
 		}
 		errMsg := ir.NewError(503, "legacy_provider_unavailable",
 			"legacy OAuth provider "+plan.LegacyProvider+" is unavailable for protocol "+string(clientProto))
-		s.Metrics.RecordError(plan.LegacyProvider, irReq.Model, errMsg.HTTPStatus, time.Since(startTime), errMsg.Message)
+		s.recordError(r, plan.LegacyProvider, irReq.Model, errMsg.HTTPStatus, time.Since(startTime), errMsg.Message)
 		s.logMonitorError(r, clientProto, irReq.Model, plan.LegacyProvider, rawBody, errMsg.HTTPStatus, startTime, errMsg.Message)
 		s.writeError(w, clientCodec, errMsg)
 		return
@@ -258,17 +273,17 @@ func (s *Server) handleInference(
 				LegacyModel:    plan.LegacyFallbackModel,
 			}
 			if s.delegateLegacy(w, r, clientProto, fallbackPlan) {
-				s.Metrics.RecordSuccess(plan.LegacyFallbackProvider, irReq.Model, http.StatusOK, time.Since(startTime), ir.Usage{})
+				s.recordSuccess(r, plan.LegacyFallbackProvider, irReq.Model, http.StatusOK, time.Since(startTime), ir.Usage{})
 				return
 			}
 		}
-		s.Metrics.RecordError(result.ProviderID, irReq.Model, ge.HTTPStatus, time.Since(startTime), ge.Message)
+		s.recordError(r, result.ProviderID, irReq.Model, ge.HTTPStatus, time.Since(startTime), ge.Message)
 		s.logMonitorError(r, clientProto, irReq.Model, result.ProviderID, rawBody, ge.HTTPStatus, startTime, ge.Message)
 		s.writeError(w, clientCodec, ge)
 		return
 	}
 
-	s.Metrics.RecordSuccess(result.ProviderID, irReq.Model, result.Status, time.Since(startTime), ir.Usage{
+	s.recordSuccess(r, result.ProviderID, irReq.Model, result.Status, time.Since(startTime), ir.Usage{
 		InputTokens:     result.InputTokens,
 		OutputTokens:    result.OutputTokens,
 		CacheReadTokens: result.CachedTokens,

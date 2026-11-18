@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pysugar/oauth-llm-nexus/internal/auth/clientkey"
 	"github.com/pysugar/oauth-llm-nexus/internal/gateway/codec"
 	"github.com/pysugar/oauth-llm-nexus/internal/gateway/codecs"
 	"github.com/pysugar/oauth-llm-nexus/internal/gateway/ir"
@@ -70,9 +71,18 @@ func (s *Server) HandleOpenAIEmbeddings(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	plan, ge := s.Router.ResolveEmbedding(r.Context(), req.Model, r.Header.Get("X-Nexus-Provider"))
+	// Client key allowlists apply before routing (model) and to the resolved plan (providers).
+	caller := clientkey.FromContext(r.Context())
+	var plan *router.Plan
+	ge := checkCallerModel(caller, req.Model)
+	if ge == nil {
+		plan, ge = s.Router.ResolveEmbedding(r.Context(), req.Model, r.Header.Get("X-Nexus-Provider"))
+	}
+	if ge == nil {
+		ge = applyCallerPolicy(caller, plan)
+	}
 	if ge != nil {
-		s.Metrics.RecordError("", req.Model, ge.HTTPStatus, time.Since(start), ge.Message)
+		s.recordError(r, "", req.Model, ge.HTTPStatus, time.Since(start), ge.Message)
 		s.logMonitorError(r, ir.ProtoOpenAIChat, req.Model, "", rawBody, ge.HTTPStatus, start, ge.Message)
 		s.writeError(w, errCodec, ge)
 		return
@@ -88,7 +98,7 @@ func (s *Server) HandleOpenAIEmbeddings(w http.ResponseWriter, r *http.Request) 
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write(res.body)
-			s.Metrics.RecordSuccess(cand.Provider.ID, req.Model, http.StatusOK, time.Since(start),
+			s.recordSuccess(r, cand.Provider.ID, req.Model, http.StatusOK, time.Since(start),
 				ir.Usage{InputTokens: res.promptTokens})
 			s.logMonitorSuccess(r, req.Model, attemptOutcome{
 				ProviderID:    cand.Provider.ID,
@@ -109,7 +119,7 @@ func (s *Server) HandleOpenAIEmbeddings(w http.ResponseWriter, r *http.Request) 
 	if lastErr == nil {
 		lastErr = ir.NewError(502, "all_attempts_failed", "all embedding backend candidates failed")
 	}
-	s.Metrics.RecordError(lastProvider, req.Model, lastErr.HTTPStatus, time.Since(start), lastErr.Message)
+	s.recordError(r, lastProvider, req.Model, lastErr.HTTPStatus, time.Since(start), lastErr.Message)
 	s.logMonitorError(r, ir.ProtoOpenAIChat, req.Model, lastProvider, rawBody, lastErr.HTTPStatus, start, lastErr.Message)
 	s.writeError(w, errCodec, lastErr)
 }
