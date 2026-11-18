@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/pysugar/oauth-llm-nexus/internal/auth/token"
+	dbpkg "github.com/pysugar/oauth-llm-nexus/internal/db"
 	"github.com/pysugar/oauth-llm-nexus/internal/db/models"
 	"github.com/pysugar/oauth-llm-nexus/internal/providers/catalog"
 	"github.com/pysugar/oauth-llm-nexus/internal/upstream"
@@ -226,6 +227,7 @@ func RegenerateAPIKeyHandler(db *gorm.DB) http.HandlerFunc {
 		apiKey := "sk-" + hex.EncodeToString(keyBytes)
 
 		db.Model(&models.Config{}).Where("key = ?", "api_key").Update("value", apiKey)
+		dbpkg.InvalidateAPIKeyCache(db)
 		log.Printf("🔑 Regenerated API key: %s", maskAPIKey(apiKey))
 
 		w.Header().Set("Content-Type", "application/json")

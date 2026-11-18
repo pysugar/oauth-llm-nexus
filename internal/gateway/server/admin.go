@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/url"
 	"sort"
@@ -38,6 +39,7 @@ type adminProviderDTO struct {
 	CatalogFetched string                  `json:"catalog_fetched_at,omitempty"`
 	CatalogError   string                  `json:"catalog_error,omitempty"`
 	Models         []string                `json:"models,omitempty"`
+	Persisted      bool                    `json:"persisted_override,omitempty"`
 }
 
 type adminCandidateDTO struct {
@@ -82,8 +84,11 @@ func (s *Server) HandleListProviders(w http.ResponseWriter, r *http.Request) {
 	list := s.Registry.List()
 	out := make([]adminProviderDTO, 0, len(list))
 
+	persisted, _ := loadProviderOverrides(s.DB)
 	for _, p := range list {
-		out = append(out, s.buildProviderDTO(p, cooldowns))
+		dto := s.buildProviderDTO(p, cooldowns)
+		dto.Persisted = !persisted[p.ID].empty()
+		out = append(out, dto)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"providers": out})
@@ -184,6 +189,11 @@ func (s *Server) HandleUpdateProvider(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	removedRawKey := ""
+	if rm := strings.TrimSpace(body.RemoveAPIKey); rm != "" && p.Keys != nil {
+		removedRawKey, _ = p.Keys.FindByMasked(rm)
+	}
+
 	catalogAffected, err := p.ApplyRuntimePatchOptions(provider.RuntimePatchOptions{
 		Enabled:        body.Enabled,
 		FreeOnly:       body.FreeOnly,
@@ -198,6 +208,19 @@ func (s *Server) HandleUpdateProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	persistErr := s.persistProviderPatch(p.ID, providerPatch{
+		Enabled:        body.Enabled,
+		FreeOnly:       body.FreeOnly,
+		IncludeNonChat: body.IncludeNonChat,
+		Prefer:         preferProto,
+		KeyStrategy:    body.KeyStrategy,
+		AddedKey:       body.AddAPIKey,
+		RemovedKey:     removedRawKey,
+	})
+	if persistErr != nil {
+		log.Printf("⚠️ Failed to persist runtime overrides for provider %s: %v", p.ID, persistErr)
+	}
+
 	if body.ClearCooldown || (body.Enabled != nil && *body.Enabled) || strings.TrimSpace(body.AddAPIKey) != "" {
 		s.Cooldown.Clear(p.ID)
 		if p.Keys != nil {
@@ -208,9 +231,13 @@ func (s *Server) HandleUpdateProvider(w http.ResponseWriter, r *http.Request) {
 		_, _ = s.Registry.Catalog().Refresh(r.Context(), p)
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
-		"provider": s.buildProviderDTO(p, s.Cooldown.Snapshot()),
-	})
+	dto := s.buildProviderDTO(p, s.Cooldown.Snapshot())
+	dto.Persisted = persistErr == nil && s.hasPersistedOverride(p.ID)
+	resp := map[string]any{"provider": dto}
+	if persistErr != nil {
+		resp["persist_error"] = persistErr.Error()
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // HandleGatewayStats serves GET /api/gateway/stats.

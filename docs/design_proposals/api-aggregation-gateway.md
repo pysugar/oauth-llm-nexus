@@ -37,6 +37,16 @@ flowchart LR
 | **Anthropic Messages API** | `internal/gateway/codec/anthropic` | `POST /anthropic/v1/messages`, `POST /v1/messages`, `GET /anthropic/v1/models` | Supports `system`, `thinking` blocks (with signature cache `internal/gateway/ir/sigstore.go`), `tool_use`/`tool_result`, cache control usage |
 | **Google Gemini API** | `internal/gateway/codec/gemini` | `GET /v1beta/models`, `GET /v1beta/models/{model}`, `POST /v1beta/models/{model}:generateContent`, `POST /v1beta/models/{model}:streamGenerateContent`, `POST /v1beta/openai/chat/completions` | Translates `contents`, `systemInstruction`, `functionDeclarations`/`functionCall`/`functionResponse`, `thinkingConfig` (`thinkingLevel` for Gemini 3 & 4), thought signatures; non-generation actions (`countTokens`, embeddings) forward through `KeyRing` with client `?key=` stripped before falling back to legacy |
 
+### Unified Embeddings (`POST /v1/embeddings`, `POST /v1beta/openai/embeddings`)
+
+OpenAI-compatible embeddings endpoint (`internal/gateway/server/embeddings.go`, `internal/gateway/router/embeddings.go`) sharing the same routing, key rotation, cooldown and pre-response failover as chat:
+
+- **Resolution**: `X-Nexus-Provider` / `<provider>/<model>` prefix / DB `ModelRoute` aliases (e.g. `pkm-embed`) first; otherwise per-provider *embedding catalogs* (models detected by `IsEmbeddingModel` or Gemini `embedContent` support, kept apart from chat catalogs so they never pollute `/v1/models`). Vendor-namespaced IDs such as `nvidia/llama-3.2-nv-embedqa-1b-v1` are kept verbatim when the embedding catalog advertises them.
+- **OpenAI-compatible backends** (`openai`, `nvidia`, `ollama`, `openrouter`, ...): passthrough to `{openai_chat}/embeddings` with the model rewritten.
+- **Gemini backend**: translated to `:batchEmbedContents` (chunked at 100 inputs), `dimensions` → `outputDimensionality`, `encoding_format: base64` honored (little-endian float32, matching the OpenAI SDK default).
+- **Retrieval hint**: optional `input_type` (alias `task_type`): `query` | `document`/`passage` | `similarity` | `classification` | `clustering`. Mapped to Gemini `taskType` (`RETRIEVAL_QUERY`/`RETRIEVAL_DOCUMENT`/...), forwarded as `query`/`passage` to backends with the `embedding_input_type` quirk (NVIDIA preset), stripped for strict OpenAI-compatible APIs.
+- **Caveat**: vectors from different embedding models are not interchangeable. Only put the *same* model (served by different backends) into one failover alias, and pin the alias (`pinned`) once an index is built with it.
+
 ### Translation Strategy (`ir.Request` + Stream-First)
 
 1. **Same-Protocol Passthrough**: When the chosen backend natively supports the incoming client protocol (`Provider.TargetFor(clientProto)` returns `passthrough == true`), only the model field (`RewriteModelJSON`) and auth/base headers are rewritten while preserving vendor extensions verbatim (including OpenAI Responses `previous_response_id`).
@@ -65,6 +75,7 @@ Additional per-provider env overrides:
 - `NEXUS_<ID>_INCLUDE_NON_CHAT=true|false`
 - `NEXUS_<ID>_TIMEOUT` (e.g. `120s`)
 - `NEXUS_PROVIDERS_FILE` (override path to `providers.yaml`)
+- `NEXUS_CORS_ORIGINS` (opt-in CORS for inference APIs `/v1/*`, `/v1beta/*`, `/anthropic/*`; comma-separated origins, `scheme://host:*` port wildcards and `*` supported, e.g. `http://localhost:*,tauri://localhost`). Admin `/api/*` and `/ui` stay same-origin.
 
 ## 4. Routing Precedence, Failover, Key Rotation & Cooldown
 
@@ -106,7 +117,8 @@ The `/api/gateway/*` endpoints (protected by `NEXUS_ADMIN_PASSWORD` when set) ex
 | Method & Path | Purpose |
 | :--- | :--- |
 | `GET /api/gateway/providers` | List all gateway providers, per-key `key_statuses`, `key_strategy`, protocol capabilities, active cooldowns, live `stats`, and catalog counts |
-| `PATCH /api/gateway/providers/{id}` | Mutate runtime provider settings (`enabled`, `free_only`, `include_non_chat`, `prefer`, `key_strategy`), add/remove API keys (`add_api_key`, `remove_api_key`), clear cooldowns, and refresh catalog |
+| `PATCH /api/gateway/providers/{id}` | Mutate runtime provider settings (`enabled`, `free_only`, `include_non_chat`, `prefer`, `key_strategy`), add/remove API keys (`add_api_key`, `remove_api_key`), clear cooldowns, and refresh catalog. Changes are persisted to SQLite (`configs.gateway_provider_overrides`) and replayed at startup, taking precedence over `providers.yaml`/env; UI-added keys are stored verbatim in the local DB, removed env keys only as SHA-256 fingerprints |
+| `DELETE /api/gateway/providers/{id}/overrides` | Forget persisted runtime overrides for `{id}` (config/env defaults apply after restart) |
 | `POST /api/gateway/providers/{id}/refresh` | Refresh live upstream model catalog for provider `{id}` |
 | `GET /api/gateway/stats` / `POST /api/gateway/stats/reset` | Read or reset lightweight always-on per-provider & per-model request/latency/token counters |
 | `GET /api/gateway/models` | List unified models with active backend, exact + canonical candidates, and `failover`/`pinned` policy |

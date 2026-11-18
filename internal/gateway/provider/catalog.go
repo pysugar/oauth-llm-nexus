@@ -22,9 +22,10 @@ type ModelInfo struct {
 }
 
 type catalogEntry struct {
-	models    []ModelInfo
-	fetchedAt time.Time
-	lastErr   string
+	models      []ModelInfo
+	embedModels []ModelInfo // embedding-capable models kept apart from chat routing
+	fetchedAt   time.Time
+	lastErr     string
 }
 
 // Catalog caches per-provider discovered model lists with configurable TTL.
@@ -195,8 +196,9 @@ func (c *Catalog) Refresh(ctx context.Context, p *Provider) ([]ModelInfo, error)
 		parsed := parseModelsResponse(p.ID, proto, p.IsFreeOnly(), p.IsIncludeNonChat(), body)
 		c.mu.Lock()
 		c.entries[p.ID] = &catalogEntry{
-			models:    parsed,
-			fetchedAt: time.Now(),
+			models:      parsed,
+			embedModels: parseEmbeddingModels(p.ID, proto, p.IsFreeOnly(), body),
+			fetchedAt:   time.Now(),
 		}
 		merged := mergeModelInfoLists(parsed, c.staticInfoLocked(p.ID))
 		c.mu.Unlock()
@@ -458,7 +460,9 @@ func IsChatCapableModel(providerID, modelID string) bool {
 	if strings.HasSuffix(lower, "-embed") || strings.HasSuffix(lower, "-retriever") {
 		return false
 	}
-	return true
+	// Catch-all for embedding models such as nvidia/nemotron-3.5-embed-8b or snowflake/arctic-embed-l,
+	// which are served via /v1/embeddings instead of chat routing.
+	return !IsEmbeddingModel(lower)
 }
 
 func supportsGenerateContent(methods []string) bool {

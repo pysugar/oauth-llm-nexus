@@ -80,10 +80,25 @@ func ensureAPIKey(db *gorm.DB) {
 	}
 }
 
+// apiKeyCache memoizes the gateway API key per database handle so request auth
+// does not hit SQLite on every call. RegenerateAPIKey refreshes it.
+var apiKeyCache sync.Map // map[*gorm.DB]string
+
+// InvalidateAPIKeyCache drops the memoized API key for db after an out-of-band update.
+func InvalidateAPIKeyCache(db *gorm.DB) {
+	apiKeyCache.Delete(db)
+}
+
 // GetAPIKey retrieves the API key from database
 func GetAPIKey(db *gorm.DB) string {
+	if v, ok := apiKeyCache.Load(db); ok {
+		return v.(string)
+	}
 	var config models.Config
 	db.Where("key = ?", "api_key").First(&config)
+	if config.Value != "" {
+		apiKeyCache.Store(db, config.Value)
+	}
 	return config.Value
 }
 
@@ -94,6 +109,7 @@ func RegenerateAPIKey(db *gorm.DB) string {
 	apiKey := "sk-" + hex.EncodeToString(keyBytes)
 
 	db.Model(&models.Config{}).Where("key = ?", "api_key").Update("value", apiKey)
+	apiKeyCache.Store(db, apiKey)
 	log.Printf("🔑 Regenerated API key: %s", formatSensitiveAPIKey(apiKey))
 	return apiKey
 }

@@ -366,3 +366,22 @@ func TestGeminiAPIKeysLoadingRoundRobinAndCanonicalModelID(t *testing.T) {
 		}
 	}
 }
+
+func TestEmbeddingModelsExcludedFromChatCatalog(t *testing.T) {
+	for _, id := range []string{
+		"nvidia/nemotron-3.5-embed-8b", "snowflake/arctic-embed-l", "nvidia/embed-qa-4",
+		"gemini-embedding-001", "nomic-embed-text:latest", "baai/bge-m3",
+	} {
+		if IsChatCapableModel("nvidia", id) {
+			t.Errorf("%s must not be chat-capable", id)
+		}
+		if !IsEmbeddingModel(id) {
+			t.Errorf("%s must be detected as embedding model", id)
+		}
+	}
+	for _, id := range []string{"meta/llama-3.3-70b-instruct", "gemini-2.5-flash", "deepseek-reasoner", "gpt-5"} {
+		if !IsChatCapableModel("nvidia", id) || IsEmbeddingModel(id) {
+			t.Errorf("%s must stay chat-capable", id)
+		}
+	}
+}

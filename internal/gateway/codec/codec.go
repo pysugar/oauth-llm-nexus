@@ -22,6 +22,7 @@ type Quirks struct {
 	OmitReasoningEffort   bool // Suppress reasoning_effort in body for backends that reject it
 	ThoughtTagParsing     bool // Parse <think>/<thought> tags out of OpenAI Chat text deltas
 	StreamFirst           bool // Use upstream SSE even for non-streaming requests to avoid header timeouts
+	EmbeddingInputType    bool // Forward OpenAI embeddings input_type (query/passage) instead of stripping it (NVIDIA)
 }
 
 // StreamDecoder decodes upstream SSE frames into protocol-neutral IR events.

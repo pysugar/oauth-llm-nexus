@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pysugar/oauth-llm-nexus/internal/db/models"
@@ -33,6 +34,8 @@ type Server struct {
 	DB        *gorm.DB
 	Monitor   *monitor.ProxyMonitor
 	Legacy    LegacyHandlers
+
+	overridesMu sync.Mutex // serializes read-modify-write of persisted provider overrides
 }
 
 // New creates a gateway Server initialized with reg, database, proxy monitor, and legacy OAuth delegates.

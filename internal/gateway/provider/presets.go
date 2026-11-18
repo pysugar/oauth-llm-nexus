@@ -20,8 +20,8 @@ type Preset struct {
 	FreeOnly       bool
 	IncludeNonChat bool
 	StaticHeaders  map[string]string
-	Timeout       time.Duration
-	Quirks        codec.Quirks
+	Timeout        time.Duration
+	Quirks         codec.Quirks
 }
 
 // DefaultPresetOrder lists the 7 built-in API aggregation presets in default fallback priority order.
@@ -88,6 +88,7 @@ var builtInPresets = map[string]Preset{
 			ThoughtTagParsing:    true,
 			OmitStrictTools:      true,
 			StreamFirst:          true,
+			EmbeddingInputType:   true,
 		},
 	},
 	"amd": {

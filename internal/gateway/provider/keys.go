@@ -178,6 +178,49 @@ func (kr *KeyRing) RemoveByMasked(maskedLabel string) bool {
 	return false
 }
 
+// FindByMasked returns the raw key whose masked label equals maskedLabel.
+func (kr *KeyRing) FindByMasked(maskedLabel string) (string, bool) {
+	if kr == nil || maskedLabel == "" {
+		return "", false
+	}
+	kr.mu.Lock()
+	defer kr.mu.Unlock()
+	for _, k := range kr.keys {
+		if maskSecret(k) == maskedLabel {
+			return k, true
+		}
+	}
+	return "", false
+}
+
+// RemoveMatching drops every key for which match returns true and reports how many were removed.
+func (kr *KeyRing) RemoveMatching(match func(key string) bool) int {
+	if kr == nil || match == nil {
+		return 0
+	}
+	kr.mu.Lock()
+	defer kr.mu.Unlock()
+	kept := kr.keys[:0]
+	removed := 0
+	for _, k := range kr.keys {
+		if match(k) {
+			delete(kr.coolUntil, k)
+			delete(kr.metrics, k)
+			removed++
+			continue
+		}
+		kept = append(kept, k)
+	}
+	kr.keys = kept
+	if len(kr.keys) == 0 {
+		kr.idx, kr.rrCursor = 0, 0
+	} else {
+		kr.idx %= len(kr.keys)
+		kr.rrCursor %= len(kr.keys)
+	}
+	return removed
+}
+
 // ClearCooldowns clears transient per-key cooldown state across all keys in the ring.
 func (kr *KeyRing) ClearCooldowns() {
 	if kr == nil {

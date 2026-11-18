@@ -87,6 +87,11 @@ func main() {
 	if regErr != nil {
 		log.Printf("⚠️ Gateway provider registry loaded with defaults: %v", regErr)
 	}
+	if applied, err := gwserver.ApplyPersistedProviderOverrides(database, gatewayRegistry); err != nil {
+		log.Printf("⚠️ Failed to load persisted gateway provider overrides: %v", err)
+	} else if len(applied) > 0 {
+		log.Printf("✅ Applied persisted runtime overrides for providers: %s", strings.Join(applied, ", "))
+	}
 	var gatewayIDs []string
 	var compatSpecs []catalog.GatewayProviderSpec
 	for _, p := range gatewayRegistry.List() {
@@ -170,6 +175,13 @@ func main() {
 	r := chi.NewRouter()
 	r.Use(chimiddleware.Logger)
 	r.Use(chimiddleware.Recoverer)
+	// Opt-in CORS for self-hosted frontends (web/Tauri/Electron) calling inference APIs directly,
+	// e.g. NEXUS_CORS_ORIGINS="http://localhost:*,tauri://localhost". Admin routes stay same-origin.
+	corsOrigins := middleware.ParseCORSOrigins(os.Getenv("NEXUS_CORS_ORIGINS"))
+	r.Use(middleware.CORS(corsOrigins, middleware.DefaultCORSPathPrefixes))
+	if len(corsOrigins) > 0 {
+		log.Printf("🌐 CORS enabled for inference APIs: %s", strings.Join(corsOrigins, ", "))
+	}
 
 	// ============================================
 	// Public Routes (No Auth Required)
@@ -184,7 +196,7 @@ func main() {
 				return
 			}
 			_, pass, ok := r.BasicAuth()
-			if !ok || pass != adminPassword {
+			if !ok || !middleware.SecretEqual(pass, adminPassword) {
 				w.Header().Set("WWW-Authenticate", `Basic realm="Nexus Admin"`)
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 				return
@@ -262,6 +274,7 @@ func main() {
 		// API Aggregation Gateway Admin API
 		r.Get("/gateway/providers", gatewayServer.HandleListProviders)
 		r.Patch("/gateway/providers/{id}", gatewayServer.HandleUpdateProvider)
+		r.Delete("/gateway/providers/{id}/overrides", gatewayServer.HandleClearProviderOverrides)
 		r.Post("/gateway/providers/{id}/refresh", gatewayServer.HandleRefreshProvider)
 		r.Get("/gateway/stats", gatewayServer.HandleGatewayStats)
 		r.Post("/gateway/stats/reset", gatewayServer.HandleResetGatewayStats)
@@ -296,6 +309,7 @@ func main() {
 		r.Get("/models", gatewayServer.HandleOpenAIModelsList)
 		r.Post("/responses", gatewayServer.HandleOpenAIResponses)
 		r.Post("/messages", gatewayServer.HandleAnthropicMessages)
+		r.Post("/embeddings", gatewayServer.HandleOpenAIEmbeddings)
 		r.Get("/codex/quota", handlers.CodexQuotaHandler())
 		if vertexAIStudioEnabled {
 			r.Post("/publishers/google/models/*", handlers.VertexAIStudioProxyHandlerWithMonitor(proxyMonitor))
@@ -343,12 +357,14 @@ func main() {
 	// /v1beta/models/{model}:embedContent
 	// /v1beta/models/{model}:batchEmbedContents
 	// /v1beta/openai/chat/completions
+	// /v1beta/openai/embeddings
 	r.Route("/v1beta", func(r chi.Router) {
 		r.Use(middleware.APIKeyAuth(database))
 		r.Get("/models", gatewayServer.HandleGeminiModels)
 		r.Get("/models/*", gatewayServer.HandleGeminiModels)
 		r.Post("/models/*", gatewayServer.HandleGeminiModels)
 		r.Post("/openai/chat/completions", gatewayServer.HandleOpenAIChat)
+		r.Post("/openai/embeddings", gatewayServer.HandleOpenAIEmbeddings)
 	})
 
 	// Start server
@@ -374,7 +390,7 @@ func main() {
 	log.Printf("🚀 OAuth-LLM-Nexus starting on http://%s", addr)
 	log.Printf("📊 Gateway UI: http://%s/ui", displayURL)
 	log.Printf("📊 Dashboard (Legacy): http://%s", displayURL)
-	log.Printf("🔌 OpenAI API: http://%s/v1", displayURL)
+	log.Printf("🔌 OpenAI API: http://%s/v1 (chat/completions, responses, embeddings)", displayURL)
 	log.Printf("🔌 Anthropic API: http://%s/anthropic/v1 (and /v1/messages)", displayURL)
 	log.Printf("🔌 Gemini API: http://%s/v1beta/models", displayURL)
 	log.Printf("🔌 GenAI API: http://%s/genai/v1beta", displayURL)

@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"crypto/subtle"
 	"net/http"
 	"strings"
 
@@ -8,11 +9,16 @@ import (
 	"gorm.io/gorm"
 )
 
+// SecretEqual compares secrets in constant time.
+func SecretEqual(got, want string) bool {
+	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
+}
+
 // APIKeyAuth middleware validates the API key from Authorization header
 func APIKeyAuth(database *gorm.DB) func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Get API key from database
+			// Get API key from database (cached in-process; invalidated on regenerate)
 			expectedKey := db.GetAPIKey(database)
 			if expectedKey == "" {
 				// No API key configured, allow all requests (first-run scenario)
@@ -20,35 +26,18 @@ func APIKeyAuth(database *gorm.DB) func(next http.Handler) http.Handler {
 				return
 			}
 
-			// Check Authorization header (Bearer token)
-			authHeader := r.Header.Get("Authorization")
-			if authHeader != "" {
-				if strings.HasPrefix(authHeader, "Bearer ") {
-					token := strings.TrimPrefix(authHeader, "Bearer ")
-					if token == expectedKey {
-						next.ServeHTTP(w, r)
-						return
-					}
-				}
+			candidates := make([]string, 0, 4)
+			// Authorization: Bearer <key>
+			if token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok {
+				candidates = append(candidates, token)
 			}
+			// x-api-key (Anthropic SDK) and x-goog-api-key (GenAI SDK)
+			candidates = append(candidates, r.Header.Get("x-api-key"), r.Header.Get("x-goog-api-key"))
+			// 'key' query parameter (std Google API style)
+			candidates = append(candidates, r.URL.Query().Get("key"))
 
-			// Check x-api-key header (alternative)
-			apiKeyHeader := r.Header.Get("x-api-key")
-			if apiKeyHeader == expectedKey {
-				next.ServeHTTP(w, r)
-				return
-			}
-
-			// Check x-goog-api-key header (GenAI SDK)
-			googApiKey := r.Header.Get("x-goog-api-key")
-			if googApiKey == expectedKey {
-				next.ServeHTTP(w, r)
-				return
-			}
-
-			// Check 'key' query parameter (std Google API style)
-			if queryKey := r.URL.Query().Get("key"); queryKey != "" {
-				if queryKey == expectedKey {
+			for _, c := range candidates {
+				if c != "" && SecretEqual(c, expectedKey) {
 					next.ServeHTTP(w, r)
 					return
 				}

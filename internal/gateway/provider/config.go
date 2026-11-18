@@ -20,26 +20,26 @@ type ProviderFileConfig struct {
 
 // ProviderYAML configures a single provider entry in providers.yaml.
 type ProviderYAML struct {
-	ID            string            `yaml:"id"`
-	Preset        string            `yaml:"preset,omitempty"`
-	DisplayName   string            `yaml:"display_name,omitempty"`
-	Enabled       *bool             `yaml:"enabled,omitempty"`
-	Endpoints     *Endpoints        `yaml:"endpoints,omitempty"`
-	BaseURL       string            `yaml:"base_url,omitempty"`
-	Native        []string          `yaml:"native,omitempty"`
-	Prefer        string            `yaml:"prefer,omitempty"`
+	ID             string            `yaml:"id"`
+	Preset         string            `yaml:"preset,omitempty"`
+	DisplayName    string            `yaml:"display_name,omitempty"`
+	Enabled        *bool             `yaml:"enabled,omitempty"`
+	Endpoints      *Endpoints        `yaml:"endpoints,omitempty"`
+	BaseURL        string            `yaml:"base_url,omitempty"`
+	Native         []string          `yaml:"native,omitempty"`
+	Prefer         string            `yaml:"prefer,omitempty"`
 	AuthMode       string            `yaml:"auth_mode,omitempty"`
 	KeyStrategy    string            `yaml:"key_strategy,omitempty"`
 	NoKey          *bool             `yaml:"no_key,omitempty"`
 	FreeOnly       *bool             `yaml:"free_only,omitempty"`
 	IncludeNonChat *bool             `yaml:"include_non_chat,omitempty"`
 	APIKey         string            `yaml:"api_key,omitempty"`
-	APIKeys       []string          `yaml:"api_keys,omitempty"`
-	StaticHeaders map[string]string `yaml:"static_headers,omitempty"`
-	Timeout       string            `yaml:"timeout,omitempty"`
-	Models        []string          `yaml:"models,omitempty"`
-	ModelAliases  map[string]string `yaml:"model_aliases,omitempty"`
-	Quirks        *QuirksYAML       `yaml:"quirks,omitempty"`
+	APIKeys        []string          `yaml:"api_keys,omitempty"`
+	StaticHeaders  map[string]string `yaml:"static_headers,omitempty"`
+	Timeout        string            `yaml:"timeout,omitempty"`
+	Models         []string          `yaml:"models,omitempty"`
+	ModelAliases   map[string]string `yaml:"model_aliases,omitempty"`
+	Quirks         *QuirksYAML       `yaml:"quirks,omitempty"`
 }
 
 // QuirksYAML exposes codec quirk flags inside YAML config.
@@ -53,14 +53,15 @@ type QuirksYAML struct {
 	OmitReasoningEffort   *bool `yaml:"omit_reasoning_effort,omitempty"`
 	ThoughtTagParsing     *bool `yaml:"thought_tag_parsing,omitempty"`
 	StreamFirst           *bool `yaml:"stream_first,omitempty"`
+	EmbeddingInputType    *bool `yaml:"embedding_input_type,omitempty"`
 }
 
 // Registry holds all loaded gateway providers in priority order plus the shared model catalog.
 type Registry struct {
-	mu        sync.RWMutex
-	order     []string
-	byID      map[string]*Provider
-	catalog   *Catalog
+	mu         sync.RWMutex
+	order      []string
+	byID       map[string]*Provider
+	catalog    *Catalog
 	httpClient *http.Client
 }
 
@@ -555,5 +556,8 @@ func applyQuirksYAML(dst *codec.Quirks, src *QuirksYAML) {
 	}
 	if src.StreamFirst != nil {
 		dst.StreamFirst = *src.StreamFirst
+	}
+	if src.EmbeddingInputType != nil {
+		dst.EmbeddingInputType = *src.EmbeddingInputType
 	}
 }
