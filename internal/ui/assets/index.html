@@ -207,6 +207,37 @@
         <pre class="code-block" id="connectSnippetPre"><code id="connectSnippetCode"></code></pre>
       </div>
 
+      <div class="card panel" id="clientKeysPanel">
+        <div class="panel-head">
+          <div>
+            <h2 id="keysTitle"></h2>
+            <p class="sub" id="keysSub"></p>
+          </div>
+          <div class="top-actions">
+            <button type="button" class="btn subtle" id="refreshKeysBtn">↻</button>
+          </div>
+        </div>
+        <div class="form-grid">
+          <div class="field">
+            <label for="keyNameInput" id="lblKeyName"></label>
+            <input type="text" id="keyNameInput" placeholder="pkm-app" maxlength="64" autocomplete="off">
+          </div>
+          <div class="field grow">
+            <label for="keyModelsInput" id="lblKeyModels"></label>
+            <input type="text" id="keyModelsInput" placeholder="notes-*, kb-embed" autocomplete="off">
+          </div>
+          <div class="field form-actions">
+            <button type="button" class="btn primary" id="createKeyBtn"></button>
+          </div>
+        </div>
+        <div class="field key-providers-field">
+          <label id="lblKeyProviders"></label>
+          <div class="pill-row" id="keyCreateProviders"></div>
+        </div>
+        <div id="keyIssuedBox" hidden></div>
+        <div class="keys-list" id="clientKeysList"></div>
+      </div>
+
       <div class="card panel">
         <div class="panel-head">
           <div>

@@ -163,5 +163,6 @@ The standalone Magpie-inspired console at **`GET /ui`** (`internal/ui/`) consume
 - **Routing & Model Matrix** with dedicated `Model Matrix` tab listing all supporting backends per canonical model (`TargetModel`, native protocols, EWMA latency), one-click primary switching, and `⚡ Sync Failover Group`
 - **4-Protocol Compatibility Tester** (`OpenAI Chat Completions`, `OpenAI Responses`, `Anthropic Messages`, and `Google Gemini`) across `Sync JSON`, `Stream SSE`, and `Tool Call` modes with full wire request/response inspection
 - **Connect & Activity** with copyable `Shell` / `curl` / `Python SDK` snippets (including `@google/genai` & Gemini CLI) and expandable recent request logs
+- **Client Keys** panel (Connect view, backed by `/api/gateway/keys`): issue keys with provider toggle pills and model aliases, one-time plaintext reveal with "use in snippets", inline allowlist editing, enable/disable, delete, and per-key request/error/token counters
 
 The legacy Dashboard at `/` (`internal/proxy/handlers/dashboard.go`) remains intact for existing OAuth account workflows.

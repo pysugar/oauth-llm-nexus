@@ -93,7 +93,36 @@
       added_route: "已添加备选路由：{model} → {provider}",
       removed_route: "已移除路由项",
       refreshed: "已刷新 {id} 模型目录（{n} 个）",
-      cleared_cd: "已清除冷却状态"
+      cleared_cd: "已清除冷却状态",
+      keys_title: "客户端密钥",
+      keys_sub: "为不同调用方（知识库应用、编码 Agent、局域网设备）签发独立密钥，可限定可用的后端与模型。未选择即不限制。",
+      key_name: "名称",
+      key_providers: "允许的后端（不选 = 全部）",
+      key_models: "允许的模型别名（逗号分隔，支持 前缀*；留空 = 全部）",
+      btn_create_key: "+ 签发密钥",
+      key_issued: "密钥「{name}」已签发。明文仅显示这一次，请立即保存：",
+      btn_use_in_snippets: "用于上方代码片段",
+      btn_dismiss: "我已保存",
+      key_legacy: "默认密钥 · 不受限",
+      key_disabled: "已停用",
+      key_active: "启用中",
+      all_providers: "全部后端",
+      all_models: "全部模型",
+      btn_edit: "编辑",
+      btn_save: "保存",
+      btn_cancel: "取消",
+      btn_disable: "停用",
+      btn_enable: "启用",
+      btn_delete: "删除",
+      btn_reset_key: "恢复默认密钥",
+      confirm_delete_key: "确定删除密钥「{name}」？使用它的客户端将立即失效。",
+      key_created_toast: "已签发密钥 {name}",
+      key_updated_toast: "已更新密钥 {name}",
+      key_deleted_toast: "已删除密钥 {name}",
+      no_client_keys: "尚未签发客户端密钥。",
+      key_last_used: "最近使用",
+      key_never_used: "未使用",
+      key_name_required: "请填写密钥名称"
     },
     en: {
       nav_providers: "Providers",
@@ -185,7 +214,36 @@
       added_route: "Added backup route: {model} → {provider}",
       removed_route: "Route deleted",
       refreshed: "Refreshed {id} catalog ({n} models)",
-      cleared_cd: "Cleared cooldowns"
+      cleared_cd: "Cleared cooldowns",
+      keys_title: "Client Keys",
+      keys_sub: "Issue a separate key per caller (PKM app, coding agents, LAN devices) and optionally restrict which backends and models it may reach. Nothing selected = unrestricted.",
+      key_name: "Name",
+      key_providers: "Allowed backends (none = all)",
+      key_models: "Allowed model aliases (comma-separated, prefix* supported; empty = all)",
+      btn_create_key: "+ Issue Key",
+      key_issued: "Key \"{name}\" issued. The plaintext is shown only once — store it now:",
+      btn_use_in_snippets: "Use in snippets above",
+      btn_dismiss: "I've saved it",
+      key_legacy: "Default key · unrestricted",
+      key_disabled: "Disabled",
+      key_active: "Active",
+      all_providers: "All backends",
+      all_models: "All models",
+      btn_edit: "Edit",
+      btn_save: "Save",
+      btn_cancel: "Cancel",
+      btn_disable: "Disable",
+      btn_enable: "Enable",
+      btn_delete: "Delete",
+      btn_reset_key: "Use default key",
+      confirm_delete_key: "Delete key \"{name}\"? Clients using it stop working immediately.",
+      key_created_toast: "Issued key {name}",
+      key_updated_toast: "Updated key {name}",
+      key_deleted_toast: "Deleted key {name}",
+      no_client_keys: "No client keys issued yet.",
+      key_last_used: "Last used",
+      key_never_used: "never",
+      key_name_required: "Key name is required"
     }
   };
 
@@ -229,11 +287,18 @@
       flavor: "openai-chat",
       lang: "shell",
       apiKey: "",
+      keySource: "legacy", // "legacy" or the client key name shown in snippets
       masked: false,
       revealKey: false,
       loggingEnabled: false,
       logs: [],
       expandedLogs: {}
+    },
+    keys: {
+      list: [],
+      draftProviders: [],
+      editing: {},
+      issued: null
     }
   };
 
@@ -501,6 +566,12 @@
     $("#copySnippetBtn").textContent = "📋 " + t("copy_snippet");
     $("#activityTitle").textContent = t("activity_title");
     $("#activitySub").textContent = t("activity_sub");
+    $("#keysTitle").textContent = t("keys_title");
+    $("#keysSub").textContent = t("keys_sub");
+    $("#lblKeyName").textContent = t("key_name");
+    $("#lblKeyModels").textContent = t("key_models");
+    $("#lblKeyProviders").textContent = t("key_providers");
+    $("#createKeyBtn").textContent = t("btn_create_key");
   }
 
   function setView(viewName, syncHash = true) {
@@ -685,6 +756,7 @@
     renderRoutingView();
     renderTesterResults();
     renderConnectMetaAndSnippet();
+    renderClientKeys();
   }
 
   // View 1: Providers & Model Catalog
@@ -1764,12 +1836,13 @@
 
   // View 4: Connect Snippets & Recent Activity
   async function loadConnectData() {
+    loadClientKeys();
     const [keyRes, statusRes, logsRes] = await Promise.all([
       apiJSON("/api/config/apikey"),
       apiJSON("/api/request-logs/status"),
       apiJSON("/api/request-logs?limit=40&since=120")
     ]);
-    if (keyRes.ok) {
+    if (keyRes.ok && state.connect.keySource === "legacy") {
       state.connect.apiKey = keyRes.data.api_key || "";
       state.connect.masked = !!keyRes.data.masked;
     }
@@ -1840,7 +1913,7 @@
         )
       ),
       el("div", { class: "kv-box" },
-        el("div", { class: "kv-label", text: "Gateway API Key" }),
+        el("div", { class: "kv-label", text: "Gateway API Key" + (state.connect.keySource !== "legacy" ? " · " + state.connect.keySource : "") }),
         el("div", { class: "kv-val", style: "display:flex;align-items:center;justify-content:space-between;gap:8px" },
           el("span", { text: displayKey }),
           el("span", { style: "display:flex;gap:4px" },
@@ -1853,7 +1926,10 @@
                 renderConnectMetaAndSnippet();
               }
             }),
-            rawKey !== "-" ? el("button", { type: "button", class: "btn sm", text: "Copy", onClick: () => copyText(rawKey) }) : null
+            rawKey !== "-" ? el("button", { type: "button", class: "btn sm", text: "Copy", onClick: () => copyText(rawKey) }) : null,
+            state.connect.keySource !== "legacy"
+              ? el("button", { type: "button", class: "btn sm subtle", text: t("btn_reset_key"), onClick: resetSnippetKey })
+              : null
           )
         )
       )
@@ -1918,6 +1994,256 @@
         ) : null
       ));
     });
+    box.replaceChildren(...children);
+  }
+
+  // Client keys: named per-caller gateway keys with provider/model allowlists
+  const LEGACY_PROVIDER_IDS = ["google", "codex", "vertex"];
+
+  function keyProviderChoices(selected) {
+    const ids = state.providers.map((p) => p.id);
+    LEGACY_PROVIDER_IDS.concat(selected || []).forEach((id) => {
+      if (!ids.includes(id)) ids.push(id);
+    });
+    return ids;
+  }
+
+  function parseModelList(str) {
+    return String(str || "").split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
+  }
+
+  function toggleInList(list, id) {
+    const idx = list.indexOf(id);
+    if (idx >= 0) list.splice(idx, 1);
+    else list.push(id);
+  }
+
+  function resetSnippetKey() {
+    state.connect.keySource = "legacy";
+    state.connect.apiKey = "";
+    loadConnectData();
+  }
+
+  async function loadClientKeys() {
+    const r = await apiJSON("/api/gateway/keys");
+    if (r.ok) state.keys.list = r.data.keys || [];
+    renderClientKeys();
+  }
+
+  async function clientKeyCall(method, path, body) {
+    const r = await apiJSON(path, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined
+    });
+    if (!r.ok) showToast((r.data && r.data.error) || ("HTTP " + r.status));
+    return r;
+  }
+
+  async function createClientKey() {
+    const name = $("#keyNameInput").value.trim();
+    if (!name) {
+      showToast(t("key_name_required"));
+      return;
+    }
+    const btn = $("#createKeyBtn");
+    btn.disabled = true;
+    try {
+      const r = await clientKeyCall("POST", "/api/gateway/keys", {
+        name,
+        allowed_providers: state.keys.draftProviders,
+        allowed_models: parseModelList($("#keyModelsInput").value)
+      });
+      if (!r.ok) return;
+      state.keys.issued = { name: r.data.key.name, apiKey: r.data.api_key };
+      state.keys.draftProviders = [];
+      $("#keyNameInput").value = "";
+      $("#keyModelsInput").value = "";
+      showToast(t("key_created_toast", { name }));
+      await loadClientKeys();
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  async function patchClientKey(row, patch) {
+    const r = await clientKeyCall("PATCH", "/api/gateway/keys/" + row.id, patch);
+    if (!r.ok) return;
+    delete state.keys.editing[row.id];
+    showToast(t("key_updated_toast", { name: row.name }));
+    await loadClientKeys();
+  }
+
+  async function deleteClientKey(row) {
+    if (!window.confirm(t("confirm_delete_key", { name: row.name }))) return;
+    const r = await clientKeyCall("DELETE", "/api/gateway/keys/" + row.id);
+    if (!r.ok) return;
+    delete state.keys.editing[row.id];
+    if (state.keys.issued && state.keys.issued.name === row.name) state.keys.issued = null;
+    if (state.connect.keySource === row.name) resetSnippetKey();
+    showToast(t("key_deleted_toast", { name: row.name }));
+    await loadClientKeys();
+  }
+
+  function renderProviderPills(selected, onToggle) {
+    return keyProviderChoices(selected).map((id) =>
+      renderTogglePill(id, selected.includes(id), () => onToggle(id)));
+  }
+
+  function renderIssuedKey() {
+    const box = $("#keyIssuedBox");
+    if (!box) return;
+    const issued = state.keys.issued;
+    box.hidden = !issued;
+    if (!issued) {
+      box.replaceChildren();
+      return;
+    }
+    box.replaceChildren(el("div", { class: "notice-banner warn key-issued" },
+      el("div", { text: t("key_issued", { name: issued.name }) }),
+      el("code", { class: "mono", text: issued.apiKey }),
+      el("div", { class: "form-actions" },
+        el("button", { type: "button", class: "btn sm primary", text: "Copy", onClick: () => copyText(issued.apiKey) }),
+        el("button", {
+          type: "button",
+          class: "btn sm",
+          text: t("btn_use_in_snippets"),
+          onClick: () => {
+            state.connect.apiKey = issued.apiKey;
+            state.connect.keySource = issued.name;
+            state.connect.revealKey = false;
+            renderConnectMetaAndSnippet();
+          }
+        }),
+        el("button", {
+          type: "button",
+          class: "btn sm subtle",
+          text: t("btn_dismiss"),
+          onClick: () => {
+            state.keys.issued = null;
+            renderIssuedKey();
+          }
+        })
+      )
+    ));
+  }
+
+  function renderKeyEditor(row, edit) {
+    return el("div", { class: "key-edit" },
+      el("div", { class: "field" },
+        el("label", { text: t("key_providers") }),
+        el("div", { class: "pill-row" }, renderProviderPills(edit.providers, (id) => {
+          toggleInList(edit.providers, id);
+          renderClientKeys();
+        }))
+      ),
+      el("div", { class: "field" },
+        el("label", { text: t("key_models") }),
+        el("input", {
+          type: "text",
+          value: edit.models,
+          placeholder: "notes-*, kb-embed",
+          onInput: (ev) => { edit.models = ev.target.value; }
+        })
+      ),
+      el("div", { class: "form-actions" },
+        el("button", {
+          type: "button",
+          class: "btn sm primary",
+          text: t("btn_save"),
+          onClick: () => patchClientKey(row, {
+            allowed_providers: edit.providers,
+            allowed_models: parseModelList(edit.models)
+          })
+        }),
+        el("button", {
+          type: "button",
+          class: "btn sm subtle",
+          text: t("btn_cancel"),
+          onClick: () => {
+            delete state.keys.editing[row.id];
+            renderClientKeys();
+          }
+        })
+      )
+    );
+  }
+
+  function renderClientKeyRow(row) {
+    const stats = row.stats || null;
+    const lastUsed = (stats && stats.last_used_at) || row.last_used_at;
+    const providers = row.allowed_providers || [];
+    const modelsList = row.allowed_models || [];
+    const statusTag = row.legacy
+      ? el("span", { class: "tag purple", text: t("key_legacy") })
+      : el("span", { class: "tag " + (row.disabled ? "err" : "ok"), text: row.disabled ? t("key_disabled") : t("key_active") });
+    const statsText = stats
+      ? formatCompactNum(stats.requests) + " req · " + formatCompactNum(stats.errors) + " err · " +
+        formatCompactNum(stats.input_tokens) + " / " + formatCompactNum(stats.output_tokens) + " tok"
+      : "0 req";
+    const edit = state.keys.editing[row.id];
+
+    return el("div", { class: "key-row" },
+      el("div", { class: "key-head" },
+        el("div", { class: "key-meta" },
+          el("strong", { text: row.name }),
+          el("span", { class: "mono muted-count", text: row.masked_key }),
+          statusTag
+        ),
+        el("div", { class: "key-meta" },
+          el("span", { class: "muted-count", text: statsText }),
+          el("span", {
+            class: "muted-count",
+            text: t("key_last_used") + ": " + (lastUsed ? new Date(lastUsed).toLocaleString() : t("key_never_used"))
+          }),
+          row.legacy ? null : [
+            el("button", {
+              type: "button",
+              class: "btn sm subtle",
+              text: t("btn_edit"),
+              onClick: () => {
+                state.keys.editing[row.id] = { providers: providers.slice(), models: modelsList.join(", ") };
+                renderClientKeys();
+              }
+            }),
+            el("button", {
+              type: "button",
+              class: "btn sm",
+              text: row.disabled ? t("btn_enable") : t("btn_disable"),
+              onClick: () => patchClientKey(row, { disabled: !row.disabled })
+            }),
+            el("button", { type: "button", class: "btn sm danger", text: t("btn_delete"), onClick: () => deleteClientKey(row) })
+          ]
+        )
+      ),
+      row.legacy ? null : el("div", { class: "key-meta" },
+        providers.length
+          ? providers.map((p) => el("span", { class: "tag accent", text: p }))
+          : el("span", { class: "tag", text: t("all_providers") }),
+        modelsList.length
+          ? modelsList.map((m) => el("span", { class: "tag mono", text: m }))
+          : el("span", { class: "tag", text: t("all_models") })
+      ),
+      edit ? renderKeyEditor(row, edit) : null
+    );
+  }
+
+  function renderClientKeys() {
+    const pills = $("#keyCreateProviders");
+    if (pills) {
+      pills.replaceChildren(...renderProviderPills(state.keys.draftProviders, (id) => {
+        toggleInList(state.keys.draftProviders, id);
+        renderClientKeys();
+      }));
+    }
+    renderIssuedKey();
+    const box = $("#clientKeysList");
+    if (!box) return;
+    const rows = state.keys.list || [];
+    const children = rows.map(renderClientKeyRow);
+    if (!rows.some((r) => !r.legacy)) {
+      children.push(el("div", { class: "empty-state", text: t("no_client_keys") }));
+    }
     box.replaceChildren(...children);
   }
 
@@ -2044,6 +2370,11 @@
       }
     });
     $("#refreshLogsBtn").addEventListener("click", loadConnectData);
+    $("#refreshKeysBtn").addEventListener("click", loadClientKeys);
+    $("#createKeyBtn").addEventListener("click", createClientKey);
+    $("#keyNameInput").addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") createClientKey();
+    });
   }
 
   async function init() {

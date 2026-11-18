@@ -20,7 +20,8 @@ func TestHandler_ServesIndexAndAssets(t *testing.T) {
 		if !strings.Contains(rec.Header().Get("Content-Type"), "text/html") {
 			t.Fatalf("GET %s expected text/html content type, got %q", path, rec.Header().Get("Content-Type"))
 		}
-		if !strings.Contains(rec.Body.String(), "/ui/app.js") || !strings.Contains(rec.Body.String(), "/ui/app.css") {
+		if !strings.Contains(rec.Body.String(), "/ui/app.js") || !strings.Contains(rec.Body.String(), "/ui/app.css") ||
+			!strings.Contains(rec.Body.String(), `id="clientKeysList"`) {
 			t.Fatalf("GET %s missing asset references", path)
 		}
 	}
@@ -37,6 +38,8 @@ func TestHandler_ServesIndexAndAssets(t *testing.T) {
 		{path: "/ui/app.js", want: "/api/gateway/stats/reset"},
 		{path: "/ui/app.js", want: "/api/gateway/models/matrix"},
 		{path: "/ui/app.js", want: `"PATCH"`},
+		{path: "/ui/app.js", want: "/api/gateway/keys"},
+		{path: "/ui/app.css", want: ".key-row"},
 		{path: "/ui/favicon.svg", want: "<svg"},
 	} {
 		req := httptest.NewRequest(http.MethodGet, asset.path, nil)
