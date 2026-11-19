@@ -33,7 +33,7 @@ flowchart LR
 | Frontend Protocol | Codec Package | Endpoints | Notes |
 | :--- | :--- | :--- | :--- |
 | **OpenAI Chat Completions** | `internal/gateway/codec/openaichat` | `POST /v1/chat/completions`, `GET /v1/models` | Supports `messages`, `tools`, `tool_calls`, `reasoning_content`, `<think>` tag extraction (`ThoughtTagParsing`), and `usage` |
-| **OpenAI Responses API** | `internal/gateway/codec/openairesp` | `POST /v1/responses` | Translates `input`, `instructions`, `function_call`/`function_call_output`, `reasoning.effort`; stateful `previous_response_id` passes through on OpenAI and bridges across translated backends via bounded TTL LRU `ResponseStore` (`internal/gateway/ir/respstore.go`) |
+| **OpenAI Responses API** | `internal/gateway/codec/openairesp` | `POST /v1/responses` | Translates `input`, `instructions`, `function_call`/`function_call_output`, `reasoning.effort`; native passthrough on `openai`, `deepseek`, `ollama`, `openrouter`, `amd` (see *Native Responses passthrough* below); `previous_response_id` is forwarded only to `responses_stateful` providers that issued it, otherwise expanded from the bounded TTL LRU `ResponseStore` (`internal/gateway/ir/respstore.go`) |
 | **Anthropic Messages API** | `internal/gateway/codec/anthropic` | `POST /anthropic/v1/messages`, `POST /v1/messages`, `GET /anthropic/v1/models` | Supports `system`, `thinking` blocks (with signature cache `internal/gateway/ir/sigstore.go`), `tool_use`/`tool_result`, cache control usage |
 | **Google Gemini API** | `internal/gateway/codec/gemini` | `GET /v1beta/models`, `GET /v1beta/models/{model}`, `POST /v1beta/models/{model}:generateContent`, `POST /v1beta/models/{model}:streamGenerateContent`, `POST /v1beta/openai/chat/completions` | Translates `contents`, `systemInstruction`, `functionDeclarations`/`functionCall`/`functionResponse`, `thinkingConfig` (`thinkingLevel` for Gemini 3 & 4), thought signatures; non-generation actions (`countTokens`, embeddings) forward through `KeyRing` with client `?key=` stripped before falling back to legacy |
 
@@ -46,6 +46,27 @@ OpenAI-compatible embeddings endpoint (`internal/gateway/server/embeddings.go`, 
 - **Gemini backend**: translated to `:batchEmbedContents` (chunked at 100 inputs), `dimensions` → `outputDimensionality`, `encoding_format: base64` honored (little-endian float32, matching the OpenAI SDK default).
 - **Retrieval hint**: optional `input_type` (alias `task_type`): `query` | `document`/`passage` | `similarity` | `classification` | `clustering`. Mapped to Gemini `taskType` (`RETRIEVAL_QUERY`/`RETRIEVAL_DOCUMENT`/...), forwarded as `query`/`passage` to backends with the `embedding_input_type` quirk (NVIDIA preset), stripped for strict OpenAI-compatible APIs.
 - **Caveat**: vectors from different embedding models are not interchangeable. Only put the *same* model (served by different backends) into one failover alias, and pin the alias (`pinned`) once an index is built with it.
+
+### Native Responses Passthrough (`openai_responses`)
+
+Probed live on 2026-11-20: `openai`, `deepseek`, `ollama`, `openrouter` and `amd` serve `POST /v1/responses`;
+`nvidia` and Gemini's OpenAI-compatible API do not (404) and keep translation. Their presets and
+`config/providers.yaml` declare `openai_responses` and list `openai-responses` as native, so Responses clients are
+passed through. Handling follows magpie's field-tested rules (`prev_response.go`):
+
+- **State**: only providers marked `responses_stateful` (the `openai` preset; YAML `responses_stateful: true`)
+  keep turns. Ollama and DeepSeek accept `previous_response_id` but silently drop the context; OpenRouter refuses
+  it. A continuation is forwarded with its id only to a stateful provider that issued that response
+  (`ResponseStore.Maker`); any other is expanded from `ResponseStore` into full input and sent without the id
+  (`X-Nexus-Route: translated:openai-responses`). An id the gateway never saw is refused (400) on a stateless
+  backend and the next candidate is tried.
+- **History**: a passthrough turn is stored with the whole conversation (`saveResponsesTurn`), not only the new
+  input a `previous_response_id` request carried, so a later failover keeps every turn.
+- **Shape refusals**: a stateless backend's 400/404/422 about an item type or field it lacks (`isShapeRefusal`)
+  retries the same backend through Chat translation and is remembered per provider/model (`respRefused`).
+- **Image detail**: `input_image.detail: "original"` goes as `"high"` except to OpenAI and DeepSeek.
+- `NEXUS_<ID>_BASE_URL` moves the Responses endpoint together with the Chat one.
+- Live check: `scripts/smoke/responses_smoke.py` (single turn, continuation that must keep context, stream, tool loop).
 
 ### Translation Strategy (`ir.Request` + Stream-First)
 
