@@ -625,7 +625,7 @@
   function formatUSD(v) {
     const n = Number(v || 0);
     if (n === 0) return "$0";
-    if (n < 0.01) return "$" + n.toFixed(4);
+    if (n < 0.01) return "$" + Number(n.toPrecision(2)).toString();
     return "$" + n.toFixed(2);
   }
 
