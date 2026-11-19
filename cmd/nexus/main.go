@@ -328,6 +328,7 @@ func main() {
 		r.Post("/responses", gatewayServer.HandleOpenAIResponses)
 		r.Post("/messages", gatewayServer.HandleAnthropicMessages)
 		r.Post("/embeddings", gatewayServer.HandleOpenAIEmbeddings)
+		r.Post("/rerank", gatewayServer.HandleRerank)
 		// Raw (non-gateway) routes below bypass model routing; restricted client keys are gated
 		// on the provider they always reach.
 		r.With(middleware.RequireProvider(middleware.StaticProvider("codex"))).Get("/codex/quota", handlers.CodexQuotaHandler())
@@ -336,6 +337,9 @@ func main() {
 				Post("/publishers/google/models/*", handlers.VertexAIStudioProxyHandlerWithMonitor(proxyMonitor))
 		}
 	})
+
+	// Cohere/Jina-style clients call /rerank without the /v1 prefix.
+	r.With(middleware.APIKeyAuth(database)).Post("/rerank", gatewayServer.HandleRerank)
 
 	// Generic transparent proxy for OpenAI-compatible providers: /{provider}/*
 	// The sub-path is forwarded as-is to the provider's upstream (RootURL + subpath).

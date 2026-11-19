@@ -179,10 +179,24 @@ func buildOpenAIEmbeddingPayload(rawBody []byte, cand router.Candidate) ([]byte,
 			delete(obj, k)
 		}
 	}
+	voyage := cand.Provider.Preset == "voyage" || cand.Provider.ID == "voyage"
 	if hint != "" && cand.Provider.Quirks.EmbeddingInputType {
 		mapped := normalizePassageInputType(hint)
+		if voyage && mapped == "passage" {
+			mapped = "document" // Voyage names the passage side "document"
+		}
 		vb, _ := json.Marshal(mapped)
 		obj["input_type"] = vb
+	}
+	if voyage {
+		// Voyage spells OpenAI's dimensions output_dimension and takes only base64 or no format.
+		if d, ok := obj["dimensions"]; ok {
+			obj["output_dimension"] = d
+			delete(obj, "dimensions")
+		}
+		if f, ok := obj["encoding_format"]; ok && strings.Trim(string(f), `" `) == "float" {
+			delete(obj, "encoding_format")
+		}
 	}
 	out, err := json.Marshal(obj)
 	if err != nil {

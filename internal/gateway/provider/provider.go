@@ -42,6 +42,7 @@ type Provider struct {
 	FirstTokenTimeout time.Duration
 	Quirks            codec.Quirks
 	StaticModels      []string
+	NoChat            bool // embeddings/rerank only (e.g. Voyage): never a chat/messages target
 	ModelAliases      map[string]string
 }
 
@@ -232,7 +233,7 @@ func (p *Provider) IsNative(proto ir.Protocol) bool {
 
 // TargetFor selects the upstream wire protocol and whether passthrough is valid for a client request protocol.
 func (p *Provider) TargetFor(clientProto ir.Protocol) (target ir.Protocol, passthrough bool, ok bool) {
-	if p == nil {
+	if p == nil || p.NoChat {
 		return "", false, false
 	}
 	if p.IsNative(clientProto) {
@@ -295,6 +296,9 @@ func (p *Provider) EndpointURL(proto ir.Protocol, upstreamModel string, stream b
 
 // ModelsListURL returns the URL used to discover available models for this provider.
 func (p *Provider) ModelsListURL() (urlStr string, proto ir.Protocol) {
+	if p.NoChat && len(p.StaticModels) > 0 {
+		return "", "" // static-only provider without a /models listing
+	}
 	switch {
 	case p.Endpoints.OpenAIChat != "":
 		return strings.TrimRight(p.Endpoints.OpenAIChat, "/") + "/models", ir.ProtoOpenAIChat

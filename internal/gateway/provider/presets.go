@@ -22,6 +22,8 @@ type Preset struct {
 	StaticHeaders  map[string]string
 	Timeout        time.Duration
 	Quirks         codec.Quirks
+	StaticModels   []string // models of a provider with no /models listing
+	NoChat         bool     // embeddings/rerank only: never a chat target
 }
 
 // DefaultPresetOrder lists the 7 built-in API aggregation presets in default fallback priority order.
@@ -33,6 +35,7 @@ var DefaultPresetOrder = []string{
 	"ollama",
 	"deepseek",
 	"gemini",
+	"voyage",
 }
 
 var builtInPresets = map[string]Preset{
@@ -155,6 +158,20 @@ var builtInPresets = map[string]Preset{
 		KeyStrategy: KeyStrategyRoundRobin,
 		Timeout:     180 * time.Second,
 		Quirks:      codec.Quirks{},
+	},
+	"voyage": {
+		ID:          "voyage",
+		DisplayName: "Voyage AI",
+		Endpoints:   Endpoints{OpenAIChat: "https://api.voyageai.com/v1"},
+		AuthMode:    "bearer",
+		Timeout:     60 * time.Second,
+		NoChat:      true,
+		Quirks:      codec.Quirks{EmbeddingInputType: true},
+		StaticModels: []string{
+			"voyage-4-large", "voyage-4", "voyage-4-lite", "voyage-code-4", "voyage-3-large", "voyage-3.5",
+			"voyage-3.5-lite", "voyage-code-3", "voyage-finance-2", "voyage-law-2",
+			"rerank-3", "rerank-3-lite", "rerank-2.5", "rerank-2.5-lite",
+		},
 	},
 }
 

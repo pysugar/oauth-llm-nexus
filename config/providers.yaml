@@ -75,3 +75,9 @@ providers:
       gemini: https://generativelanguage.googleapis.com/v1beta
     native: [gemini]
     prefer: gemini
+
+  # Embeddings + rerank only (no chat). Key: VOYAGE_API_KEY / NEXUS_VOYAGE_API_KEY.
+  - id: voyage
+    preset: voyage
+    display_name: Voyage AI
+    enabled: true

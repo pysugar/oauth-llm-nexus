@@ -38,6 +38,7 @@ type ProviderYAML struct {
 	StaticHeaders  map[string]string `yaml:"static_headers,omitempty"`
 	Timeout        string            `yaml:"timeout,omitempty"`
 	FirstToken     string            `yaml:"first_token_timeout,omitempty"`
+	NoChat         *bool             `yaml:"no_chat,omitempty"`
 	Models         []string          `yaml:"models,omitempty"`
 	ModelAliases   map[string]string `yaml:"model_aliases,omitempty"`
 	Quirks         *QuirksYAML       `yaml:"quirks,omitempty"`
@@ -279,6 +280,8 @@ func materializeProvider(cfg ProviderYAML) *Provider {
 		p.IncludeNonChat = preset.IncludeNonChat
 		p.Timeout = preset.Timeout
 		p.Quirks = preset.Quirks
+		p.NoChat = preset.NoChat
+		p.StaticModels = append([]string(nil), preset.StaticModels...)
 		for k, v := range preset.StaticHeaders {
 			p.StaticHeaders[k] = v
 		}
@@ -370,6 +373,9 @@ func materializeProvider(cfg ProviderYAML) *Provider {
 	}
 	if len(cfg.Models) > 0 {
 		p.StaticModels = append([]string(nil), cfg.Models...)
+	}
+	if cfg.NoChat != nil {
+		p.NoChat = *cfg.NoChat
 	}
 	if cfg.Quirks != nil {
 		applyQuirksYAML(&p.Quirks, cfg.Quirks)

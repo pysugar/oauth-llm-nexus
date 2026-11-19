@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/pysugar/oauth-llm-nexus/internal/gateway/ir"
+	"github.com/pysugar/oauth-llm-nexus/internal/gateway/provider"
 )
 
 // ResolveEmbedding builds an execution Plan for an embeddings request.
@@ -15,6 +16,34 @@ import (
 // then canonical matches). Legacy OAuth backends never serve embeddings. Candidates without an
 // embeddings-capable endpoint are dropped so failover only crosses compatible backends.
 func (r *Router) ResolveEmbedding(ctx context.Context, clientModel, headerProvider string) (*Plan, *ir.GatewayError) {
+	return r.resolveAux(ctx, clientModel, headerProvider, embeddingKind)
+}
+
+// ResolveRerank is ResolveEmbedding for `/v1/rerank` models.
+func (r *Router) ResolveRerank(ctx context.Context, clientModel, headerProvider string) (*Plan, *ir.GatewayError) {
+	return r.resolveAux(ctx, clientModel, headerProvider, rerankKind)
+}
+
+// auxKind describes a non-chat API (embeddings, rerank) for resolveAux.
+type auxKind struct {
+	name     string
+	supports func(*provider.Provider) bool
+	match    func(*provider.Catalog, context.Context, *provider.Provider, string) (string, bool, bool)
+}
+
+var embeddingKind = auxKind{
+	name:     "embedding",
+	supports: (*provider.Provider).SupportsEmbeddings,
+	match:    (*provider.Catalog).MatchEmbeddingModel,
+}
+
+var rerankKind = auxKind{
+	name:     "rerank",
+	supports: (*provider.Provider).SupportsRerank,
+	match:    (*provider.Catalog).MatchRerankModel,
+}
+
+func (r *Router) resolveAux(ctx context.Context, clientModel, headerProvider string, kind auxKind) (*Plan, *ir.GatewayError) {
 	rawModel := strings.TrimSpace(clientModel)
 	if rawModel == "" {
 		return nil, ir.NewError(400, "missing_model", "model is required")
@@ -26,8 +55,8 @@ func (r *Router) ResolveEmbedding(ctx context.Context, clientModel, headerProvid
 	}
 	if plan != nil {
 		if plan.LegacyProvider != "" && plan.Forced {
-			return nil, ir.NewError(400, "embeddings_unsupported",
-				fmt.Sprintf("provider %q does not support embeddings", plan.LegacyProvider))
+			return nil, ir.NewError(400, kind.name+"_unsupported",
+				fmt.Sprintf("provider %q does not support %s", plan.LegacyProvider, kind.name))
 		}
 		if len(plan.Candidates) > 0 {
 			kept := plan.Candidates[:0:0]
@@ -36,14 +65,14 @@ func (r *Router) ResolveEmbedding(ctx context.Context, clientModel, headerProvid
 					// Chat catalogs exclude embedding models, so vendor-namespaced IDs such as
 					// `nvidia/nv-embedqa-e5-v5` look like provider prefixes; keep the full ID
 					// when the provider's embedding catalog advertises it verbatim.
-					if id, isExact, ok := r.Registry.Catalog().MatchEmbeddingModel(ctx, c.Provider, rawModel); ok && isExact {
+					if id, isExact, ok := kind.match(r.Registry.Catalog(), ctx, c.Provider, rawModel); ok && isExact {
 						c.UpstreamModel = c.Provider.MapModel(id)
 					}
 				}
-				if c.Provider.SupportsEmbeddings() {
+				if kind.supports(c.Provider) {
 					kept = append(kept, c)
 				} else {
-					plan.SkippedReasons = append(plan.SkippedReasons, c.Provider.ID+": no embeddings endpoint")
+					plan.SkippedReasons = append(plan.SkippedReasons, c.Provider.ID+": no "+kind.name+" endpoint")
 				}
 			}
 			if len(kept) > 0 {
@@ -51,8 +80,8 @@ func (r *Router) ResolveEmbedding(ctx context.Context, clientModel, headerProvid
 				return plan, nil
 			}
 			if plan.Forced {
-				return nil, ir.NewError(400, "embeddings_unsupported",
-					fmt.Sprintf("provider %q has no embeddings-capable endpoint", plan.Candidates[0].Provider.ID))
+				return nil, ir.NewError(400, kind.name+"_unsupported",
+					fmt.Sprintf("provider %q has no %s-capable endpoint", plan.Candidates[0].Provider.ID, kind.name))
 			}
 		}
 	}
@@ -63,16 +92,16 @@ func (r *Router) ResolveEmbedding(ctx context.Context, clientModel, headerProvid
 		out.SkippedReasons = plan.SkippedReasons
 	}
 	if r.Registry == nil || r.Registry.Catalog() == nil {
-		return nil, embeddingNotFound(rawModel)
+		return nil, auxNotFound(kind, rawModel)
 	}
 
 	cat := r.Registry.Catalog()
 	var exact, canonical, cooling []Candidate
 	for _, p := range r.Registry.Available() {
-		if !p.SupportsEmbeddings() {
+		if !kind.supports(p) {
 			continue
 		}
-		upstreamID, isExact, ok := cat.MatchEmbeddingModel(ctx, p, rawModel)
+		upstreamID, isExact, ok := kind.match(cat, ctx, p, rawModel)
 		if !ok {
 			continue
 		}
@@ -95,13 +124,13 @@ func (r *Router) ResolveEmbedding(ctx context.Context, clientModel, headerProvid
 	}
 	if len(cooling) > 0 {
 		return nil, ir.NewError(503, "all_backends_cooling_down",
-			fmt.Sprintf("all embedding backends for %q are cooling down (%s)", rawModel, strings.Join(out.SkippedReasons, "; ")))
+			fmt.Sprintf("all %s backends for %q are cooling down (%s)", kind.name, rawModel, strings.Join(out.SkippedReasons, "; ")))
 	}
-	return nil, embeddingNotFound(rawModel)
+	return nil, auxNotFound(kind, rawModel)
 }
 
-func embeddingNotFound(model string) *ir.GatewayError {
+func auxNotFound(kind auxKind, model string) *ir.GatewayError {
 	return ir.NewError(404, "model_not_found",
-		fmt.Sprintf("embedding model %q was not found in configured routes or provider embedding catalogs "+
-			"(add a model route or use the <provider>/<model> prefix)", model))
+		fmt.Sprintf("%s model %q was not found in configured routes or provider %s catalogs "+
+			"(add a model route or use the <provider>/<model> prefix)", kind.name, model, kind.name))
 }
