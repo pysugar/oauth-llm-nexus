@@ -37,10 +37,12 @@ type Provider struct {
 	IncludeNonChat bool
 	Keys           *KeyRing
 	StaticHeaders  map[string]string
-	Timeout        time.Duration
-	Quirks         codec.Quirks
-	StaticModels   []string
-	ModelAliases   map[string]string
+	Timeout        time.Duration // max wait for response headers, and max upstream idle gap while streaming
+	// FirstTokenTimeout fails over when no text/thinking/tool call arrives in time (0 = off).
+	FirstTokenTimeout time.Duration
+	Quirks            codec.Quirks
+	StaticModels      []string
+	ModelAliases      map[string]string
 }
 
 // IsEnabled safely reads whether the provider is currently enabled.

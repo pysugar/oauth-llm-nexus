@@ -78,6 +78,22 @@ func (sw *Writer) WriteComment(comment string) error {
 	return nil
 }
 
+// WriteCommentLine writes a single SSE comment line with no blank line after it. Unlike
+// WriteComment it never dispatches an (empty) event, which some SDKs (openai-go) reject; the
+// comment is simply absorbed by the next frame.
+func (sw *Writer) WriteCommentLine(comment string) error {
+	if _, err := sw.w.Write([]byte(": " + comment + "\n")); err != nil {
+		return err
+	}
+	sw.Flush()
+	return nil
+}
+
+// WritePing emits Anthropic's `event: ping` frame.
+func (sw *Writer) WritePing() error {
+	return sw.WriteEvent("ping", []byte(`{"type": "ping"}`))
+}
+
 // Flush flushes the underlying ResponseWriter if supported.
 func (sw *Writer) Flush() {
 	if sw.flusher != nil {

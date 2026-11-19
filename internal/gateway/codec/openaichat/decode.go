@@ -10,11 +10,11 @@ import (
 )
 
 type chatChunk struct {
-	ID      string           `json:"id"`
-	Model   string           `json:"model"`
+	ID      string            `json:"id"`
+	Model   string            `json:"model"`
 	Choices []chatChunkChoice `json:"choices"`
-	Usage   *chatUsage       `json:"usage"`
-	Error   *json.RawMessage `json:"error"`
+	Usage   *chatUsage        `json:"usage"`
+	Error   *json.RawMessage  `json:"error"`
 }
 
 type chatChunkChoice struct {
@@ -33,10 +33,10 @@ type chatChunkDelta struct {
 }
 
 type chatUsage struct {
-	PromptTokens            int `json:"prompt_tokens"`
-	CompletionTokens        int `json:"completion_tokens"`
-	PromptCacheHitTokens    int `json:"prompt_cache_hit_tokens"`
-	PromptTokensDetails     *struct {
+	PromptTokens         int `json:"prompt_tokens"`
+	CompletionTokens     int `json:"completion_tokens"`
+	PromptCacheHitTokens int `json:"prompt_cache_hit_tokens"`
+	PromptTokensDetails  *struct {
 		CachedTokens int `json:"cached_tokens"`
 	} `json:"prompt_tokens_details"`
 	CompletionTokensDetails *struct {
@@ -60,6 +60,7 @@ type chatDecoder struct {
 	respID       string
 	model        string
 	finishReason string
+	sawDone      bool
 	usage        ir.Usage
 	sentFinish   bool
 
@@ -85,11 +86,15 @@ func (c *Codec) NewDecoder(q codec.Quirks) codec.StreamDecoder {
 	}
 }
 
+// Complete implements codec.StreamDecoder.
+func (d *chatDecoder) Complete() bool { return d.sawDone || d.finishReason != "" }
+
 func (d *chatDecoder) DecodeFrame(frame sse.Event) ([]ir.Event, bool, *ir.GatewayError) {
 	if len(frame.Data) == 0 {
 		return nil, false, nil
 	}
 	if sse.IsDone(frame.Data) {
+		d.sawDone = true
 		return d.Flush(), true, nil
 	}
 

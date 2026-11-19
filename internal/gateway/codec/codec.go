@@ -29,6 +29,10 @@ type Quirks struct {
 type StreamDecoder interface {
 	DecodeFrame(frame sse.Event) (events []ir.Event, done bool, err *ir.GatewayError)
 	Flush() []ir.Event
+	// Complete reports whether the protocol's end-of-reply marker was seen ([DONE] or a
+	// finish_reason, message_stop, Gemini finishReason, response.completed). A stream that ends
+	// without one was cut short and must not be reported as a finished reply.
+	Complete() bool
 }
 
 // StreamEncoder converts IR events into downstream SSE frames for a specific client protocol.

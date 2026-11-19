@@ -165,6 +165,11 @@ func ClassifyGatewayError(ge *ir.GatewayError) (FailureAction, time.Duration) {
 	if ge == nil {
 		return ClassifyFailure(0, nil), 0
 	}
+	if IsStreamQualityError(ge) {
+		// The backend answered but the reply was unusable (cut short, empty, too slow to start):
+		// try the next backend without blaming the key or cooling the provider.
+		return FailureAction{Failover: true}, 0
+	}
 	if ge.HTTPStatus == 400 && isUpstreamKeyRejectedError(ge) {
 		return FailureAction{
 			RotateKey: true,
@@ -198,6 +203,18 @@ func isUpstreamKeyRejectedError(ge *ir.GatewayError) bool {
 		if strings.Contains(hay, needle) {
 			return true
 		}
+	}
+	return false
+}
+
+// IsStreamQualityError reports gateway-detected reply defects that warrant failover only.
+func IsStreamQualityError(ge *ir.GatewayError) bool {
+	if ge == nil {
+		return false
+	}
+	switch ge.Code {
+	case "upstream_incomplete", "empty_reply", "upstream_finish_error", "first_token_timeout", "upstream_idle_timeout":
+		return true
 	}
 	return false
 }

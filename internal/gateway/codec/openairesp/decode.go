@@ -10,12 +10,12 @@ import (
 )
 
 type respStreamEnvelope struct {
-	Type     string `json:"type"`
-	ItemID   string `json:"item_id"`
-	CallID   string `json:"call_id"`
-	Delta    string `json:"delta"`
+	Type      string `json:"type"`
+	ItemID    string `json:"item_id"`
+	CallID    string `json:"call_id"`
+	Delta     string `json:"delta"`
 	Arguments string `json:"arguments"`
-	Item     *struct {
+	Item      *struct {
 		ID        string `json:"id"`
 		Type      string `json:"type"`
 		CallID    string `json:"call_id"`
@@ -53,15 +53,16 @@ type respUsage struct {
 }
 
 type respToolItem struct {
-	itemID   string
-	callID   string
-	name     string
-	argsBuf  strings.Builder
-	started  bool
-	done     bool
+	itemID  string
+	callID  string
+	name    string
+	argsBuf strings.Builder
+	started bool
+	done    bool
 }
 
 type respDecoder struct {
+	sawTerminal bool
 	sentStart   bool
 	sentFinish  bool
 	respID      string
@@ -80,11 +81,15 @@ func (c *Codec) NewDecoder(_ codec.Quirks) codec.StreamDecoder {
 	}
 }
 
+// Complete implements codec.StreamDecoder.
+func (d *respDecoder) Complete() bool { return d.sawTerminal }
+
 func (d *respDecoder) DecodeFrame(frame sse.Event) ([]ir.Event, bool, *ir.GatewayError) {
 	if len(frame.Data) == 0 {
 		return nil, false, nil
 	}
 	if sse.IsDone(frame.Data) {
+		d.sawTerminal = true
 		return d.Flush(), true, nil
 	}
 
@@ -237,6 +242,7 @@ func (d *respDecoder) DecodeFrame(frame sse.Event) ([]ir.Event, bool, *ir.Gatewa
 		}
 
 	case "response.completed", "response.incomplete":
+		d.sawTerminal = true
 		var reason string
 		if env.Response != nil {
 			if env.Response.Usage != nil {

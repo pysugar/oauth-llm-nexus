@@ -4,9 +4,11 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/pysugar/oauth-llm-nexus/internal/gateway/codec"
 	"github.com/pysugar/oauth-llm-nexus/internal/gateway/codecs"
@@ -39,6 +41,9 @@ func (s *Server) servePassthrough(
 		if ge := probeJSONError(resp.StatusCode, body); ge != nil {
 			return outcome, false, ge
 		}
+		if ct := strings.ToLower(resp.Header.Get("Content-Type")); (ct == "" || strings.Contains(ct, "json")) && !json.Valid(body) {
+			return outcome, false, errIncomplete()
+		}
 
 		setProvenanceHeaders(w, cand, "passthrough")
 		ct := resp.Header.Get("Content-Type")
@@ -63,24 +68,42 @@ func (s *Server) servePassthrough(
 		return outcome, true, nil
 	}
 
-	// Streaming passthrough: inspect first SSE frame before committing headers to allow clean failover.
+	// Streaming passthrough: raw frames are forwarded verbatim, but a decoder of the target protocol
+	// runs alongside so the attempt is held until first content (keepalives meanwhile) and a
+	// truncated, errored or empty stream is caught (pre-commit: fail over; post-commit: in-stream error).
 	br := bufio.NewReaderSize(resp.Body, 64*1024)
-	firstFrameBytes, firstData, isEOF, readErr := readFirstSSEFrameBytes(br)
-	if readErr != nil && len(firstFrameBytes) == 0 {
-		return outcome, false, ir.NewError(502, "upstream_stream_failed", readErr.Error())
-	}
-	if ge := probeSSEDataError(firstData); ge != nil {
+	if ge := probeNonSSEJSONError(resp.StatusCode, resp.Header.Get("Content-Type"), br); ge != nil {
 		return outcome, false, ge
 	}
-	if len(firstData) == 0 && len(firstFrameBytes) > 0 {
-		if ge := probeSSEDataError(firstFrameBytes); ge != nil {
-			return outcome, false, ge
-		}
+	targetCodec, ok := codecs.For(targetProto)
+	if !ok {
+		return outcome, false, ir.NewError(500, "missing_codec", "missing target codec "+string(targetProto))
+	}
+	pump := startPump(sse.NewRawReader(br))
+	defer pump.Close()
+	cs, _ := w.(*clientStream)
+	rd := &streamReader{
+		ctx:     respContext(resp),
+		pump:    pump,
+		dec:     targetCodec.NewDecoder(cand.Provider.Quirks),
+		cs:      cs,
+		idle:    cand.Provider.Timeout,
+		ftt:     cand.Provider.FirstTokenTimeout,
+		policy:  s.streamPolicy(),
+		started: time.Now(),
+	}
+	frames, finished, ge := rd.hold()
+	if ge != nil {
+		return outcome, false, ge
 	}
 
 	setProvenanceHeaders(w, cand, "passthrough")
 	sse.SetHeaders(w)
 	w.WriteHeader(http.StatusOK)
+	if cs != nil {
+		cs.committed = true
+	}
+	outcome.TTFT = rd.ttft
 
 	flusher, _ := w.(http.Flusher)
 	var capture bytes.Buffer
@@ -88,6 +111,7 @@ func (s *Server) servePassthrough(
 	const maxTailBytes = 128 * 1024
 	var tail []byte
 	var totalBytes int
+	clientGone := false
 
 	recordChunk := func(chunk []byte) {
 		if len(chunk) == 0 {
@@ -110,29 +134,45 @@ func (s *Server) servePassthrough(
 			}
 		}
 	}
-
-	if len(firstFrameBytes) > 0 {
-		_, _ = w.Write(firstFrameBytes)
+	forward := func(raw []byte) {
+		recordChunk(raw)
+		if clientGone || len(raw) == 0 {
+			return
+		}
+		if _, err := w.Write(raw); err != nil {
+			clientGone = true
+			return
+		}
 		if flusher != nil {
 			flusher.Flush()
 		}
-		recordChunk(firstFrameBytes)
+	}
+	for _, f := range frames {
+		forward(f.raw)
 	}
 
-	if !isEOF {
-		buf := make([]byte, 32*1024)
-		for {
-			n, err := br.Read(buf)
-			if n > 0 {
-				chunk := buf[:n]
-				_, _ = w.Write(chunk)
-				if flusher != nil {
-					flusher.Flush()
-				}
-				recordChunk(chunk)
-			}
+	var streamErr *ir.GatewayError
+	if !finished {
+		for !rd.done && !clientGone {
+			f, err := rd.next(false, time.Time{})
 			if err != nil {
+				if !errors.Is(err, io.EOF) {
+					streamErr = toGatewayError(err)
+				}
 				break
+			}
+			forward(f.raw)
+		}
+		if streamErr == nil && !clientGone {
+			streamErr = rd.drainEnd(func(ir.Event) {})
+		}
+	}
+	if streamErr != nil {
+		outcome.StreamErr = streamErr.Code
+		if !clientGone {
+			_, _ = w.Write(encodeInStreamError(targetProto, streamErr))
+			if flusher != nil {
+				flusher.Flush()
 			}
 		}
 	}
@@ -153,38 +193,6 @@ func (s *Server) servePassthrough(
 		}
 	}
 	return outcome, true, nil
-}
-
-func readFirstSSEFrameBytes(br *bufio.Reader) (rawFrame []byte, firstData []byte, eof bool, err error) {
-	var rawBuf bytes.Buffer
-	var dataLines [][]byte
-	for {
-		line, rerr := br.ReadBytes('\n')
-		if len(line) > 0 {
-			rawBuf.Write(line)
-			trimmed := bytes.TrimRight(line, "\r\n")
-			if len(trimmed) == 0 {
-				if len(dataLines) > 0 || rawBuf.Len() > 0 {
-					return rawBuf.Bytes(), bytes.Join(dataLines, []byte{'\n'}), false, nil
-				}
-				continue
-			}
-			if bytes.HasPrefix(trimmed, []byte("data:")) {
-				val := bytes.TrimPrefix(trimmed, []byte("data:"))
-				val = bytes.TrimPrefix(val, []byte(" "))
-				cp := make([]byte, len(val))
-				copy(cp, val)
-				dataLines = append(dataLines, cp)
-			}
-		}
-		if rerr != nil {
-			isEOF := rerr == io.EOF
-			if isEOF {
-				return rawBuf.Bytes(), bytes.Join(dataLines, []byte{'\n'}), true, nil
-			}
-			return rawBuf.Bytes(), bytes.Join(dataLines, []byte{'\n'}), false, rerr
-		}
-	}
 }
 
 func probeJSONError(status int, body []byte) *ir.GatewayError {
@@ -215,17 +223,6 @@ func probeJSONError(status int, body []byte) *ir.GatewayError {
 		}
 	}
 	return nil
-}
-
-func probeSSEDataError(data []byte) *ir.GatewayError {
-	trimmed := strings.TrimSpace(string(data))
-	if trimmed == "" || trimmed == "[DONE]" {
-		return nil
-	}
-	if !strings.HasPrefix(trimmed, "{") && !strings.HasPrefix(trimmed, "[") {
-		return nil
-	}
-	return probeJSONError(502, []byte(trimmed))
 }
 
 func extractJSONUsage(body []byte) ir.Usage {
@@ -397,4 +394,19 @@ func extractSSEUsage(proto ir.Protocol, raw []byte, q codec.Quirks) ir.Usage {
 		col.Add(item)
 	}
 	return col.Build().Usage
+}
+
+// encodeInStreamError renders ge as one SSE frame in proto's own error shape.
+func encodeInStreamError(proto ir.Protocol, ge *ir.GatewayError) []byte {
+	c, ok := codecs.For(proto)
+	if !ok {
+		return nil
+	}
+	body := c.EncodeError(ge)
+	switch proto {
+	case ir.ProtoAnthropic, ir.ProtoOpenAIResp:
+		return []byte("event: error\ndata: " + string(body) + "\n\n")
+	default:
+		return []byte("data: " + string(body) + "\n\n")
+	}
 }

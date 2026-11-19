@@ -143,10 +143,12 @@ func (s *Server) attemptWithKeys(
 			triedKeys[apiKey] = true
 		}
 
-		reqCtx := r.Context()
-		var cancel context.CancelFunc
+		// Provider.Timeout bounds the wait for response headers (and a non-stream body); a stream is
+		// bounded by its idle gap instead, so long replies are never cut at a fixed wall time.
+		reqCtx, cancel := context.WithCancel(r.Context())
+		var headerTimer *time.Timer
 		if cand.Provider.Timeout > 0 {
-			reqCtx, cancel = context.WithTimeout(reqCtx, cand.Provider.Timeout)
+			headerTimer = time.AfterFunc(cand.Provider.Timeout, cancel)
 		}
 
 		httpReq, err := http.NewRequestWithContext(reqCtx, http.MethodPost, endpointURL, bytes.NewReader(payload))
@@ -159,6 +161,10 @@ func (s *Server) attemptWithKeys(
 		cand.Provider.ApplyHeaders(httpReq, targetProto, apiKey)
 
 		resp, err := s.Registry.HTTPClient().Do(httpReq)
+		streamsBody := upstreamStreams(passthrough, streamCollect, irReq)
+		if headerTimer != nil && (err != nil || streamsBody) {
+			headerTimer.Stop()
+		}
 		if err != nil {
 			if cancel != nil {
 				cancel()
@@ -239,6 +245,9 @@ func (s *Server) attemptWithKeys(
 
 		// Pre-commit stream/payload error (e.g. HTTP 200 wrapping {"error": ...}).
 		action, classDur := router.ClassifyGatewayError(pipeErr)
+		if router.IsStreamQualityError(pipeErr) || pipeErr.HTTPStatus == 499 {
+			return outcome, false, pipeErr
+		}
 		if cand.Provider.Keys != nil && apiKey != "" {
 			cand.Provider.Keys.MarkFailureDetailed(apiKey, pipeErr.HTTPStatus, pipeErr.Message, classDur)
 		}
@@ -332,4 +341,10 @@ func maskKeyLabel(key string) string {
 		return "****"
 	}
 	return key[:4] + "..." + key[len(key)-4:]
+}
+
+// upstreamStreams reports whether the upstream reply is an SSE stream (translated attempts and
+// stream-collected passthrough always stream; plain passthrough mirrors the client).
+func upstreamStreams(passthrough, streamCollect bool, irReq *ir.Request) bool {
+	return !passthrough || streamCollect || irReq.Stream
 }

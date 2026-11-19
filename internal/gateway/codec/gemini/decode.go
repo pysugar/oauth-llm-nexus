@@ -10,9 +10,9 @@ import (
 )
 
 type gemStreamResponse struct {
-	ResponseID    string `json:"responseId"`
-	ModelVersion  string `json:"modelVersion"`
-	Candidates    []struct {
+	ResponseID   string `json:"responseId"`
+	ModelVersion string `json:"modelVersion"`
+	Candidates   []struct {
 		Index        int    `json:"index"`
 		FinishReason string `json:"finishReason"`
 		Content      *struct {
@@ -36,6 +36,7 @@ type geminiDecoder struct {
 	respID       string
 	model        string
 	finishReason string
+	sawDone      bool
 	hasToolCall  bool
 	usage        ir.Usage
 }
@@ -45,11 +46,15 @@ func (c *Codec) NewDecoder(_ codec.Quirks) codec.StreamDecoder {
 	return &geminiDecoder{}
 }
 
+// Complete implements codec.StreamDecoder.
+func (d *geminiDecoder) Complete() bool { return d.sawDone || d.finishReason != "" }
+
 func (d *geminiDecoder) DecodeFrame(frame sse.Event) ([]ir.Event, bool, *ir.GatewayError) {
 	if len(frame.Data) == 0 {
 		return nil, false, nil
 	}
 	if sse.IsDone(frame.Data) {
+		d.sawDone = true
 		return d.Flush(), true, nil
 	}
 

@@ -37,6 +37,7 @@ type ProviderYAML struct {
 	APIKeys        []string          `yaml:"api_keys,omitempty"`
 	StaticHeaders  map[string]string `yaml:"static_headers,omitempty"`
 	Timeout        string            `yaml:"timeout,omitempty"`
+	FirstToken     string            `yaml:"first_token_timeout,omitempty"`
 	Models         []string          `yaml:"models,omitempty"`
 	ModelAliases   map[string]string `yaml:"model_aliases,omitempty"`
 	Quirks         *QuirksYAML       `yaml:"quirks,omitempty"`
@@ -67,9 +68,9 @@ type Registry struct {
 
 // NewRegistry loads gateway provider configuration from YAML files and environment variables.
 func NewRegistry() (*Registry, error) {
-	httpClient := &http.Client{
-		Timeout: 180 * time.Second,
-	}
+	// No client-wide timeout: it would cut long streams. Attempts bound the wait for response
+	// headers (Provider.Timeout) and upstream idleness instead.
+	httpClient := &http.Client{}
 	reg := &Registry{
 		byID:       make(map[string]*Provider),
 		httpClient: httpClient,
@@ -361,6 +362,11 @@ func materializeProvider(cfg ProviderYAML) *Provider {
 			p.Timeout = dur
 		}
 	}
+	if cfg.FirstToken != "" {
+		if dur, err := time.ParseDuration(cfg.FirstToken); err == nil && dur > 0 {
+			p.FirstTokenTimeout = dur
+		}
+	}
 	if len(cfg.Models) > 0 {
 		p.StaticModels = append([]string(nil), cfg.Models...)
 	}
@@ -444,6 +450,11 @@ func materializeProvider(cfg ProviderYAML) *Provider {
 	if v := strings.TrimSpace(os.Getenv(envPrefix + "_TIMEOUT")); v != "" {
 		if dur, err := time.ParseDuration(v); err == nil && dur > 0 {
 			p.Timeout = dur
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv(envPrefix + "_FIRST_TOKEN_TIMEOUT")); v != "" {
+		if dur, err := time.ParseDuration(v); err == nil && dur > 0 {
+			p.FirstTokenTimeout = dur
 		}
 	}
 

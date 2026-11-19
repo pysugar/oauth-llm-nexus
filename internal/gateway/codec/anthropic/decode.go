@@ -64,6 +64,7 @@ type anthDecoder struct {
 	respID       string
 	model        string
 	finishReason string
+	sawStop      bool
 	usage        ir.Usage
 	blocks       map[int]*anthBlockState
 }
@@ -74,6 +75,9 @@ func (c *Codec) NewDecoder(_ codec.Quirks) codec.StreamDecoder {
 		blocks: make(map[int]*anthBlockState),
 	}
 }
+
+// Complete implements codec.StreamDecoder.
+func (d *anthDecoder) Complete() bool { return d.sawStop || d.finishReason != "" }
 
 func (d *anthDecoder) DecodeFrame(frame sse.Event) ([]ir.Event, bool, *ir.GatewayError) {
 	if len(frame.Data) == 0 {
@@ -224,6 +228,7 @@ func (d *anthDecoder) DecodeFrame(frame sse.Event) ([]ir.Event, bool, *ir.Gatewa
 		}
 
 	case "message_stop":
+		d.sawStop = true
 		out = append(out, d.Flush()...)
 		return out, true, nil
 

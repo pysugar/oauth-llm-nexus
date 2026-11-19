@@ -30,11 +30,11 @@ func (f rtFunc) RoundTrip(r *http.Request) (*http.Response, error) {
 }
 
 type mockUpstreamBehavior struct {
-	chatCalls    atomic.Int32
-	amdCalls     atomic.Int32
-	geminiCalls  atomic.Int32
-	respCalls    atomic.Int32
-	failFirst429 bool
+	chatCalls        atomic.Int32
+	amdCalls         atomic.Int32
+	geminiCalls      atomic.Int32
+	respCalls        atomic.Int32
+	failFirst429     bool
 	forceStreamError bool
 }
 

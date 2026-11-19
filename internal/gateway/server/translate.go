@@ -3,9 +3,11 @@ package server
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/pysugar/oauth-llm-nexus/internal/gateway/codec"
 	"github.com/pysugar/oauth-llm-nexus/internal/gateway/codecs"
@@ -45,37 +47,43 @@ func (s *Server) serveTranslated(
 	}
 
 	dec := targetCodec.NewDecoder(cand.Provider.Quirks)
-	sr := sse.NewReader(br)
+	pump := startPump(sse.NewReader(br))
+	defer pump.Close()
+	cs, _ := w.(*clientStream)
+	rd := &streamReader{
+		ctx:     respContext(resp),
+		pump:    pump,
+		dec:     dec,
+		cs:      cs,
+		idle:    cand.Provider.Timeout,
+		ftt:     cand.Provider.FirstTokenTimeout,
+		policy:  s.streamPolicy(),
+		started: time.Now(),
+	}
 	col := ir.NewCollector()
 
 	// Non-streaming client: collect the complete translated stream before committing HTTP 200
-	// so any stream error triggers clean failover.
+	// so a broken, truncated or empty stream fails over cleanly.
 	if !irReq.Stream {
-		for {
-			frame, err := sr.Next()
+		for !rd.done {
+			f, err := rd.next(!rd.content, time.Time{})
 			if err != nil {
-				if err == io.EOF {
+				if errors.Is(err, io.EOF) {
 					break
 				}
-				return outcome, false, ir.NewError(502, "upstream_stream_read_error", err.Error())
+				return outcome, false, toGatewayError(err)
 			}
-			events, done, ge := dec.DecodeFrame(frame)
-			if ge != nil {
-				return outcome, false, ge
-			}
-			for _, ev := range events {
+			for _, ev := range f.events {
 				col.Add(ev)
 			}
-			if done {
-				break
-			}
 		}
-		for _, ev := range dec.Flush() {
-			col.Add(ev)
+		if ge := rd.drainEnd(col.Add); ge != nil {
+			return outcome, false, ge
 		}
 		if ge := col.Err(); ge != nil {
 			return outcome, false, ge
 		}
+		outcome.TTFT = rd.ttft
 
 		res := col.Build()
 		if res.Model == "" {
@@ -97,6 +105,7 @@ func (s *Server) serveTranslated(
 		outcome.InputTokens = res.Usage.InputTokens
 		outcome.OutputTokens = res.Usage.OutputTokens
 		outcome.CachedTokens = res.Usage.CacheReadTokens
+		outcome.CacheWriteTokens = res.Usage.CacheWriteTokens
 		outcome.ReasoningTokens = res.Usage.ReasoningTokens
 		outcome.ResponseBody = string(outBytes)
 		if irReq.Source == ir.ProtoOpenAIResp && s.RespStore != nil && res.ID != "" {
@@ -105,91 +114,71 @@ func (s *Server) serveTranslated(
 		return outcome, true, nil
 	}
 
-	// Streaming client: read pre-commit initial IR events to verify stream health before committing HTTP 200.
-	var initialEvents []ir.Event
-	streamDone := false
-	for !streamDone && len(initialEvents) == 0 {
-		frame, err := sr.Next()
-		if err != nil {
-			if err == io.EOF {
-				initialEvents = append(initialEvents, dec.Flush()...)
-				streamDone = true
-				break
-			}
-			return outcome, false, ir.NewError(502, "upstream_stream_read_error", err.Error())
-		}
-		events, done, ge := dec.DecodeFrame(frame)
-		if ge != nil {
-			return outcome, false, ge
-		}
-		initialEvents = append(initialEvents, events...)
-		if done {
-			streamDone = true
-		}
+	// Streaming client: hold until first content (keepalives flow meanwhile), then commit.
+	frames, finished, ge := rd.hold()
+	if ge != nil {
+		return outcome, false, ge
 	}
 
-	if len(initialEvents) == 0 {
-		return outcome, false, ir.NewError(502, "empty_upstream_stream", "upstream closed stream before producing any events")
-	}
-
-	// Commit client response headers and stream buffered + subsequent events.
 	setProvenanceHeaders(w, cand, routeLabel)
 	sse.SetHeaders(w)
 	w.WriteHeader(http.StatusOK)
+	if cs != nil {
+		cs.committed = true
+	}
+	outcome.TTFT = rd.ttft
 
 	sw := sse.NewWriter(w)
 	enc := clientCodec.NewEncoder(irReq.Model)
-
-	emitEvents := func(evs []ir.Event) bool {
+	clientGone := false
+	emitEvents := func(evs []ir.Event) {
 		for _, ev := range evs {
 			col.Add(ev)
+			if clientGone {
+				continue
+			}
 			if err := enc.Encode(ev, sw); err != nil {
-				return false
+				clientGone = true
 			}
 		}
-		return true
+	}
+	for _, f := range frames {
+		emitEvents(f.events)
 	}
 
-	if !emitEvents(initialEvents) {
-		res := col.Build()
-		outcome.InputTokens = res.Usage.InputTokens
-		outcome.OutputTokens = res.Usage.OutputTokens
-		return outcome, true, nil
-	}
-
-	if !streamDone {
-		for {
-			frame, err := sr.Next()
+	var streamErr *ir.GatewayError
+	if !finished {
+		for !rd.done && !clientGone {
+			f, err := rd.next(false, time.Time{})
 			if err != nil {
+				if !errors.Is(err, io.EOF) {
+					streamErr = toGatewayError(err)
+				}
 				break
 			}
-			events, done, ge := dec.DecodeFrame(frame)
-			if ge != nil {
-				_ = enc.Encode(ir.Event{Kind: ir.EventError, Err: ge}, sw)
-				streamDone = true
-				break
-			}
-			if !emitEvents(events) {
-				streamDone = true
-				break
-			}
-			if done {
-				streamDone = true
-				break
-			}
+			emitEvents(f.events)
 		}
 	}
-
-	flushed := dec.Flush()
-	_ = emitEvents(flushed)
-	_ = enc.Finish(sw)
+	if streamErr == nil && !clientGone {
+		streamErr = rd.drainEnd(func(ev ir.Event) { emitEvents([]ir.Event{ev}) })
+	}
+	if streamErr != nil {
+		// Post-commit failure: report it in-stream instead of fabricating a finished reply.
+		outcome.StreamErr = streamErr.Code
+		if !clientGone {
+			_ = enc.Encode(ir.Event{Kind: ir.EventError, Err: streamErr}, sw)
+		}
+	} else if !clientGone {
+		_ = enc.Finish(sw)
+	}
 
 	res := col.Build()
 	outcome.InputTokens = res.Usage.InputTokens
 	outcome.OutputTokens = res.Usage.OutputTokens
 	outcome.CachedTokens = res.Usage.CacheReadTokens
+	outcome.CacheWriteTokens = res.Usage.CacheWriteTokens
 	outcome.ReasoningTokens = res.Usage.ReasoningTokens
-	if irReq.Source == ir.ProtoOpenAIResp && s.RespStore != nil {
+	if irReq.Source == ir.ProtoOpenAIResp && s.RespStore != nil && streamErr == nil {
 		respID := res.ID
 		if idProvider, ok := enc.(interface{ ResponseID() string }); ok && idProvider.ResponseID() != "" {
 			respID = idProvider.ResponseID()

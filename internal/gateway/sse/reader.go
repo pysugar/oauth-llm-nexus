@@ -13,6 +13,9 @@ type Event struct {
 	Type string
 	Data []byte
 	ID   string
+	// Raw holds the frame's original lines (comments included, blank terminator appended) when
+	// the Reader was created with NewRawReader; passthrough streaming forwards it verbatim.
+	Raw []byte
 }
 
 // Reader incrementally decodes SSE frames from an io.Reader without fixed small-line limits.
@@ -22,6 +25,8 @@ type Reader struct {
 	eventID   string
 	dataLines [][]byte
 	eof       bool
+	keepRaw   bool
+	raw       []byte
 }
 
 // NewReader wraps r in a buffered SSE Reader.
@@ -31,6 +36,13 @@ func NewReader(r io.Reader) *Reader {
 	}
 }
 
+// NewRawReader is NewReader that also records each frame's raw bytes in Event.Raw.
+func NewRawReader(r io.Reader) *Reader {
+	rd := NewReader(r)
+	rd.keepRaw = true
+	return rd
+}
+
 // Next reads the next complete SSE frame. It returns io.EOF after all frames have been read.
 func (r *Reader) Next() (Event, error) {
 	if r.eof {
@@ -38,6 +50,10 @@ func (r *Reader) Next() (Event, error) {
 	}
 	for {
 		line, err := r.readLine()
+		if r.keepRaw && (err == nil || len(line) > 0) {
+			r.raw = append(r.raw, line...)
+			r.raw = append(r.raw, '\n')
+		}
 		if err != nil {
 			if err == io.EOF {
 				r.eof = true
@@ -112,6 +128,14 @@ func (r *Reader) flush() Event {
 		Type: r.eventType,
 		Data: data,
 		ID:   r.eventID,
+	}
+	if r.keepRaw {
+		raw := r.raw
+		if !bytes.HasSuffix(raw, []byte("\n\n")) {
+			raw = append(raw, '\n')
+		}
+		ev.Raw = raw
+		r.raw = nil
 	}
 	r.eventType = ""
 	r.dataLines = r.dataLines[:0]

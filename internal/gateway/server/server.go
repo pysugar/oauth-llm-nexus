@@ -36,6 +36,9 @@ type Server struct {
 	Monitor   *monitor.ProxyMonitor
 	Legacy    LegacyHandlers
 
+	// Stream overrides DefaultStreamPolicy (tests shrink the timers).
+	Stream *StreamPolicy
+
 	overridesMu sync.Mutex // serializes read-modify-write of persisted provider overrides
 }
 
@@ -262,10 +265,17 @@ func (s *Server) handleInference(
 	}
 
 	// Execute ordered gateway candidate attempts with pre-commit key rotation & failover.
+	// Streaming clients share one clientStream across failover candidates so keepalives can be
+	// sent while attempts are held, and a later candidate can stream into the same response.
+	if irReq.Stream {
+		w = newClientStream(w, clientProto, s.streamPolicy())
+	}
 	result, ge := s.executePlan(w, r, clientProto, clientCodec, irReq, rawBody, plan, startTime)
 	if ge != nil {
 		// Fall back to legacy OAuth if all gateway candidates failed and a legacy candidate follows.
-		if plan.LegacyFallbackProvider != "" {
+		if cs, ok := w.(*clientStream); ok && cs.headersSent {
+			// Headers (keepalives) are out: a legacy handler cannot write its own response.
+		} else if plan.LegacyFallbackProvider != "" {
 			r.Body = io.NopCloser(bytes.NewReader(rawBody))
 			fallbackPlan := &router.Plan{
 				ClientModel:    plan.ClientModel,
@@ -295,6 +305,10 @@ func (s *Server) handleInference(
 func (s *Server) writeError(w http.ResponseWriter, c codec.Codec, ge *ir.GatewayError) {
 	if ge == nil {
 		ge = ir.NewError(500, "internal_error", "unknown error")
+	}
+	if cs, ok := w.(*clientStream); ok && cs.headersSent {
+		cs.writeStreamError(c, ge)
+		return
 	}
 	status := ge.HTTPStatus
 	if status < 400 || status > 599 {
@@ -364,15 +378,19 @@ func (s *Server) handleGeminiModelGet(w http.ResponseWriter, r *http.Request, mo
 }
 
 type attemptOutcome struct {
-	ProviderID      string
-	UpstreamModel   string
-	AccountLabel    string
-	Status          int
-	InputTokens     int
-	OutputTokens    int
-	CachedTokens    int
-	ReasoningTokens int
-	ResponseBody    string
+	ProviderID       string
+	UpstreamModel    string
+	AccountLabel     string
+	Status           int
+	InputTokens      int
+	OutputTokens     int
+	CachedTokens     int
+	ReasoningTokens  int
+	ResponseBody     string
+	CacheWriteTokens int
+	TTFT             time.Duration
+	StreamErr        string // set when a committed stream ended with an in-stream error
+	KeyFP            string // fingerprint of the upstream key used
 }
 
 func (s *Server) logMonitorSuccess(r *http.Request, clientModel string, out attemptOutcome, rawBody []byte, start time.Time) {
