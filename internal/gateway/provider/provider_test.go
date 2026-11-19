@@ -385,3 +385,29 @@ func TestEmbeddingModelsExcludedFromChatCatalog(t *testing.T) {
 		}
 	}
 }
+
+func TestNativeResponsesMatrix(t *testing.T) {
+	t.Setenv("NEXUS_OPENAI_API_KEY", "k")
+	reg, err := NewRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Verified against the live APIs on 2026-11-20.
+	for id, want := range map[string]bool{"openai": true, "deepseek": true, "ollama": true, "openrouter": true, "amd": true, "nvidia": false, "gemini": false} {
+		p, ok := reg.Get(id)
+		if !ok {
+			t.Fatalf("missing provider %s", id)
+		}
+		if got := p.IsNative(ir.ProtoOpenAIResp); got != want {
+			t.Errorf("%s native Responses = %v, want %v", id, got, want)
+		}
+		if p.ResponsesStateful != (id == "openai") {
+			t.Errorf("%s ResponsesStateful = %v", id, p.ResponsesStateful)
+		}
+	}
+	t.Setenv("NEXUS_OLLAMA_BASE_URL", "http://host.docker.internal:11434")
+	reg, _ = NewRegistry()
+	if p, _ := reg.Get("ollama"); p.Endpoints.OpenAIResponses != "http://host.docker.internal:11434/v1" {
+		t.Fatalf("base URL override must move the Responses endpoint too, got %q", p.Endpoints.OpenAIResponses)
+	}
+}

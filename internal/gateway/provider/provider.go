@@ -44,6 +44,7 @@ type Provider struct {
 	Quirks            codec.Quirks
 	StaticModels      []string
 	NoChat            bool // embeddings/rerank only (e.g. Voyage): never a chat/messages target
+	ResponsesStateful bool // keeps Responses turns server-side (previous_response_id forwarded as is)
 	ModelAliases      map[string]string
 	// Unredacted skips privacy masking for this provider (a local model on a trusted host).
 	Unredacted bool

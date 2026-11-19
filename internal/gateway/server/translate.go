@@ -112,7 +112,7 @@ func (s *Server) serveTranslated(
 		outcome.ReasoningTokens = res.Usage.ReasoningTokens
 		outcome.ResponseBody = string(outBytes)
 		if irReq.Source == ir.ProtoOpenAIResp && s.RespStore != nil && !irReq.SkipRespStore && res.ID != "" {
-			s.RespStore.Save(res.ID, irReq.Messages, res.Content)
+			s.RespStore.SaveBy(res.ID, cand.Provider.ID, irReq.Messages, res.Content)
 		}
 		return outcome, true, nil
 	}
@@ -187,7 +187,7 @@ func (s *Server) serveTranslated(
 			respID = idProvider.ResponseID()
 		}
 		if respID != "" {
-			s.RespStore.Save(respID, irReq.Messages, res.Content)
+			s.RespStore.SaveBy(respID, cand.Provider.ID, irReq.Messages, res.Content)
 		}
 	}
 	return outcome, true, nil

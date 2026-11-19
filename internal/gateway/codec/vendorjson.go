@@ -246,3 +246,41 @@ func nonEmptyContent(raw json.RawMessage) bool {
 	}
 	return true
 }
+
+// DowngradeImageDetailJSON rewrites Responses input_image detail "original" to "high".
+func DowngradeImageDetailJSON(body []byte) ([]byte, error) {
+	if !bytes.Contains(body, []byte(`"original"`)) {
+		return body, nil
+	}
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(body, &obj); err != nil {
+		return nil, err
+	}
+	var items []map[string]json.RawMessage
+	if json.Unmarshal(obj["input"], &items) != nil {
+		return body, nil
+	}
+	changed := false
+	for _, it := range items {
+		var content []map[string]any
+		if json.Unmarshal(it["content"], &content) != nil {
+			continue
+		}
+		touched := false
+		for _, c := range content {
+			if c["type"] == "input_image" && c["detail"] == "original" {
+				c["detail"] = "high"
+				touched = true
+			}
+		}
+		if touched {
+			it["content"], _ = json.Marshal(content)
+			changed = true
+		}
+	}
+	if !changed {
+		return body, nil
+	}
+	obj["input"], _ = json.Marshal(items)
+	return json.Marshal(obj)
+}

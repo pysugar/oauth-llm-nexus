@@ -12,6 +12,7 @@ const (
 
 type responseEntry struct {
 	messages  []Message
+	maker     string // gateway provider whose reply this is ("" when unknown)
 	expiresAt time.Time
 }
 
@@ -52,6 +53,12 @@ func (s *ResponseStore) now() time.Time {
 
 // Save stores the completed conversation turn (prior messages + assistant output) under responseID.
 func (s *ResponseStore) Save(responseID string, prior []Message, assistantParts []Part) {
+	s.SaveBy(responseID, "", prior, assistantParts)
+}
+
+// SaveBy is Save recording which provider answered, so a stateful provider is only handed a
+// previous_response_id it issued itself.
+func (s *ResponseStore) SaveBy(responseID, maker string, prior []Message, assistantParts []Part) {
 	if s == nil || responseID == "" {
 		return
 	}
@@ -82,8 +89,36 @@ func (s *ResponseStore) Save(responseID string, prior []Message, assistantParts 
 	}
 	s.entries[responseID] = &responseEntry{
 		messages:  history,
+		maker:     maker,
 		expiresAt: now.Add(s.ttl),
 	}
+}
+
+// Maker returns the provider recorded for responseID ("" when unknown or expired).
+func (s *ResponseStore) Maker(responseID string) string {
+	if s == nil || responseID == "" {
+		return ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if ent, ok := s.entries[responseID]; ok && ent != nil && s.now().Before(ent.expiresAt) {
+		return ent.maker
+	}
+	return ""
+}
+
+// History returns the conversation a Responses request continues: the cached turns of
+// previousID followed by the request's own new messages. ok is false when previousID is set but
+// not cached.
+func (s *ResponseStore) History(previousID string, fresh []Message) ([]Message, bool) {
+	if previousID == "" {
+		return fresh, true
+	}
+	prev, ok := s.Lookup(previousID)
+	if !ok {
+		return fresh, false
+	}
+	return append(prev, cloneMessages(fresh)...), true
 }
 
 // Lookup returns a deep copy of cached conversation history for responseID if present and unexpired.

@@ -23,8 +23,12 @@ type Preset struct {
 	Timeout        time.Duration
 	Quirks         codec.Quirks
 	StaticModels   []string // models of a provider with no /models listing
-	NoChat         bool     // embeddings/rerank only: never a chat target
-	Unredacted     bool     // a local model: privacy masking is skipped
+	// ResponsesStateful: the provider keeps Responses turns, so a previous_response_id it issued
+	// may be forwarded as is. Others (Ollama, DeepSeek, OpenRouter, ... verified 2026-11-20) get the
+	// conversation expanded from the gateway's ResponseStore.
+	ResponsesStateful bool
+	NoChat            bool // embeddings/rerank only: never a chat target
+	Unredacted        bool // a local model: privacy masking is skipped
 }
 
 // DefaultPresetOrder lists the 7 built-in API aggregation presets in default fallback priority order.
@@ -50,7 +54,9 @@ var builtInPresets = map[string]Preset{
 		Native:   []ir.Protocol{ir.ProtoOpenAIChat, ir.ProtoOpenAIResp},
 		Prefer:   ir.ProtoOpenAIChat,
 		AuthMode: "bearer",
-		Timeout:  180 * time.Second,
+		// OpenAI keeps responses server-side: previous_response_id may be forwarded to it.
+		ResponsesStateful: true,
+		Timeout:           180 * time.Second,
 		Quirks: codec.Quirks{
 			MaxCompletionTokens:  true,
 			IncludeUsageInStream: true,
@@ -60,10 +66,11 @@ var builtInPresets = map[string]Preset{
 		ID:          "openrouter",
 		DisplayName: "OpenRouter",
 		Endpoints: Endpoints{
-			OpenAIChat: "https://openrouter.ai/api/v1",
-			Anthropic:  "https://openrouter.ai/api",
+			OpenAIChat:      "https://openrouter.ai/api/v1",
+			OpenAIResponses: "https://openrouter.ai/api/v1",
+			Anthropic:       "https://openrouter.ai/api",
 		},
-		Native:   []ir.Protocol{ir.ProtoOpenAIChat, ir.ProtoAnthropic},
+		Native:   []ir.Protocol{ir.ProtoOpenAIChat, ir.ProtoAnthropic, ir.ProtoOpenAIResp},
 		Prefer:   ir.ProtoOpenAIChat,
 		AuthMode: "bearer",
 		FreeOnly: true,
@@ -99,10 +106,11 @@ var builtInPresets = map[string]Preset{
 		ID:          "amd",
 		DisplayName: "AMD Radeon Token Factory",
 		Endpoints: Endpoints{
-			OpenAIChat: "https://developer.amd.com.cn/radeon/api/v1",
-			Anthropic:  "https://developer.amd.com.cn/radeon/api",
+			OpenAIChat:      "https://developer.amd.com.cn/radeon/api/v1",
+			OpenAIResponses: "https://developer.amd.com.cn/radeon/api/v1",
+			Anthropic:       "https://developer.amd.com.cn/radeon/api",
 		},
-		Native:   []ir.Protocol{ir.ProtoOpenAIChat, ir.ProtoAnthropic},
+		Native:   []ir.Protocol{ir.ProtoOpenAIChat, ir.ProtoAnthropic, ir.ProtoOpenAIResp},
 		Prefer:   ir.ProtoOpenAIChat,
 		AuthMode: "bearer",
 		Timeout:  180 * time.Second,
@@ -116,10 +124,11 @@ var builtInPresets = map[string]Preset{
 		ID:          "ollama",
 		DisplayName: "Ollama Local",
 		Endpoints: Endpoints{
-			OpenAIChat: "http://localhost:11434/v1",
-			Anthropic:  "http://localhost:11434",
+			OpenAIChat:      "http://localhost:11434/v1",
+			OpenAIResponses: "http://localhost:11434/v1",
+			Anthropic:       "http://localhost:11434",
 		},
-		Native:     []ir.Protocol{ir.ProtoOpenAIChat, ir.ProtoAnthropic},
+		Native:     []ir.Protocol{ir.ProtoOpenAIChat, ir.ProtoAnthropic, ir.ProtoOpenAIResp},
 		Prefer:     ir.ProtoOpenAIChat,
 		AuthMode:   "none",
 		NoKey:      true,
@@ -135,10 +144,11 @@ var builtInPresets = map[string]Preset{
 		ID:          "deepseek",
 		DisplayName: "DeepSeek API",
 		Endpoints: Endpoints{
-			OpenAIChat: "https://api.deepseek.com/v1",
-			Anthropic:  "https://api.deepseek.com/anthropic",
+			OpenAIChat:      "https://api.deepseek.com/v1",
+			OpenAIResponses: "https://api.deepseek.com/v1",
+			Anthropic:       "https://api.deepseek.com/anthropic",
 		},
-		Native:   []ir.Protocol{ir.ProtoOpenAIChat, ir.ProtoAnthropic},
+		Native:   []ir.Protocol{ir.ProtoOpenAIChat, ir.ProtoAnthropic, ir.ProtoOpenAIResp},
 		Prefer:   ir.ProtoOpenAIChat,
 		AuthMode: "bearer",
 		Timeout:  180 * time.Second,

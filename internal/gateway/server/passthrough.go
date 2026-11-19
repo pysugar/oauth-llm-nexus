@@ -62,7 +62,7 @@ func (s *Server) servePassthrough(
 		outcome.ReasoningTokens = u.ReasoningTokens
 		if irReq.Source == ir.ProtoOpenAIResp && s.RespStore != nil && !irReq.SkipRespStore {
 			if respID, parts := extractResponsesJSONTurn(body); respID != "" {
-				s.RespStore.Save(respID, irReq.Messages, parts)
+				s.saveResponsesTurn(respID, cand.Provider.ID, irReq, parts)
 			}
 		}
 		return outcome, true, nil
@@ -192,7 +192,7 @@ func (s *Server) servePassthrough(
 	outcome.ReasoningTokens = u.ReasoningTokens
 	if irReq.Source == ir.ProtoOpenAIResp && s.RespStore != nil && !irReq.SkipRespStore {
 		if respID, parts := extractResponsesSSETurn(usageBytes); respID != "" {
-			s.RespStore.Save(respID, irReq.Messages, parts)
+			s.saveResponsesTurn(respID, cand.Provider.ID, irReq, parts)
 		}
 	}
 	return outcome, true, nil
@@ -431,4 +431,12 @@ func isUsageOnlyChunk(raw []byte) bool {
 		return len(probe.Choices) == 0 && len(probe.Usage) > 0 && string(probe.Usage) != "null"
 	}
 	return false
+}
+
+// saveResponsesTurn stores a passthrough Responses turn under respID with the whole conversation:
+// a request that named previous_response_id carried only its new input, so the earlier turns come
+// from the store (otherwise a later failover to a stateless backend would lose them).
+func (s *Server) saveResponsesTurn(respID, providerID string, irReq *ir.Request, parts []ir.Part) {
+	prior, _ := s.RespStore.History(irReq.PreviousResponseID, irReq.Messages)
+	s.RespStore.SaveBy(respID, providerID, prior, parts)
 }

@@ -3,6 +3,9 @@
 # NEXUS_<PROVIDER_ID>_API_KEYS, <PROVIDER_ID>_API_KEYS (e.g. GEMINI_API_KEYS),
 # or <PROVIDER_ID>_API_KEY (comma/semicolon-separated).
 # Presets supply built-in endpoints, auth modes, key strategies, and codec quirks.
+# openai_responses: native Responses API passthrough. Only providers with
+# responses_stateful: true (the openai preset) are sent a raw previous_response_id;
+# the rest get the conversation expanded from the gateway's ResponseStore.
 
 providers:
   - id: openai
@@ -22,8 +25,9 @@ providers:
     free_only: true
     endpoints:
       openai_chat: https://openrouter.ai/api/v1
+      openai_responses: https://openrouter.ai/api/v1
       anthropic: https://openrouter.ai/api
-    native: [openai-chat, anthropic]
+    native: [openai-chat, openai-responses, anthropic]
     prefer: openai-chat
 
   - id: nvidia
@@ -41,8 +45,9 @@ providers:
     enabled: true
     endpoints:
       openai_chat: https://developer.amd.com.cn/radeon/api/v1
+      openai_responses: https://developer.amd.com.cn/radeon/api/v1
       anthropic: https://developer.amd.com.cn/radeon/api
-    native: [openai-chat, anthropic]
+    native: [openai-chat, openai-responses, anthropic]
     prefer: openai-chat
 
   # Declarative request transforms (any provider), e.g.:
@@ -57,8 +62,9 @@ providers:
     enabled: true
     endpoints:
       openai_chat: http://localhost:11434/v1
+      openai_responses: http://localhost:11434/v1
       anthropic: http://localhost:11434
-    native: [openai-chat, anthropic]
+    native: [openai-chat, openai-responses, anthropic]
     prefer: openai-chat
     no_key: true
 
@@ -68,8 +74,9 @@ providers:
     enabled: true
     endpoints:
       openai_chat: https://api.deepseek.com/v1
+      openai_responses: https://api.deepseek.com/v1
       anthropic: https://api.deepseek.com/anthropic
-    native: [openai-chat, anthropic]
+    native: [openai-chat, openai-responses, anthropic]
     prefer: openai-chat
 
   - id: gemini

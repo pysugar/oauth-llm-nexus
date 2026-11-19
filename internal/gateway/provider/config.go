@@ -39,9 +39,11 @@ type ProviderYAML struct {
 	Timeout        string            `yaml:"timeout,omitempty"`
 	FirstToken     string            `yaml:"first_token_timeout,omitempty"`
 	NoChat         *bool             `yaml:"no_chat,omitempty"`
-	Models         []string          `yaml:"models,omitempty"`
-	ModelAliases   map[string]string `yaml:"model_aliases,omitempty"`
-	Quirks         *QuirksYAML       `yaml:"quirks,omitempty"`
+	// ResponsesStateful marks a Responses backend that keeps turns server-side.
+	ResponsesStateful *bool             `yaml:"responses_stateful,omitempty"`
+	Models            []string          `yaml:"models,omitempty"`
+	ModelAliases      map[string]string `yaml:"model_aliases,omitempty"`
+	Quirks            *QuirksYAML       `yaml:"quirks,omitempty"`
 	// Unredacted skips privacy masking for this provider (default true for the ollama preset).
 	Unredacted *bool `yaml:"unredacted,omitempty"`
 	// ExtraBody adds top-level fields to every inference body sent to this provider; a field
@@ -288,6 +290,7 @@ func materializeProvider(cfg ProviderYAML) *Provider {
 		p.Timeout = preset.Timeout
 		p.Quirks = preset.Quirks
 		p.NoChat = preset.NoChat
+		p.ResponsesStateful = preset.ResponsesStateful
 		p.Unredacted = preset.Unredacted
 		p.StaticModels = append([]string(nil), preset.StaticModels...)
 		for k, v := range preset.StaticHeaders {
@@ -384,6 +387,9 @@ func materializeProvider(cfg ProviderYAML) *Provider {
 	}
 	if cfg.NoChat != nil {
 		p.NoChat = *cfg.NoChat
+	}
+	if cfg.ResponsesStateful != nil {
+		p.ResponsesStateful = *cfg.ResponsesStateful
 	}
 	if cfg.Quirks != nil {
 		applyQuirksYAML(&p.Quirks, cfg.Quirks)

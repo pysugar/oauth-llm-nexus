@@ -13,6 +13,7 @@ import (
 	"github.com/pysugar/oauth-llm-nexus/internal/gateway/codec"
 	"github.com/pysugar/oauth-llm-nexus/internal/gateway/codecs"
 	"github.com/pysugar/oauth-llm-nexus/internal/gateway/ir"
+	"github.com/pysugar/oauth-llm-nexus/internal/gateway/provider"
 	"github.com/pysugar/oauth-llm-nexus/internal/gateway/router"
 )
 
@@ -30,6 +31,7 @@ func (s *Server) executePlan(
 	var lastErr *ir.GatewayError
 	var lastProvider string
 
+candidates:
 	for _, cand := range plan.Candidates {
 		lastProvider = cand.Provider.ID
 
@@ -51,67 +53,90 @@ func (s *Server) executePlan(
 			continue
 		}
 
-		effectiveReq := irReq
-		if !passthrough && irReq.PreviousResponseID != "" {
-			prevMsgs, found := s.RespStore.Lookup(irReq.PreviousResponseID)
-			if !found {
-				lastErr = ir.NewError(400, "unsupported_previous_response_id",
-					"previous_response_id requires direct passthrough to an OpenAI Responses backend or a cached gateway session")
-				if plan.Forced {
-					return attemptOutcome{ProviderID: cand.Provider.ID}, lastErr
+		// Responses continuations: a raw previous_response_id only goes to a stateful provider that
+		// issued it; any other backend gets the conversation expanded from the ResponseStore.
+		if passthrough && targetProto == ir.ProtoOpenAIResp && irReq.PreviousResponseID != "" &&
+			!s.forwardsPreviousID(cand.Provider, irReq.PreviousResponseID) {
+			passthrough = false
+		}
+		// A model whose native Responses API refused a request shape before goes through Chat.
+		if passthrough && targetProto == ir.ProtoOpenAIResp && clientProto == ir.ProtoOpenAIResp &&
+			!cand.Provider.ResponsesStateful && s.responsesShapeRefused(cand) && cand.Provider.EndpointFor(ir.ProtoOpenAIChat) != "" {
+			targetProto, passthrough = ir.ProtoOpenAIChat, false
+		}
+
+		for {
+			effectiveReq := irReq
+			if !passthrough && irReq.PreviousResponseID != "" {
+				prevMsgs, found := s.RespStore.Lookup(irReq.PreviousResponseID)
+				if !found {
+					lastErr = ir.NewError(400, "unsupported_previous_response_id",
+						"previous_response_id requires direct passthrough to an OpenAI Responses backend or a cached gateway session")
+					if plan.Forced {
+						return attemptOutcome{ProviderID: cand.Provider.ID}, lastErr
+					}
+					continue candidates
 				}
+				combined := make([]ir.Message, 0, len(prevMsgs)+len(irReq.Messages))
+				combined = append(combined, prevMsgs...)
+				combined = append(combined, irReq.Messages...)
+				effectiveReq = irReq.CloneWithMessages(combined)
+			}
+
+			// Translated mode always calls upstream in streaming mode to avoid duplicate non-stream decoders.
+			// Passthrough providers with Quirks.StreamFirst also stream upstream when the client asks for
+			// stream=false, preventing header timeouts while still honoring passthrough semantics.
+			streamCollect := false
+			upstreamStream := effectiveReq.Stream
+			if !passthrough {
+				upstreamStream = true
+			} else if !effectiveReq.Stream && cand.Provider.Quirks.StreamFirst && targetProto != ir.ProtoOpenAIResp {
+				upstreamStream = true
+				streamCollect = true
+			}
+
+			payload, buildErr := buildUpstreamPayload(clientProto, targetProto, passthrough, streamCollect, effectiveReq, rawBody, cand)
+			if buildErr == nil {
+				payload, buildErr = applyRequestTransforms(targetProto, payload, cand)
+			}
+			if buildErr != nil {
+				lastErr = buildErr
+				if buildErr.HTTPStatus < 500 && buildErr.HTTPStatus != 404 && buildErr.HTTPStatus != 429 {
+					return attemptOutcome{ProviderID: cand.Provider.ID}, buildErr
+				}
+				continue candidates
+			}
+
+			endpointURL, urlErr := cand.Provider.EndpointURL(targetProto, cand.UpstreamModel, upstreamStream)
+			if urlErr != nil {
+				lastErr = ir.NewError(502, "invalid_endpoint", urlErr.Error())
+				continue candidates
+			}
+
+			outcome, committed, attemptErr := s.attemptWithKeys(
+				w, r, clientProto, clientCodec, targetProto, passthrough, streamCollect, effectiveReq, cand, endpointURL, payload, plan.Forced,
+			)
+			if attemptErr == nil {
+				return outcome, nil
+			}
+			lastErr = attemptErr
+			if committed || attemptErr.HTTPStatus == 499 {
+				// Bytes have already been flushed to the client, or client closed the connection.
+				return outcome, lastErrOrNil(committed, lastErr)
+			}
+			if passthrough && clientProto == ir.ProtoOpenAIResp && targetProto == ir.ProtoOpenAIResp &&
+				!cand.Provider.ResponsesStateful && isShapeRefusal(attemptErr) && cand.Provider.EndpointFor(ir.ProtoOpenAIChat) != "" {
+				// The backend's Responses API does not take this request's shape (an item type or
+				// field it lacks): ask the same backend through Chat, and remember it for the model.
+				s.markResponsesShapeRefused(cand)
+				targetProto, passthrough = ir.ProtoOpenAIChat, false
 				continue
 			}
-			combined := make([]ir.Message, 0, len(prevMsgs)+len(irReq.Messages))
-			combined = append(combined, prevMsgs...)
-			combined = append(combined, irReq.Messages...)
-			effectiveReq = irReq.CloneWithMessages(combined)
-		}
-
-		// Translated mode always calls upstream in streaming mode to avoid duplicate non-stream decoders.
-		// Passthrough providers with Quirks.StreamFirst also stream upstream when the client asks for
-		// stream=false, preventing header timeouts while still honoring passthrough semantics.
-		streamCollect := false
-		upstreamStream := effectiveReq.Stream
-		if !passthrough {
-			upstreamStream = true
-		} else if !effectiveReq.Stream && cand.Provider.Quirks.StreamFirst && targetProto != ir.ProtoOpenAIResp {
-			upstreamStream = true
-			streamCollect = true
-		}
-
-		payload, buildErr := buildUpstreamPayload(clientProto, targetProto, passthrough, streamCollect, effectiveReq, rawBody, cand)
-		if buildErr == nil {
-			payload, buildErr = applyRequestTransforms(targetProto, payload, cand)
-		}
-		if buildErr != nil {
-			lastErr = buildErr
-			if buildErr.HTTPStatus < 500 && buildErr.HTTPStatus != 404 && buildErr.HTTPStatus != 429 {
-				return attemptOutcome{ProviderID: cand.Provider.ID}, buildErr
+			action, _ := router.ClassifyGatewayError(attemptErr)
+			if !action.Failover || plan.Forced {
+				return outcome, lastErr
 			}
-			continue
-		}
-
-		endpointURL, urlErr := cand.Provider.EndpointURL(targetProto, cand.UpstreamModel, upstreamStream)
-		if urlErr != nil {
-			lastErr = ir.NewError(502, "invalid_endpoint", urlErr.Error())
-			continue
-		}
-
-		outcome, committed, attemptErr := s.attemptWithKeys(
-			w, r, clientProto, clientCodec, targetProto, passthrough, streamCollect, effectiveReq, cand, endpointURL, payload, plan.Forced,
-		)
-		if attemptErr == nil {
-			return outcome, nil
-		}
-		lastErr = attemptErr
-		if committed || attemptErr.HTTPStatus == 499 {
-			// Bytes have already been flushed to the client, or client closed the connection.
-			return outcome, lastErrOrNil(committed, lastErr)
-		}
-		action, _ := router.ClassifyGatewayError(attemptErr)
-		if !action.Failover || plan.Forced {
-			return outcome, lastErr
+			continue candidates
 		}
 	}
 
@@ -380,6 +405,14 @@ func buildUpstreamPayload(
 			if err != nil {
 				return nil, ir.NewError(400, "invalid_json", err.Error())
 			}
+			// Only OpenAI's and DeepSeek's own Responses APIs take image detail "original" (Codex
+			// sends it); other backends refuse it, so it goes as "high".
+			if !cand.Provider.ResponsesStateful && cand.Provider.Preset != "deepseek" && cand.Provider.ID != "deepseek" {
+				outBody, err = codec.DowngradeImageDetailJSON(outBody)
+				if err != nil {
+					return nil, ir.NewError(400, "invalid_json", err.Error())
+				}
+			}
 		}
 		return outBody, nil
 	}
@@ -439,4 +472,50 @@ func maskKeyLabel(key string) string {
 // stream-collected passthrough always stream; plain passthrough mirrors the client).
 func upstreamStreams(passthrough, streamCollect bool, irReq *ir.Request) bool {
 	return !passthrough || streamCollect || irReq.Stream
+}
+
+// forwardsPreviousID reports whether previous_response_id may be sent to p as is: only to a
+// provider that keeps Responses turns, and only for a response it issued (or one the gateway has
+// no record of, which only that provider could know).
+func (s *Server) forwardsPreviousID(p *provider.Provider, prevID string) bool {
+	if !p.ResponsesStateful {
+		return false
+	}
+	if _, known := s.RespStore.Lookup(prevID); !known {
+		return true
+	}
+	maker := s.RespStore.Maker(prevID)
+	return maker == "" || maker == p.ID
+}
+
+var shapeRefusalWords = []string{
+	"unsupported input item", "unsupported_input_item", "unknown item type", "unsupported item",
+	"unknown parameter", "unrecognized request argument", "not supported", "unsupported parameter",
+	"does not match any of the expected tags", "invalid input item", "unknown variant",
+}
+
+// isShapeRefusal reports a client-error refusal of the request's shape (not of its content).
+func isShapeRefusal(ge *ir.GatewayError) bool {
+	if ge == nil || (ge.HTTPStatus != 400 && ge.HTTPStatus != 404 && ge.HTTPStatus != 422) {
+		return false
+	}
+	hay := strings.ToLower(ge.Code + " " + ge.Message)
+	if strings.Contains(hay, "model") && (strings.Contains(hay, "not found") || strings.Contains(hay, "not available")) {
+		return false // a missing model is not a shape problem
+	}
+	for _, w := range shapeRefusalWords {
+		if strings.Contains(hay, w) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) responsesShapeRefused(cand router.Candidate) bool {
+	_, ok := s.respRefused.Load(cand.Provider.ID + "|" + cand.UpstreamModel)
+	return ok
+}
+
+func (s *Server) markResponsesShapeRefused(cand router.Candidate) {
+	s.respRefused.Store(cand.Provider.ID+"|"+cand.UpstreamModel, true)
 }

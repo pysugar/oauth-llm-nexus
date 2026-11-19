@@ -146,6 +146,8 @@ func setupTestServer(t *testing.T, behavior *mockUpstreamBehavior) (*Server, *go
 		Native: []ir.Protocol{ir.ProtoOpenAIChat, ir.ProtoOpenAIResp},
 		Prefer: ir.ProtoOpenAIChat,
 		Keys:   provider.NewKeyRing(false, "key-bad", "key-good"),
+		// Like the openai preset: keeps Responses turns, so previous_response_id passes through.
+		ResponsesStateful: true,
 	}
 	ds := &provider.Provider{
 		ID:          "deepseek",

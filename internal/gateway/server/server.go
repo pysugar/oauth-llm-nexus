@@ -48,7 +48,10 @@ type Server struct {
 
 	caps    capState
 	routing routingState
-	masking *maskState
+	// respRefused remembers provider|model pairs whose native Responses API refused a request
+	// shape, so later Responses requests for them go through Chat translation at once.
+	respRefused sync.Map
+	masking     *maskState
 
 	pricesMu sync.RWMutex
 	prices   map[string]modelmeta.Meta
