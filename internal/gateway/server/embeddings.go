@@ -82,6 +82,9 @@ func (s *Server) HandleOpenAIEmbeddings(w http.ResponseWriter, r *http.Request) 
 	if ge == nil {
 		ge = applyCallerPolicy(caller, plan)
 	}
+	if ge == nil {
+		ge = s.checkCallerCap(w, r)
+	}
 	if ge != nil {
 		s.recordError(r, "", req.Model, ge.HTTPStatus, time.Since(start), ge.Message)
 		s.logMonitorError(r, ir.ProtoOpenAIChat, req.Model, "", rawBody, ge.HTTPStatus, start, ge.Message)
@@ -359,6 +362,10 @@ func (s *Server) postJSONWithKeys(r *http.Request, cand router.Candidate, proto 
 
 	var lastErr *ir.GatewayError
 	for keyTry := 0; keyTry < maxKeys; keyTry++ {
+		var uncapped bool
+		if apiKey, uncapped = s.uncappedKey(p, apiKey, tried); !uncapped {
+			return nil, errKeysCapped(p.ID)
+		}
 		if apiKey != "" {
 			tried[apiKey] = true
 		}

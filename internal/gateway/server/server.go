@@ -45,6 +45,8 @@ type Server struct {
 	// Ledger persists per-call usage (nil until EnableUsageLedger).
 	Ledger *usage.Ledger
 
+	caps capState
+
 	pricesMu sync.RWMutex
 	prices   map[string]modelmeta.Meta
 
@@ -252,6 +254,9 @@ func (s *Server) handleInference(
 	}
 	if ge == nil {
 		ge = applyCallerPolicy(caller, plan)
+	}
+	if ge == nil {
+		ge = s.checkCallerCap(w, r)
 	}
 	if ge != nil {
 		s.recordError(r, "", irReq.Model, ge.HTTPStatus, time.Since(startTime), ge.Message)

@@ -49,6 +49,9 @@ func (s *Server) HandleRerank(w http.ResponseWriter, r *http.Request) {
 	if ge == nil {
 		ge = applyCallerPolicy(caller, plan)
 	}
+	if ge == nil {
+		ge = s.checkCallerCap(w, r)
+	}
 	if ge != nil {
 		s.recordError(r, "", req.Model, ge.HTTPStatus, time.Since(start), ge.Message)
 		s.writeError(w, errCodec, ge)

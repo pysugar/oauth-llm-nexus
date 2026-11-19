@@ -213,7 +213,8 @@ func IsStreamQualityError(ge *ir.GatewayError) bool {
 		return false
 	}
 	switch ge.Code {
-	case "upstream_incomplete", "empty_reply", "upstream_finish_error", "first_token_timeout", "upstream_idle_timeout":
+	case "upstream_incomplete", "empty_reply", "upstream_finish_error", "first_token_timeout", "upstream_idle_timeout",
+		"upstream_key_limit": // all keys over their spend caps: move on, the backend itself is fine
 		return true
 	}
 	return false

@@ -139,6 +139,10 @@ func (s *Server) attemptWithKeys(
 
 	var lastErr *ir.GatewayError
 	for keyTry := 0; keyTry < maxKeys; keyTry++ {
+		var uncapped bool
+		if apiKey, uncapped = s.uncappedKey(cand.Provider, apiKey, triedKeys); !uncapped {
+			return attemptOutcome{ProviderID: cand.Provider.ID}, false, errKeysCapped(cand.Provider.ID)
+		}
 		if apiKey != "" {
 			triedKeys[apiKey] = true
 		}
