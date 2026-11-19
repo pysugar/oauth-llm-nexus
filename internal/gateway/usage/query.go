@@ -84,7 +84,7 @@ func Summarize(db *gorm.DB, q Query, price Pricer) (Summary, error) {
 			COUNT(*) AS requests, SUM(CASE WHEN status >= 400 OR error != '' THEN 1 ELSE 0 END) AS errors,
 			SUM(input_tokens) AS input, SUM(output_tokens) AS output, SUM(cache_read) AS cache_read,
 			SUM(cache_write) AS cache_write, SUM(reasoning) AS reasoning, SUM(latency_ms) AS latency`).
-		Where("ts >= ? AND ts < ?", q.From.UnixMilli(), q.To.UnixMilli())
+		Where("ts >= ? AND ts <= ?", q.From.UnixMilli(), q.To.UnixMilli())
 	if q.Caller != "" {
 		tx = tx.Where("caller_name = ?", q.Caller)
 	}
