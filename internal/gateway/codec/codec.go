@@ -13,16 +13,17 @@ import (
 
 // Quirks controls provider-specific request/response adaptations during codec translation.
 type Quirks struct {
-	MaxCompletionTokens   bool // Use max_completion_tokens instead of max_tokens in OpenAI Chat
-	EchoReasoningContent  bool // Replay reasoning_content on assistant tool-calling turns (DeepSeek)
-	IncludeUsageInStream  bool // Attach stream_options.include_usage=true when building OpenAI Chat stream requests
-	OmitStreamOptions     bool // Suppress stream_options entirely if the backend rejects it
-	OmitParallelToolCalls bool // Suppress parallel_tool_calls if backend rejects it
-	OmitStrictTools       bool // Suppress strict=true inside tool schemas
-	OmitReasoningEffort   bool // Suppress reasoning_effort in body for backends that reject it
-	ThoughtTagParsing     bool // Parse <think>/<thought> tags out of OpenAI Chat text deltas
-	StreamFirst           bool // Use upstream SSE even for non-streaming requests to avoid header timeouts
-	EmbeddingInputType    bool // Forward OpenAI embeddings input_type (query/passage) instead of stripping it (NVIDIA)
+	MaxCompletionTokens   bool   // Use max_completion_tokens instead of max_tokens in OpenAI Chat
+	EchoReasoningContent  bool   // Replay reasoning_content on assistant tool-calling turns (DeepSeek)
+	IncludeUsageInStream  bool   // Attach stream_options.include_usage=true when building OpenAI Chat stream requests
+	OmitStreamOptions     bool   // Suppress stream_options entirely if the backend rejects it
+	OmitParallelToolCalls bool   // Suppress parallel_tool_calls if backend rejects it
+	OmitStrictTools       bool   // Suppress strict=true inside tool schemas
+	OmitReasoningEffort   bool   // Suppress reasoning_effort in body for backends that reject it
+	ThoughtTagParsing     bool   // Parse <think>/<thought> tags out of OpenAI Chat text deltas
+	StreamFirst           bool   // Use upstream SSE even for non-streaming requests to avoid header timeouts
+	EmbeddingInputType    bool   // Forward OpenAI embeddings input_type (query/passage) instead of stripping it (NVIDIA)
+	CacheTTL              string // Anthropic prompt-cache TTL for gateway-placed marks ("" = 5m default, "1h")
 }
 
 // StreamDecoder decodes upstream SSE frames into protocol-neutral IR events.

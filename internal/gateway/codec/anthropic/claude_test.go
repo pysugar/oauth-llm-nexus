@@ -91,3 +91,35 @@ func mustJSON(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)
 }
+
+func TestCacheMarksOnTranslatedClaudeRequests(t *testing.T) {
+	req := &ir.Request{
+		Model: "x",
+		Tools: []ir.Tool{{Name: "a"}, {Name: "b"}},
+		Messages: []ir.Message{
+			{Role: ir.RoleSystem, Parts: []ir.Part{{Kind: ir.KindText, Text: "sys"}}},
+			{Role: ir.RoleUser, Parts: []ir.Part{{Kind: ir.KindText, Text: "one"}}},
+			{Role: ir.RoleAssistant, Parts: []ir.Part{{Kind: ir.KindText, Text: "two"}}},
+			{Role: ir.RoleUser, Parts: []ir.Part{{Kind: ir.KindText, Text: "three"}}},
+		},
+	}
+	raw, _ := New().BuildRequest(req, "claude-sonnet-4-5", true, codec.Quirks{CacheTTL: "1h"})
+	s := string(raw)
+	if strings.Count(s, `"cache_control"`) != 3 || strings.Count(s, `"ttl":"1h"`) != 3 {
+		t.Fatalf("expected 3 one-hour marks, got %s", s)
+	}
+	var out map[string]any
+	_ = json.Unmarshal(raw, &out)
+	if sys, ok := out["system"].([]any); !ok || len(sys) != 1 {
+		t.Fatalf("system must become a text block, got %v", out["system"])
+	}
+	msgs := out["messages"].([]any)
+	first := msgs[0].(map[string]any)["content"].([]any)[0].(map[string]any)
+	if first["cache_control"] != nil {
+		t.Fatal("only the last user block is marked")
+	}
+	raw, _ = New().BuildRequest(req, "deepseek-reasoner", true, codec.Quirks{})
+	if strings.Contains(string(raw), "cache_control") {
+		t.Fatal("non-Claude Anthropic endpoints get no marks")
+	}
+}

@@ -36,8 +36,11 @@ type chatUsage struct {
 	PromptTokens         int `json:"prompt_tokens"`
 	CompletionTokens     int `json:"completion_tokens"`
 	PromptCacheHitTokens int `json:"prompt_cache_hit_tokens"`
+	CachedTokens         int `json:"cached_tokens"`               // Moonshot
+	CacheCreationTokens  int `json:"cache_creation_input_tokens"` // Anthropic-compatible relays
 	PromptTokensDetails  *struct {
-		CachedTokens int `json:"cached_tokens"`
+		CachedTokens     int `json:"cached_tokens"`
+		CacheWriteTokens int `json:"cache_write_tokens"` // OpenRouter
 	} `json:"prompt_tokens_details"`
 	CompletionTokensDetails *struct {
 		ReasoningTokens int `json:"reasoning_tokens"`
@@ -471,8 +474,17 @@ func parseChatUsage(u *chatUsage) ir.Usage {
 		OutputTokens:    u.CompletionTokens,
 		CacheReadTokens: u.PromptCacheHitTokens,
 	}
-	if u.PromptTokensDetails != nil && u.PromptTokensDetails.CachedTokens > out.CacheReadTokens {
-		out.CacheReadTokens = u.PromptTokensDetails.CachedTokens
+	if u.CachedTokens > out.CacheReadTokens {
+		out.CacheReadTokens = u.CachedTokens
+	}
+	out.CacheWriteTokens = u.CacheCreationTokens
+	if u.PromptTokensDetails != nil {
+		if u.PromptTokensDetails.CachedTokens > out.CacheReadTokens {
+			out.CacheReadTokens = u.PromptTokensDetails.CachedTokens
+		}
+		if u.PromptTokensDetails.CacheWriteTokens > out.CacheWriteTokens {
+			out.CacheWriteTokens = u.PromptTokensDetails.CacheWriteTokens
+		}
 	}
 	if u.CompletionTokensDetails != nil {
 		out.ReasoningTokens = u.CompletionTokensDetails.ReasoningTokens

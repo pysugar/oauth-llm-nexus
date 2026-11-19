@@ -45,16 +45,17 @@ type ProviderYAML struct {
 
 // QuirksYAML exposes codec quirk flags inside YAML config.
 type QuirksYAML struct {
-	MaxCompletionTokens   *bool `yaml:"max_completion_tokens,omitempty"`
-	EchoReasoningContent  *bool `yaml:"echo_reasoning_content,omitempty"`
-	IncludeUsageInStream  *bool `yaml:"include_usage_in_stream,omitempty"`
-	OmitStreamOptions     *bool `yaml:"omit_stream_options,omitempty"`
-	OmitParallelToolCalls *bool `yaml:"omit_parallel_tool_calls,omitempty"`
-	OmitStrictTools       *bool `yaml:"omit_strict_tools,omitempty"`
-	OmitReasoningEffort   *bool `yaml:"omit_reasoning_effort,omitempty"`
-	ThoughtTagParsing     *bool `yaml:"thought_tag_parsing,omitempty"`
-	StreamFirst           *bool `yaml:"stream_first,omitempty"`
-	EmbeddingInputType    *bool `yaml:"embedding_input_type,omitempty"`
+	MaxCompletionTokens   *bool   `yaml:"max_completion_tokens,omitempty"`
+	EchoReasoningContent  *bool   `yaml:"echo_reasoning_content,omitempty"`
+	IncludeUsageInStream  *bool   `yaml:"include_usage_in_stream,omitempty"`
+	OmitStreamOptions     *bool   `yaml:"omit_stream_options,omitempty"`
+	OmitParallelToolCalls *bool   `yaml:"omit_parallel_tool_calls,omitempty"`
+	OmitStrictTools       *bool   `yaml:"omit_strict_tools,omitempty"`
+	OmitReasoningEffort   *bool   `yaml:"omit_reasoning_effort,omitempty"`
+	ThoughtTagParsing     *bool   `yaml:"thought_tag_parsing,omitempty"`
+	StreamFirst           *bool   `yaml:"stream_first,omitempty"`
+	EmbeddingInputType    *bool   `yaml:"embedding_input_type,omitempty"`
+	CacheTTL              *string `yaml:"cache_ttl,omitempty"`
 }
 
 // Registry holds all loaded gateway providers in priority order plus the shared model catalog.
@@ -452,6 +453,9 @@ func materializeProvider(cfg ProviderYAML) *Provider {
 			p.Timeout = dur
 		}
 	}
+	if v := strings.TrimSpace(os.Getenv(envPrefix + "_CACHE_TTL")); v != "" {
+		p.Quirks.CacheTTL = v
+	}
 	if v := strings.TrimSpace(os.Getenv(envPrefix + "_FIRST_TOKEN_TIMEOUT")); v != "" {
 		if dur, err := time.ParseDuration(v); err == nil && dur > 0 {
 			p.FirstTokenTimeout = dur
@@ -570,5 +574,8 @@ func applyQuirksYAML(dst *codec.Quirks, src *QuirksYAML) {
 	}
 	if src.EmbeddingInputType != nil {
 		dst.EmbeddingInputType = *src.EmbeddingInputType
+	}
+	if src.CacheTTL != nil {
+		dst.CacheTTL = strings.TrimSpace(*src.CacheTTL)
 	}
 }

@@ -291,10 +291,12 @@ func encodeChatUsage(u ir.Usage) map[string]any {
 		"completion_tokens": u.OutputTokens,
 		"total_tokens":      u.TotalTokens(),
 	}
-	if u.CacheReadTokens > 0 {
-		out["prompt_tokens_details"] = map[string]any{
-			"cached_tokens": u.CacheReadTokens,
+	if u.CacheReadTokens > 0 || u.CacheWriteTokens > 0 {
+		details := map[string]any{"cached_tokens": u.CacheReadTokens}
+		if u.CacheWriteTokens > 0 {
+			details["cache_write_tokens"] = u.CacheWriteTokens
 		}
+		out["prompt_tokens_details"] = details
 	}
 	if u.ReasoningTokens > 0 {
 		out["completion_tokens_details"] = map[string]any{

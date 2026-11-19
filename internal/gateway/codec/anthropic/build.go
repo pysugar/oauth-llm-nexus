@@ -11,7 +11,7 @@ import (
 
 type anthOutRequest struct {
 	Model         string           `json:"model"`
-	System        string           `json:"system,omitempty"`
+	System        any              `json:"system,omitempty"`
 	OutputConfig  map[string]any   `json:"output_config,omitempty"`
 	Messages      []anthOutMessage `json:"messages"`
 	MaxTokens     int              `json:"max_tokens"`
@@ -32,13 +32,14 @@ type anthOutMessage struct {
 }
 
 type anthOutTool struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description,omitempty"`
-	InputSchema json.RawMessage `json:"input_schema"`
+	Name         string          `json:"name"`
+	Description  string          `json:"description,omitempty"`
+	InputSchema  json.RawMessage `json:"input_schema"`
+	CacheControl map[string]any  `json:"cache_control,omitempty"`
 }
 
 // BuildRequest encodes an IR Request into an Anthropic Messages API JSON payload.
-func (c *Codec) BuildRequest(req *ir.Request, upstreamModel string, stream bool, _ codec.Quirks) ([]byte, *ir.GatewayError) {
+func (c *Codec) BuildRequest(req *ir.Request, upstreamModel string, stream bool, q codec.Quirks) ([]byte, *ir.GatewayError) {
 	if req == nil {
 		return nil, ir.NewError(400, "empty_request", "request is required")
 	}
@@ -55,7 +56,7 @@ func (c *Codec) BuildRequest(req *ir.Request, upstreamModel string, stream bool,
 
 	out := anthOutRequest{
 		Model:         model,
-		System:        req.SystemText(),
+		System:        nonEmpty(req.SystemText()),
 		MaxTokens:     maxTokens,
 		Stream:        stream,
 		StopSequences: req.Stop,
@@ -171,6 +172,9 @@ func (c *Codec) BuildRequest(req *ir.Request, upstreamModel string, stream bool,
 			Content: []any{map[string]any{"type": "text", "text": " "}},
 		}}
 	}
+	if isClaudeModel(model) {
+		applyCacheMarks(&out, q.CacheTTL)
+	}
 
 	data, err := json.Marshal(out)
 	if err != nil {
@@ -198,8 +202,8 @@ func buildAnthropicMessages(msgs []ir.Message, out *anthOutRequest) []anthOutMes
 		switch msg.Role {
 		case ir.RoleSystem:
 			if txt := ir.TextOf(msg.Parts); txt != "" {
-				if out.System != "" {
-					out.System += "\n\n" + txt
+				if cur, _ := out.System.(string); cur != "" {
+					out.System = cur + "\n\n" + txt
 				} else {
 					out.System = txt
 				}
@@ -498,4 +502,41 @@ func pairToolBlocks(msgs []anthOutMessage) []anthOutMessage {
 		}
 	}
 	return out
+}
+
+func nonEmpty(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+// applyCacheMarks places Anthropic prompt-cache breakpoints on a translated request (clients of
+// other protocols cannot send cache_control): the last tool, the system prompt and the last block
+// of the last user message, so each turn reads the previous turn's prefix from the cache.
+// Anthropic allows 4 marks; this uses at most 3.
+func applyCacheMarks(out *anthOutRequest, ttl string) {
+	mark := map[string]any{"type": "ephemeral"}
+	if ttl == "1h" {
+		mark["ttl"] = "1h"
+	}
+	if n := len(out.Tools); n > 0 {
+		out.Tools[n-1].CacheControl = mark
+	}
+	if sys, ok := out.System.(string); ok && sys != "" {
+		out.System = []any{map[string]any{"type": "text", "text": sys, "cache_control": mark}}
+	}
+	for i := len(out.Messages) - 1; i >= 0; i-- {
+		if out.Messages[i].Role != "user" || len(out.Messages[i].Content) == 0 {
+			continue
+		}
+		last := out.Messages[i].Content[len(out.Messages[i].Content)-1]
+		if b, ok := last.(map[string]any); ok {
+			switch b["type"] {
+			case "text", "tool_result", "image", "document":
+				b["cache_control"] = mark
+			}
+		}
+		break
+	}
 }
