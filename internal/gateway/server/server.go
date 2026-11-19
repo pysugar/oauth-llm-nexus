@@ -334,6 +334,7 @@ func (s *Server) handleInference(
 				return
 			}
 		}
+		ge = explainEmptyReply(ge, irReq)
 		s.recordError(r, result.ProviderID, irReq.Model, ge.HTTPStatus, time.Since(startTime), ge.Message)
 		s.logMonitorError(r, clientProto, irReq.Model, result.ProviderID, rawBody, ge.HTTPStatus, startTime, ge.Message)
 		s.writeError(w, clientCodec, ge)

@@ -95,7 +95,19 @@ candidates:
 				streamCollect = true
 			}
 
+			// A small reply limit to a model that thinks by default gets room to think above it.
+			room, addRoom := s.thinkingRoom(cand, effectiveReq)
+			if addRoom && !passthrough {
+				roomy := *effectiveReq
+				roomy.MaxTokens = room
+				effectiveReq = &roomy
+			}
 			payload, buildErr := buildUpstreamPayload(clientProto, targetProto, passthrough, streamCollect, effectiveReq, rawBody, cand)
+			if buildErr == nil && addRoom && passthrough {
+				if patched, err := codec.SetReplyLimitJSON(targetProto, payload, room); err == nil {
+					payload = patched
+				}
+			}
 			if buildErr == nil {
 				payload, buildErr = applyRequestTransforms(targetProto, payload, cand)
 			}

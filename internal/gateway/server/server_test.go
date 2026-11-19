@@ -589,8 +589,9 @@ func TestOpenAIChatPassthroughAppliesMaxCompletionTokensQuirk(t *testing.T) {
 	req.Header.Set("X-Nexus-Provider", "openai")
 	rec := httptest.NewRecorder()
 	srv.HandleOpenAIChat(rec, req)
-	if rec.Code != http.StatusOK || seenHasMaxTokens || seenMaxCompletionTokens != 256 {
-		t.Fatalf("expected max_tokens rewritten to max_completion_tokens=256 on passthrough, code=%d hasMT=%v mct=%v body=%s",
+	// gpt-5* thinks by default, so the small limit also gets a high effort's thinking room.
+	if rec.Code != http.StatusOK || seenHasMaxTokens || seenMaxCompletionTokens != 256+16384 {
+		t.Fatalf("expected max_tokens rewritten to max_completion_tokens=256+room on passthrough, code=%d hasMT=%v mct=%v body=%s",
 			rec.Code, seenHasMaxTokens, seenMaxCompletionTokens, rec.Body.String())
 	}
 }

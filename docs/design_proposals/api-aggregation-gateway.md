@@ -68,6 +68,18 @@ passed through. Handling follows magpie's field-tested rules (`prev_response.go`
 - `NEXUS_<ID>_BASE_URL` moves the Responses endpoint together with the Chat one.
 - Live check: `scripts/smoke/responses_smoke.py` (single turn, continuation that must keep context, stream, tool loop).
 
+### Thinking Room for Small Reply Limits
+
+Models that think by default count their reasoning in the reply limit (Gemini 2.5/3/4, OpenAI o-series and
+`gpt-5*` except `-chat`, DeepSeek reasoner/R1; `server/thinkroom.go` `thinksByDefault`). With a small limit the
+whole budget goes to thinking and the reply is empty — Gemini 2.5 Flash with `maxOutputTokens: 10` streams
+nothing at all. When a client names a limit of at most 16384 and sets no reasoning controls of its own, the gateway
+sends the limit plus a high effort's thinking budget (16384), capped by the model's `max_output` from models.dev:
+through the IR on translated routes, and in the client's own field (`max_completion_tokens` / `max_tokens` /
+`max_output_tokens` / `generationConfig.maxOutputTokens`) on passthrough (`codec.SetReplyLimitJSON`). Claude is not
+listed: it thinks only when asked. A reply that still comes back empty or cut short names the limit and what to do.
+Follows magpie's `withThinkingRoom` / `replyRoom`.
+
 ### Translation Strategy (`ir.Request` + Stream-First)
 
 1. **Same-Protocol Passthrough**: When the chosen backend natively supports the incoming client protocol (`Provider.TargetFor(clientProto)` returns `passthrough == true`), only the model field (`RewriteModelJSON`) and auth/base headers are rewritten while preserving vendor extensions verbatim (including OpenAI Responses `previous_response_id`).

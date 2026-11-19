@@ -3,6 +3,7 @@ package codec
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/pysugar/oauth-llm-nexus/internal/gateway/ir"
 	"regexp"
 	"strings"
 )
@@ -282,5 +283,38 @@ func DowngradeImageDetailJSON(body []byte) ([]byte, error) {
 		return body, nil
 	}
 	obj["input"], _ = json.Marshal(items)
+	return json.Marshal(obj)
+}
+
+// SetReplyLimitJSON sets the reply limit of a passthrough body in proto's own field, replacing the
+// field the client used (OpenAI Chat: max_completion_tokens or max_tokens; Responses:
+// max_output_tokens; Gemini: generationConfig.maxOutputTokens; Anthropic: max_tokens).
+func SetReplyLimitJSON(proto ir.Protocol, body []byte, limit int) ([]byte, error) {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(body, &obj); err != nil {
+		return nil, err
+	}
+	n, _ := json.Marshal(limit)
+	switch proto {
+	case ir.ProtoOpenAIChat:
+		field := "max_tokens"
+		if _, ok := obj["max_completion_tokens"]; ok {
+			field = "max_completion_tokens"
+		}
+		obj[field] = n
+	case ir.ProtoOpenAIResp:
+		obj["max_output_tokens"] = n
+	case ir.ProtoAnthropic:
+		obj["max_tokens"] = n
+	case ir.ProtoGemini:
+		var gc map[string]json.RawMessage
+		if raw, ok := obj["generationConfig"]; !ok || json.Unmarshal(raw, &gc) != nil || gc == nil {
+			gc = map[string]json.RawMessage{}
+		}
+		gc["maxOutputTokens"] = n
+		obj["generationConfig"], _ = json.Marshal(gc)
+	default:
+		return body, nil
+	}
 	return json.Marshal(obj)
 }
