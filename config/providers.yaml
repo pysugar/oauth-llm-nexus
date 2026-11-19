@@ -45,6 +45,12 @@ providers:
     native: [openai-chat, anthropic]
     prefer: openai-chat
 
+  # Declarative request transforms (any provider), e.g.:
+  #   extra_body:                      # top-level fields; "!name" overrides the client's value
+  #     prompt_cache_key: pkm
+  #   system_prompts:                  # keyed by upstream model name or glob
+  #     "*": "Answer concisely."
+  # unredacted: true skips privacy masking (NEXUS_MASKING=on); the ollama preset defaults to it.
   - id: ollama
     preset: ollama
     display_name: Ollama Local

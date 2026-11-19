@@ -77,6 +77,27 @@ Additional per-provider env overrides:
 - `NEXUS_PROVIDERS_FILE` (override path to `providers.yaml`)
 - `NEXUS_CORS_ORIGINS` (opt-in CORS for inference APIs `/v1/*`, `/v1beta/*`, `/anthropic/*`; comma-separated origins, `scheme://host:*` port wildcards and `*` supported, e.g. `http://localhost:*,tauri://localhost`). Admin `/api/*` and `/ui` stay same-origin.
 
+### Request Transforms (`extra_body`, `system_prompts`)
+
+Declarative per-provider edits of the outgoing inference body (`internal/gateway/codec/transform.go`, applied in `executePlan` right after `buildUpstreamPayload`, so both passthrough and translated attempts get them, in the target protocol). Embeddings, rerank and the admin test ping are untouched.
+
+```yaml
+  - id: openrouter
+    preset: openrouter
+    extra_body:                       # top-level fields; a field the body already has is kept…
+      provider: {order: [anthropic, openai], allow_fallbacks: false}
+      prompt_cache_key: pkm
+      "!usage": {include: true}       # …unless written "!name": then it replaces the body's own
+    system_prompts:                   # keyed by upstream model; * matches any run (incl. "/")
+      "*": "Answer concisely."
+      "anthropic/claude-*": "Use British spelling."   # most specific pattern wins
+```
+
+- **extra_body** merges at the top level, byte-preserving: untouched fields keep their exact bytes (prompt-cache prefixes stay stable), new fields are appended in name order. Reserved names (`model`, `stream`, `messages`, `input`, `contents`, `system`, `systemInstruction`, `system_instruction`, `instructions`, `tools`) are dropped with a log line when read from YAML and rejected with `400` by the admin API.
+- **system_prompts** appends text to the system prompt: a new `system` message after the leading system/developer messages (OpenAI Chat), `system` string joined with a blank line or a new text block after existing (cache-marked) blocks (Anthropic), `instructions` joined (Responses), a new `systemInstruction.parts` entry (Gemini).
+- Both run **after** privacy masking, so operator-configured text is never masked.
+- **Runtime overrides**: `PATCH /api/gateway/providers/{id}` accepts `extra_body` (object; `null` or `{}` clears), `system_prompts` (map; `null` clears) and `unredacted` (bool). They are validated, applied live, persisted in `gateway_provider_overrides`, and replayed at startup over `providers.yaml` (`DELETE …/overrides` forgets them). `GET /api/gateway/providers` shows the effective values.
+
 ## 4. Routing Precedence, Failover, Key Rotation & Cooldown
 
 ### Resolution Order (`internal/gateway/router/router.go`)
@@ -169,3 +190,35 @@ The standalone Magpie-inspired console at **`GET /ui`** (`internal/ui/`) consume
 - **Client Keys** panel (Connect view, backed by `/api/gateway/keys`): issue keys with provider toggle pills and model aliases, one-time plaintext reveal with "use in snippets", inline allowlist editing, enable/disable, delete, and per-key request/error/token counters
 
 The legacy Dashboard at `/` (`internal/proxy/handlers/dashboard.go`) remains intact for existing OAuth account workflows.
+
+## 6. Privacy Masking (`internal/gateway/redact`)
+
+Rule-based masking of secrets and personal data before a request leaves the gateway, with the values put back in the reply on its way to the client. Off by default. The design follows magpie's field-tested `internal/redact` (rule set, byte-preserving JSON walk, split-placeholder streaming restore) without its plugin runtime or local-model finders.
+
+```mermaid
+flowchart LR
+    C["client body<br/>(any of 4 protocols)"] --> M["MaskJSON<br/>placeholders {{KIND_xxxxxxxx}}"]
+    M --> P["parse / route / passthrough /<br/>translate / legacy delegation"]
+    P --> U["upstream (sees placeholders)"]
+    U --> W["redact.Writer<br/>(under clientStream)"]
+    W --> C2["client (sees values)"]
+    P -. "provider unredacted: true" .-> U2["local upstream<br/>(sees the original body)"]
+```
+
+- **Switch**: persisted setting `enabled` (`PUT /api/gateway/masking`) wins; otherwise `NEXUS_MASKING=on`. When masking is on and cannot run (key unreadable, a panic in a rule) the request fails closed with `503 masking_unavailable` — nothing is sent.
+- **Kinds** (`redact.Kinds`): `PRIVATE_KEY` (PEM blocks), `API_KEY` (`sk-`/`sk-ant-`/`sk-proj-`…, `ghp_`/`gho_`/`github_pat_`/`glpat-`, `AIza…`, `xox?-`, `AKIA`/`ASIA`, `hf_`, `gsk_`, `xai-`, `sk_live_`), `TOKEN` (JWTs), `PASSWORD` (`scheme://user:pw@`), `SECRET` (secret-named assignments such as `DB_PASSWORD=…`, `"client_secret": "…"`, `*_KEY=`, and `Authorization:` / `Cookie:` values), `EMAIL` (real TLDs only: a curated generic list plus two-letter ccTLDs, excluding file-like endings and `example.*`/`.test`/`noreply`/`git@`), `BANK_CARD` (15–19 digits passing Luhn), `ID_CARD` (PRC resident ID with mod-11 check digit). Values that look like variables (`${X}`, `<token>`, `****`), code (`token: getToken()`), versions and timestamps are left alone.
+- **Placeholders**: `{{KIND_xxxxxxxx}}`, `xxxxxxxx` = lowercase base32 of `HMAC-SHA256(key, kind+"\x00"+value)[:8]`. The 32-byte key is created once as `nexus.redact.key` (mode `0600`) next to `nexus.db`; deterministic placeholders keep conversation prefixes byte-identical across turns and restarts, so prompt caches keep hitting. Placeholder→value pairs live in an in-memory LRU (100k entries).
+- **What is masked** (client-protocol JSON, before parse and passthrough): message text, system prompts, tool results, tool-call arguments (JSON-text `arguments` are walked as JSON so restored values stay correctly escaped; inside arguments a field named for a secret, e.g. `api_key`, is masked whole). **Skipped**: `id`, `*_id`/`*Id`, `name`, `type`, `role`, `model`, `url`, `media_type`, `signature`, `encrypted_content`, `data`, `data:` URIs; in tool and schema definitions (`tools`, `tool_choice`, `response_format`, Responses `text`, `generationConfig`, …) only `description` is masked. Blocks a vendor signed (thinking with a signature, Gemini thought-signature parts, encrypted reasoning) are left as written except that values masked before get their placeholders back, so the signed text matches again.
+- **Restore**: non-stream JSON is restored string by string at the end (`arguments`/`partial_json`/argument deltas JSON-escaped). SSE is restored event by event: an event whose text ends in a possible placeholder start (`{{EMA`, `EMAIL_b5pu`) is held per event context (`event`, `type`, `item_id`, `index`s) and JSON path until the next event of the same context completes it; keepalive comments and wait events (`ping`, Responses keepalive) pass a held event; `[DONE]` and stream end release it. Model-mangled placeholders (`{{ EMAIL_x }}`, missing braces, changed case) are restored too.
+- **Modes per kind**: `mask` (default), `warn` (sent as written, logged with kind and length only), `block` (`403 sensitive_content_blocked` naming the kinds, nothing sent), `off`. **Allowlist** `allow`: exact values (case-insensitive) or `@domain` for addresses at a domain and its subdomains.
+- **Per-provider `unredacted`** (YAML, PATCH, default `true` for the `ollama` preset): such a candidate gets the original body (parsed lazily); its Responses turns are kept out of the shared `ResponseStore` so a later turn cannot replay them unmasked to a cloud backend.
+- **Embeddings** are not masked unless `mask_embeddings: true` (a placeholder embeds differently from its text).
+- **Logs**: the request monitor stores the masked request body, so secrets are not written to `nexus.db`. Responses carry `X-Nexus-Masked: <n>` when values were masked.
+- **Not covered**: raw provider routes (`/{provider}/*`, `/genai/*`, Vertex publisher), Gemini non-generation actions (`countTokens`, `embedContent`), rerank, and the admin test ping.
+
+```bash
+curl -s -X PUT localhost:8080/api/gateway/masking -H 'Content-Type: application/json' \
+  -d '{"enabled":true,"modes":{"EMAIL":"warn","PRIVATE_KEY":"block"},"allow":["@mycorp.com"]}'
+curl -s localhost:8080/api/gateway/masking            # settings, source (setting|env|default), per-kind counters
+curl -s -X POST localhost:8080/api/gateway/masking/preview -d '{"text":"key sk-ant-…"}'   # dry run: masked text + hits
+```
