@@ -20,6 +20,7 @@
 -   **用量、成本与花费上限**：持久化用量账本，按 [models.dev](https://models.dev)（或自定义价格）计算成本；`/ui` 新增「用量与成本」视图；支持按客户端 key、上游 key 设置每日/每月美元或 token 上限。
 -   **可靠流式**：首个内容到达前先缓冲（期间发送协议正确的保活），空回复、截断、迟迟不出首字的上游都会自动故障转移；已提交后的截断以流内错误告知，不再伪造完成；可按 provider 设置 `first_token_timeout`。
 -   **更聪明的路由**：`failover`、`pinned`、`rotate`、`usage`（最少使用）、`fastest` 五种策略；会话粘住持有提示缓存的后端；带图请求优先视觉模型；翻译到 Claude 的请求自动打提示缓存标记。
+-   **隐私脱敏**（可选开启）：请求离开网关前把提示中的密钥与个人信息替换为占位符，回复中自动还原（含流式工具调用参数）；无法脱敏时直接拒绝发送。另支持声明式请求改写（`extra_body`、按模型追加系统提示）。
 -   **按应用发放的客户端 Key**：带 provider / 模型白名单的命名 key（例如让笔记 App 只能访问本地或可信后端）。
 -   **智能模型映射**：通过 Dashboard 配置客户端模型名到后端模型的路由。
 -   **账号池管理**：链接多个 Google 账号以池化配额，提升限制。
@@ -127,6 +128,7 @@ docker-compose up -d
 | `NEXUS_VERBOSE` | - | 设置为 `1` 或 `true` 启用详细的请求/响应日志 |
 | `NEXUS_ADMIN_HOSTS` | - | 允许访问 `/ui`、`/api` 的额外主机名（逗号分隔，支持 `*.后缀`）；回环名与 IP 地址始终允许（防 DNS rebinding） |
 | `NEXUS_CORS_ORIGINS` | - | 为 `/v1`、`/v1beta`、`/anthropic` 开启 CORS（如 `http://localhost:*,tauri://localhost`） |
+| `NEXUS_MASKING` | 关闭 | 设为 `on` 后在请求离开网关前脱敏密钥与个人信息（也可用 `PUT /api/gateway/masking`） |
 | `NEXUS_USAGE_RETENTION_DAYS` | `90` | 用量账本保留天数（`0` 为永久） |
 | `NEXUS_MODELS_DEV` / `NEXUS_MODELS_DEV_URL` | 开启 / `https://models.dev/api.json` | 模型价格与上下文窗口数据源（`off` 关闭联网） |
 | `NEXUS_<ID>_FIRST_TOKEN_TIMEOUT` | - | 上游迟迟不出首个 token 时故障转移（如 `20s`） |

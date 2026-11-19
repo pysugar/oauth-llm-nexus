@@ -20,6 +20,7 @@
 -   **Usage, Cost & Spend Caps**: A persisted usage ledger priced from [models.dev](https://models.dev) (or your own prices), a `/ui` *Usage & Cost* view, and daily/monthly USD or token caps per client key and per upstream key.
 -   **Reliable Streaming**: Replies are held until the first content (protocol-correct keepalives meanwhile), so empty, truncated or slow-starting replies fail over; truncation after commit is reported in-stream instead of as a fake finish. Per-provider `first_token_timeout`.
 -   **Smarter Routing**: `failover`, `pinned`, `rotate`, `usage` (least used) and `fastest` strategies; conversations stick to the backend holding their prompt cache; image requests prefer vision models; Anthropic prompt-cache marks on translated Claude requests.
+-   **Privacy Masking** (opt-in): secrets and personal data in prompts are swapped for placeholders before a request leaves the gateway and restored in the reply, streamed tool-call arguments included; fails closed. Plus declarative request transforms (`extra_body`, per-model system prompts).
 -   **Per-App Client Keys**: Named keys with provider/model allowlists (e.g. keep a notes app on local or trusted backends).
 -   **Smart Model Mapping**: Configurable routing from client model names to backend models via Dashboard.
 -   **Account Pool Management**: Link multiple Google accounts to pool quotas and increase limits.
@@ -136,6 +137,7 @@ The server will start on `127.0.0.1:8080` by default (or `:8086` in release mode
 | `NEXUS_GEMINI_PROXY_TIMEOUT` | `5m` | Upstream timeout for Gemini API transparent proxy |
 | `NEXUS_ADMIN_HOSTS` | - | Extra hostnames (comma-separated, `*.suffix` allowed) under which `/ui` and `/api` may be reached; loopback names and IP addresses are always allowed (DNS-rebinding guard) |
 | `NEXUS_CORS_ORIGINS` | - | Opt-in CORS for `/v1`, `/v1beta`, `/anthropic` (e.g. `http://localhost:*,tauri://localhost`) |
+| `NEXUS_MASKING` | off | `on` masks secrets/personal data before requests leave the gateway (also `PUT /api/gateway/masking`) |
 | `NEXUS_USAGE_RETENTION_DAYS` | `90` | Days of usage ledger to keep (`0` keeps everything) |
 | `NEXUS_MODELS_DEV` / `NEXUS_MODELS_DEV_URL` | on / `https://models.dev/api.json` | Model pricing & context catalogue (`off` disables network access) |
 | `NEXUS_<ID>_FIRST_TOKEN_TIMEOUT` | - | Fail over when a provider sends no first token in time (e.g. `20s`) |
