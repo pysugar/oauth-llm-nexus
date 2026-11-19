@@ -189,8 +189,13 @@ func main() {
 
 	// Optional admin auth middleware
 	adminPassword := os.Getenv("NEXUS_ADMIN_PASSWORD")
+	// Browser protection for the admin surface (DNS rebinding + CSRF); see middleware.AdminGuard.
+	adminGuard := middleware.AdminGuard(middleware.AdminGuardConfig{
+		BindHost:   os.Getenv("HOST"),
+		ExtraHosts: middleware.ParseAdminHosts(os.Getenv("NEXUS_ADMIN_HOSTS")),
+	})
 	optionalAdminAuth := func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		return adminGuard(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if adminPassword == "" {
 				next.ServeHTTP(w, r)
 				return
@@ -202,7 +207,7 @@ func main() {
 				return
 			}
 			next.ServeHTTP(w, r)
-		})
+		}))
 	}
 
 	// Dashboard (protected if NEXUS_ADMIN_PASSWORD is set)
