@@ -18,6 +18,7 @@ type Candidate struct {
 	UpstreamModel string
 	Source        string // "header", "prefix", "db", "catalog"
 	Priority      int
+	Cooling       bool // provider is in cooldown: tried only after every healthy candidate
 }
 
 // Plan holds ordered gateway candidates and optional legacy OAuth delegation info.
@@ -159,6 +160,7 @@ func (r *Router) Resolve(ctx context.Context, clientModel, headerProvider string
 			if cooling, rem, reason := r.Cooldown.IsCoolingDown(p.ID); cooling {
 				plan.SkippedReasons = append(plan.SkippedReasons,
 					fmt.Sprintf("%s: cooling down (%ds, %s)", p.ID, int(rem.Seconds()), reason))
+				cand.Cooling = true
 				coolingCandidates = append(coolingCandidates, cand)
 				continue
 			}
@@ -166,7 +168,8 @@ func (r *Router) Resolve(ctx context.Context, clientModel, headerProvider string
 		}
 
 		if len(availableCandidates) > 0 {
-			plan.Candidates = availableCandidates
+			// Cooling backends stay as a last resort behind every healthy one.
+			plan.Candidates = append(availableCandidates, coolingCandidates...)
 			return plan, nil
 		}
 		if len(coolingCandidates) > 0 {
@@ -232,13 +235,14 @@ func (r *Router) resolveCatalogCandidates(ctx context.Context, rawModel string, 
 		if coolingFlag, rem, reason := r.Cooldown.IsCoolingDown(p.ID); coolingFlag {
 			plan.SkippedReasons = append(plan.SkippedReasons,
 				fmt.Sprintf("%s: cooling down (%ds, %s)", p.ID, int(rem.Seconds()), reason))
+			cand.Cooling = true
 			exactCool = append(exactCool, cand)
 			continue
 		}
 		exactAvail = append(exactAvail, cand)
 	}
 	if len(exactAvail) > 0 {
-		plan.Candidates = exactAvail
+		plan.Candidates = append(exactAvail, exactCool...)
 		return plan, nil
 	}
 	if len(exactCool) > 0 {
@@ -260,13 +264,14 @@ func (r *Router) resolveCatalogCandidates(ctx context.Context, rawModel string, 
 		if coolingFlag, rem, reason := r.Cooldown.IsCoolingDown(p.ID); coolingFlag {
 			plan.SkippedReasons = append(plan.SkippedReasons,
 				fmt.Sprintf("%s: cooling down (%ds, %s)", p.ID, int(rem.Seconds()), reason))
+			cand.Cooling = true
 			canonCool = append(canonCool, cand)
 			continue
 		}
 		canonAvail = append(canonAvail, cand)
 	}
 	if len(canonAvail) > 0 {
-		plan.Candidates = canonAvail
+		plan.Candidates = append(canonAvail, canonCool...)
 		return plan, nil
 	}
 	if len(canonCool) > 0 {

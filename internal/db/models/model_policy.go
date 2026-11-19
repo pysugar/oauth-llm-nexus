@@ -5,7 +5,19 @@ import "time"
 const (
 	StrategyFailover = "failover"
 	StrategyPinned   = "pinned"
+	StrategyRotate   = "rotate"  // spread turns across healthy candidates
+	StrategyUsage    = "usage"   // least recently used (decayed tokens) first
+	StrategyFastest  = "fastest" // lowest latency first
 )
+
+// ValidStrategy reports whether s is a known routing strategy.
+func ValidStrategy(s string) bool {
+	switch s {
+	case StrategyFailover, StrategyPinned, StrategyRotate, StrategyUsage, StrategyFastest:
+		return true
+	}
+	return false
+}
 
 // ModelPolicy stores the per-model routing strategy ("failover" or "pinned").
 type ModelPolicy struct {

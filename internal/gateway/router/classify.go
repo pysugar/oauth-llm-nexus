@@ -170,6 +170,22 @@ func ClassifyGatewayError(ge *ir.GatewayError) (FailureAction, time.Duration) {
 		// try the next backend without blaming the key or cooling the provider.
 		return FailureAction{Failover: true}, 0
 	}
+	hay := strings.ToLower(ge.Code + " " + ge.Type + " " + ge.Message)
+	if ge.HTTPStatus < 500 && containsAny(hay, contextOverflowWords) {
+		// Every backend would refuse the same oversized prompt: tell the client so it compacts.
+		return FailureAction{}, 0
+	}
+	if ge.HTTPStatus == 400 || ge.HTTPStatus == 422 {
+		switch {
+		case containsAny(hay, creditWords):
+			return FailureAction{RotateKey: true, Failover: true, Cooldown: true}, 30 * time.Minute
+		case containsAny(hay, quotaWords):
+			return FailureAction{RotateKey: true, Failover: true, Cooldown: true}, time.Minute
+		case containsAny(hay, unservedWords):
+			// This backend does not serve the model (or not in this region): another one may.
+			return FailureAction{Failover: true}, 0
+		}
+	}
 	if ge.HTTPStatus == 400 && isUpstreamKeyRejectedError(ge) {
 		return FailureAction{
 			RotateKey: true,
@@ -216,6 +232,24 @@ func IsStreamQualityError(ge *ir.GatewayError) bool {
 	case "upstream_incomplete", "empty_reply", "upstream_finish_error", "first_token_timeout", "upstream_idle_timeout",
 		"upstream_key_limit": // all keys over their spend caps: move on, the backend itself is fine
 		return true
+	}
+	return false
+}
+
+var (
+	contextOverflowWords = []string{"context length", "context_length_exceeded", "maximum context", "context window",
+		"prompt is too long", "input is too long", "too many tokens", "reduce the length", "exceeds the maximum number of tokens"}
+	creditWords   = []string{"insufficient balance", "insufficient_quota", "insufficient credit", "credit balance", "out of credits", "payment required", "billing"}
+	quotaWords    = []string{"quota", "rate limit", "rate_limit", "too many requests", "resource_exhausted", "resource exhausted"}
+	unservedWords = []string{"model not found", "model_not_found", "does not exist", "not supported", "unsupported model", "no endpoints found",
+		"not available in your region", "unsupported_country", "location is not supported", "is not a valid model"}
+)
+
+func containsAny(hay string, needles []string) bool {
+	for _, n := range needles {
+		if strings.Contains(hay, n) {
+			return true
+		}
 	}
 	return false
 }

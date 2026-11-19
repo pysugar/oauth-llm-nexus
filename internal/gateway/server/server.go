@@ -45,7 +45,8 @@ type Server struct {
 	// Ledger persists per-call usage (nil until EnableUsageLedger).
 	Ledger *usage.Ledger
 
-	caps capState
+	caps    capState
+	routing routingState
 
 	pricesMu sync.RWMutex
 	prices   map[string]modelmeta.Meta
@@ -258,6 +259,9 @@ func (s *Server) handleInference(
 	if ge == nil {
 		ge = s.checkCallerCap(w, r)
 	}
+	if ge == nil {
+		s.orderPlan(plan, irReq, ci.Session)
+	}
 	if ge != nil {
 		s.recordError(r, "", irReq.Model, ge.HTTPStatus, time.Since(startTime), ge.Message)
 		s.logMonitorError(r, clientProto, irReq.Model, "", rawBody, ge.HTTPStatus, startTime, ge.Message)
@@ -309,6 +313,10 @@ func (s *Server) handleInference(
 		return
 	}
 
+	s.observeRouting(ci.Session, irReq.Model, result.ProviderID, ir.Usage{
+		InputTokens: result.InputTokens, OutputTokens: result.OutputTokens,
+		CacheReadTokens: result.CachedTokens, CacheWriteTokens: result.CacheWriteTokens,
+	})
 	s.recordSuccess(r, result.ProviderID, irReq.Model, result.Status, time.Since(startTime), ir.Usage{
 		InputTokens:      result.InputTokens,
 		OutputTokens:     result.OutputTokens,

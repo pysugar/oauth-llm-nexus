@@ -258,8 +258,8 @@ func loadModelRouteCache(db *gorm.DB) {
 }
 
 func normalizePolicyStrategy(s string) string {
-	if strings.EqualFold(strings.TrimSpace(s), models.StrategyPinned) {
-		return models.StrategyPinned
+	if norm := strings.ToLower(strings.TrimSpace(s)); models.ValidStrategy(norm) {
+		return norm
 	}
 	return models.StrategyFailover
 }
@@ -484,8 +484,8 @@ func SetModelPolicy(db *gorm.DB, clientModel, strategy string) error {
 		return fmt.Errorf("client_model is required")
 	}
 	norm := strings.ToLower(strings.TrimSpace(strategy))
-	if norm != models.StrategyFailover && norm != models.StrategyPinned {
-		return fmt.Errorf("invalid strategy %q (must be %q or %q)", strategy, models.StrategyFailover, models.StrategyPinned)
+	if !models.ValidStrategy(norm) {
+		return fmt.Errorf("invalid strategy %q (must be failover, pinned, rotate, usage or fastest)", strategy)
 	}
 
 	var existing models.ModelPolicy

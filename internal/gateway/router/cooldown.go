@@ -148,9 +148,13 @@ func computeBackoff(status int, failures int) time.Duration {
 	case status == 401 || status == 403:
 		base = 2 * time.Minute
 		max = 10 * time.Minute
+	case status == 402:
+		// Out of credit: 30m, 1h, 2h, 4h, 8h... until topped up (a success clears it).
+		base = 30 * time.Minute
+		max = 24 * time.Hour
 	case status == 429:
-		base = 30 * time.Second
-		max = 5 * time.Minute
+		base = time.Minute
+		max = 30 * time.Minute
 	default:
 		base = 15 * time.Second
 		max = 2 * time.Minute

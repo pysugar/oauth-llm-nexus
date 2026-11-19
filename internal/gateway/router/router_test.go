@@ -138,8 +138,10 @@ func TestRouterPrecedenceCooldownAndPolicy(t *testing.T) {
 	if ge != nil {
 		t.Fatalf("failover resolve failed: %v", ge)
 	}
-	if len(plan.Candidates) != 1 || plan.Candidates[0].Provider.ID != "amd" {
-		t.Fatalf("expected deepseek skipped due to cooldown, falling back to amd; got %+v", plan)
+	// Cooling backends move behind healthy ones and stay as a marked last resort.
+	if len(plan.Candidates) != 2 || plan.Candidates[0].Provider.ID != "amd" ||
+		plan.Candidates[1].Provider.ID != "deepseek" || !plan.Candidates[1].Cooling {
+		t.Fatalf("expected amd first and cooling deepseek last; got %+v", plan)
 	}
 
 	// Clearing cooldown + pinned policy restricts to single primary candidate.
