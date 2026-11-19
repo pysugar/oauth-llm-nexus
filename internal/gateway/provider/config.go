@@ -42,6 +42,13 @@ type ProviderYAML struct {
 	Models         []string          `yaml:"models,omitempty"`
 	ModelAliases   map[string]string `yaml:"model_aliases,omitempty"`
 	Quirks         *QuirksYAML       `yaml:"quirks,omitempty"`
+	// Unredacted skips privacy masking for this provider (default true for the ollama preset).
+	Unredacted *bool `yaml:"unredacted,omitempty"`
+	// ExtraBody adds top-level fields to every inference body sent to this provider; a field
+	// the body already has is kept unless written "!name".
+	ExtraBody map[string]any `yaml:"extra_body,omitempty"`
+	// SystemPrompts appends text to the system prompt, keyed by upstream model name or glob.
+	SystemPrompts map[string]string `yaml:"system_prompts,omitempty"`
 }
 
 // QuirksYAML exposes codec quirk flags inside YAML config.
@@ -281,6 +288,7 @@ func materializeProvider(cfg ProviderYAML) *Provider {
 		p.Timeout = preset.Timeout
 		p.Quirks = preset.Quirks
 		p.NoChat = preset.NoChat
+		p.Unredacted = preset.Unredacted
 		p.StaticModels = append([]string(nil), preset.StaticModels...)
 		for k, v := range preset.StaticHeaders {
 			p.StaticHeaders[k] = v
@@ -380,6 +388,11 @@ func materializeProvider(cfg ProviderYAML) *Provider {
 	if cfg.Quirks != nil {
 		applyQuirksYAML(&p.Quirks, cfg.Quirks)
 	}
+	if cfg.Unredacted != nil {
+		p.Unredacted = *cfg.Unredacted
+	}
+	p.ExtraBody = ExtraBodyFromYAML(id, cfg.ExtraBody)
+	p.SystemPrompts = cleanSystemPrompts(cfg.SystemPrompts)
 
 	// Collect API keys from YAML and environment overrides.
 	var keys []string

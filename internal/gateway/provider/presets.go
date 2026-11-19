@@ -24,6 +24,7 @@ type Preset struct {
 	Quirks         codec.Quirks
 	StaticModels   []string // models of a provider with no /models listing
 	NoChat         bool     // embeddings/rerank only: never a chat target
+	Unredacted     bool     // a local model: privacy masking is skipped
 }
 
 // DefaultPresetOrder lists the 7 built-in API aggregation presets in default fallback priority order.
@@ -118,11 +119,12 @@ var builtInPresets = map[string]Preset{
 			OpenAIChat: "http://localhost:11434/v1",
 			Anthropic:  "http://localhost:11434",
 		},
-		Native:   []ir.Protocol{ir.ProtoOpenAIChat, ir.ProtoAnthropic},
-		Prefer:   ir.ProtoOpenAIChat,
-		AuthMode: "none",
-		NoKey:    true,
-		Timeout:  300 * time.Second,
+		Native:     []ir.Protocol{ir.ProtoOpenAIChat, ir.ProtoAnthropic},
+		Prefer:     ir.ProtoOpenAIChat,
+		AuthMode:   "none",
+		NoKey:      true,
+		Unredacted: true,
+		Timeout:    300 * time.Second,
 		Quirks: codec.Quirks{
 			IncludeUsageInStream: true,
 			ThoughtTagParsing:    true,

@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -44,6 +45,13 @@ type Provider struct {
 	StaticModels      []string
 	NoChat            bool // embeddings/rerank only (e.g. Voyage): never a chat/messages target
 	ModelAliases      map[string]string
+	// Unredacted skips privacy masking for this provider (a local model on a trusted host).
+	Unredacted bool
+	// ExtraBody holds top-level JSON fields added to every outgoing inference body ("!name"
+	// forces a field over the body's own).
+	ExtraBody map[string]json.RawMessage
+	// SystemPrompts maps an upstream model name or glob to text appended to the system prompt.
+	SystemPrompts map[string]string
 }
 
 // IsEnabled safely reads whether the provider is currently enabled.
@@ -108,6 +116,10 @@ type RuntimePatchOptions struct {
 	KeyStrategy    *string
 	AddAPIKey      string
 	RemoveAPIKey   string
+	Unredacted     *bool
+	// ExtraBody / SystemPrompts replace the whole map when non-nil (an empty map clears it).
+	ExtraBody     *map[string]json.RawMessage
+	SystemPrompts *map[string]string
 }
 
 // ApplyRuntimePatch updates mutable runtime settings thread-safely and reports whether catalog needs refreshing.
@@ -129,6 +141,13 @@ func (p *Provider) ApplyRuntimePatchOptions(opts RuntimePatchOptions) (catalogAf
 	if opts.Prefer != nil && *opts.Prefer != "" && p.EndpointFor(*opts.Prefer) == "" {
 		return false, fmt.Errorf("provider %s has no endpoint for protocol %s", p.ID, *opts.Prefer)
 	}
+	var extra map[string]json.RawMessage
+	if opts.ExtraBody != nil {
+		if msg := codec.ExtraBodyProblem(*opts.ExtraBody); msg != "" {
+			return false, fmt.Errorf("%s", msg)
+		}
+		extra, _ = codec.CleanExtraBody(*opts.ExtraBody)
+	}
 
 	p.mu.Lock()
 	if opts.Enabled != nil {
@@ -144,6 +163,15 @@ func (p *Provider) ApplyRuntimePatchOptions(opts RuntimePatchOptions) (catalogAf
 	}
 	if opts.Prefer != nil && *opts.Prefer != "" {
 		p.Prefer = *opts.Prefer
+	}
+	if opts.Unredacted != nil {
+		p.Unredacted = *opts.Unredacted
+	}
+	if opts.ExtraBody != nil {
+		p.ExtraBody = extra
+	}
+	if opts.SystemPrompts != nil {
+		p.SystemPrompts = cleanSystemPrompts(*opts.SystemPrompts)
 	}
 	if opts.KeyStrategy != nil && strings.TrimSpace(*opts.KeyStrategy) != "" {
 		norm := NormalizeKeyStrategy(*opts.KeyStrategy)
