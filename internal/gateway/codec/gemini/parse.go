@@ -1,7 +1,6 @@
 package gemini
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"strings"
 
@@ -10,11 +9,11 @@ import (
 )
 
 type gemInRequest struct {
-	SystemInstruction *gemInContent     `json:"systemInstruction,omitempty"`
-	Contents          []gemInContent    `json:"contents"`
-	Tools             []gemInToolEntry  `json:"tools,omitempty"`
-	ToolConfig        *gemInToolConfig  `json:"toolConfig,omitempty"`
-	GenerationConfig  *gemInGenConfig   `json:"generationConfig,omitempty"`
+	SystemInstruction *gemInContent    `json:"systemInstruction,omitempty"`
+	Contents          []gemInContent   `json:"contents"`
+	Tools             []gemInToolEntry `json:"tools,omitempty"`
+	ToolConfig        *gemInToolConfig `json:"toolConfig,omitempty"`
+	GenerationConfig  *gemInGenConfig  `json:"generationConfig,omitempty"`
 }
 
 type gemInContent struct {
@@ -23,13 +22,13 @@ type gemInContent struct {
 }
 
 type gemInPart struct {
-	Text             string              `json:"text,omitempty"`
-	Thought          bool                `json:"thought,omitempty"`
-	ThoughtSignature string              `json:"thoughtSignature,omitempty"`
-	InlineData       *gemInBlob          `json:"inlineData,omitempty"`
-	FileData         *gemInFile          `json:"fileData,omitempty"`
-	FunctionCall     *gemInFuncCall      `json:"functionCall,omitempty"`
-	FunctionResponse *gemInFuncResponse  `json:"functionResponse,omitempty"`
+	Text             string             `json:"text,omitempty"`
+	Thought          bool               `json:"thought,omitempty"`
+	ThoughtSignature string             `json:"thoughtSignature,omitempty"`
+	InlineData       *gemInBlob         `json:"inlineData,omitempty"`
+	FileData         *gemInFile         `json:"fileData,omitempty"`
+	FunctionCall     *gemInFuncCall     `json:"functionCall,omitempty"`
+	FunctionResponse *gemInFuncResponse `json:"functionResponse,omitempty"`
 }
 
 type gemInBlob struct {
@@ -207,7 +206,7 @@ func (c *Codec) ParseRequest(modelHint string, body []byte) (*ir.Request, *ir.Ga
 				case p.FunctionCall != nil:
 					callID := p.FunctionCall.ID
 					if callID == "" {
-						callID = ir.NewID("call_")
+						callID = ir.StableCallID(len(req.Messages), len(parts), p.FunctionCall.Name, string(p.FunctionCall.Args))
 					}
 					if p.ThoughtSignature != "" {
 						ir.DefaultSigStore.SaveCall(callID, p.ThoughtSignature)
@@ -257,7 +256,7 @@ func (c *Codec) ParseRequest(modelHint string, body []byte) (*ir.Request, *ir.Ga
 					Result: resStr,
 				})
 			case p.InlineData != nil && p.InlineData.Data != "":
-				decoded, err := base64.StdEncoding.DecodeString(p.InlineData.Data)
+				decoded, err := codec.DecodeBase64Lenient(p.InlineData.Data)
 				if err == nil {
 					kind := ir.KindFile
 					if strings.HasPrefix(p.InlineData.MimeType, "image/") {

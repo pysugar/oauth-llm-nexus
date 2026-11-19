@@ -162,6 +162,12 @@ func (d *geminiDecoder) DecodeFrame(frame sse.Event) ([]ir.Event, bool, *ir.Gate
 		}
 
 		if cand.FinishReason != "" {
+			switch strings.ToUpper(cand.FinishReason) {
+			case "MALFORMED_FUNCTION_CALL", "UNEXPECTED_TOOL_CALL":
+				// The model produced a call Gemini could not parse: an error, not an empty stop.
+				return out, false, ir.NewError(502, "malformed_function_call",
+					"gemini finished with "+cand.FinishReason)
+			}
 			d.finishReason = mapGeminiFinishReason(cand.FinishReason)
 		}
 	}

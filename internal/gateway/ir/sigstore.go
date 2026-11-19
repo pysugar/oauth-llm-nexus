@@ -3,6 +3,7 @@ package ir
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"sync"
 )
 
@@ -102,4 +103,46 @@ func (s *SigStore) get(key string) string {
 func digestText(text string) string {
 	sum := sha256.Sum256([]byte(text))
 	return hex.EncodeToString(sum[:16])
+}
+
+// ThinkingBlock is one signed (or redacted) Claude thinking block of a reply.
+type ThinkingBlock struct {
+	Text      string `json:"t,omitempty"`
+	Signature string `json:"s,omitempty"`
+	Redacted  bool   `json:"r,omitempty"`
+}
+
+// SaveCallThinking remembers a Claude reply's thinking blocks under each tool call id it made, so
+// they can be put back in front of that tool turn when a client that drops or rewrites thinking
+// (OpenAI Chat, Gemini) sends the history again. Claude rejects tool loops whose assistant turn
+// lost its signed thinking.
+func (s *SigStore) SaveCallThinking(callIDs []string, blocks []ThinkingBlock) {
+	if s == nil || len(callIDs) == 0 || len(blocks) == 0 {
+		return
+	}
+	raw, err := json.Marshal(blocks)
+	if err != nil {
+		return
+	}
+	for _, id := range callIDs {
+		if id != "" {
+			s.set("think:"+canonicalCallID(id), string(raw))
+		}
+	}
+}
+
+// LookupCallThinking returns the thinking blocks saved for callID.
+func (s *SigStore) LookupCallThinking(callID string) []ThinkingBlock {
+	if s == nil || callID == "" {
+		return nil
+	}
+	raw := s.get("think:" + canonicalCallID(callID))
+	if raw == "" {
+		return nil
+	}
+	var blocks []ThinkingBlock
+	if json.Unmarshal([]byte(raw), &blocks) != nil {
+		return nil
+	}
+	return blocks
 }

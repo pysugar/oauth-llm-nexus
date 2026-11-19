@@ -21,7 +21,7 @@ func TestParseAndBuildAnthropicWithToolPairing(t *testing.T) {
 		"messages": [
 			{"role": "user", "content": "Run ping"},
 			{"role": "assistant", "content": [
-				{"type": "thinking", "thinking": "hm", "signature": "sig123"},
+				{"type": "thinking", "thinking": "hm", "signature": "EqQBCkYIBxgCKkBq3J9sFakeButRealisticClaudeSignatureBase64Payload=="},
 				{"type": "tool_use", "id": "call:weird/id", "name": "ping", "input": {"host": "127.0.0.1"}}
 			]},
 			{"role": "user", "content": [

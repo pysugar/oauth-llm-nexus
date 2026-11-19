@@ -3,6 +3,7 @@ package anthropic
 import (
 	"encoding/base64"
 	"encoding/json"
+	"strings"
 
 	"github.com/pysugar/oauth-llm-nexus/internal/gateway/codec"
 	"github.com/pysugar/oauth-llm-nexus/internal/gateway/ir"
@@ -11,6 +12,7 @@ import (
 type anthOutRequest struct {
 	Model         string           `json:"model"`
 	System        string           `json:"system,omitempty"`
+	OutputConfig  map[string]any   `json:"output_config,omitempty"`
 	Messages      []anthOutMessage `json:"messages"`
 	MaxTokens     int              `json:"max_tokens"`
 	Stream        bool             `json:"stream"`
@@ -63,7 +65,14 @@ func (c *Codec) BuildRequest(req *ir.Request, upstreamModel string, stream bool,
 	}
 
 	thinkingEnabled := false
-	if eff := ir.EffectiveEffort(req.Reasoning); eff != "" {
+	adaptive := isClaudeModel(model) && AdaptiveOnly(model)
+	if eff := ir.EffectiveEffort(req.Reasoning); eff != "" && adaptive {
+		// Claude 4.6+ thinks only adaptively: no budget, effort in output_config, and "disabled"
+		// is refused by the newest models, so "none" becomes the lowest effort.
+		thinkingEnabled = true
+		out.Thinking = map[string]any{"type": "adaptive", "display": "summarized"}
+		out.OutputConfig = map[string]any{"effort": adaptiveEffort(model, eff)}
+	} else if eff != "" {
 		if eff == "none" {
 			out.Thinking = map[string]any{"type": "disabled"}
 		} else {
@@ -147,8 +156,15 @@ func (c *Codec) BuildRequest(req *ir.Request, upstreamModel string, stream bool,
 	}
 
 	// Convert IR messages into Anthropic alternating user/assistant messages and repair tool pairing.
-	rawMsgs := buildAnthropicMessages(req.Messages, &out)
+	rawMsgs := buildAnthropicMessages(ir.NormalizeToolTurns(req.Messages), &out)
 	out.Messages = pairToolBlocks(rawMsgs)
+	if thinkingEnabled && lastToolTurnLacksThinking(out.Messages) {
+		// Claude requires the assistant turn of an ongoing tool loop to open with its signed
+		// thinking; when the client lost it (and it is not cached), ask without thinking instead
+		// of getting a 400.
+		out.Thinking = nil
+		out.OutputConfig = nil
+	}
 	if len(out.Messages) == 0 {
 		out.Messages = []anthOutMessage{{
 			Role:    "user",
@@ -165,6 +181,7 @@ func (c *Codec) BuildRequest(req *ir.Request, upstreamModel string, stream bool,
 
 func buildAnthropicMessages(msgs []ir.Message, out *anthOutRequest) []anthOutMessage {
 	var result []anthOutMessage
+	claude := isClaudeModel(out.Model)
 
 	appendMsg := func(role string, blocks []any) {
 		if len(blocks) == 0 {
@@ -230,6 +247,9 @@ func buildAnthropicMessages(msgs []ir.Message, out *anthOutRequest) []anthOutMes
 					if sig == "" {
 						sig = ir.DefaultSigStore.LookupThought(p.Text)
 					}
+					if claude && !ValidClaudeSignature(sig) {
+						sig = "" // another vendor's signature (Gemini, DeepSeek UUIDs) is a 400 on Claude
+					}
 					if sig != "" && p.Text != "" {
 						blocks = append(blocks, map[string]any{
 							"type":      "thinking",
@@ -238,7 +258,7 @@ func buildAnthropicMessages(msgs []ir.Message, out *anthOutRequest) []anthOutMes
 						})
 					}
 				case ir.KindText, ir.KindRefusal, "":
-					if p.Text != "" {
+					if strings.TrimSpace(p.Text) != "" {
 						blocks = append(blocks, map[string]any{
 							"type": "text",
 							"text": p.Text,
@@ -254,6 +274,9 @@ func buildAnthropicMessages(msgs []ir.Message, out *anthOutRequest) []anthOutMes
 					})
 				}
 			}
+			if claude {
+				blocks = restoreCallThinking(blocks, msg)
+			}
 			if len(blocks) > 0 {
 				appendMsg("assistant", blocks)
 			}
@@ -263,10 +286,61 @@ func buildAnthropicMessages(msgs []ir.Message, out *anthOutRequest) []anthOutMes
 	return result
 }
 
+// restoreCallThinking puts a Claude reply's saved thinking back in front of its tool turn when the
+// client dropped it (OpenAI Chat and Gemini clients cannot carry Claude signatures).
+func restoreCallThinking(blocks []any, msg ir.Message) []any {
+	for _, b := range blocks {
+		if m, ok := b.(map[string]any); ok && (m["type"] == "thinking" || m["type"] == "redacted_thinking") {
+			return blocks
+		}
+	}
+	for _, p := range msg.Parts {
+		if p.Kind != ir.KindToolCall {
+			continue
+		}
+		saved := ir.DefaultSigStore.LookupCallThinking(p.CallID)
+		if len(saved) == 0 {
+			continue
+		}
+		head := make([]any, 0, len(saved)+len(blocks))
+		for _, tb := range saved {
+			if tb.Redacted {
+				head = append(head, map[string]any{"type": "redacted_thinking", "data": tb.Signature})
+			} else {
+				head = append(head, map[string]any{"type": "thinking", "thinking": tb.Text, "signature": tb.Signature})
+			}
+		}
+		return append(head, blocks...)
+	}
+	return blocks
+}
+
+// lastToolTurnLacksThinking reports whether the final assistant turn calls tools without opening
+// with a thinking block.
+func lastToolTurnLacksThinking(msgs []anthOutMessage) bool {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role != "assistant" {
+			continue
+		}
+		hasTool := false
+		for _, b := range msgs[i].Content {
+			if m, ok := b.(map[string]any); ok && m["type"] == "tool_use" {
+				hasTool = true
+			}
+		}
+		if !hasTool || len(msgs[i].Content) == 0 {
+			return false
+		}
+		first, _ := msgs[i].Content[0].(map[string]any)
+		return first["type"] != "thinking" && first["type"] != "redacted_thinking"
+	}
+	return false
+}
+
 func partToAnthropicBlock(p ir.Part) (any, bool) {
 	switch p.Kind {
 	case ir.KindText, "":
-		if p.Text == "" {
+		if strings.TrimSpace(p.Text) == "" {
 			return nil, false
 		}
 		return map[string]any{"type": "text", "text": p.Text}, true
@@ -413,7 +487,8 @@ func pairToolBlocks(msgs []anthOutMessage) []anthOutMessage {
 				missing = append(missing, map[string]any{
 					"type":        "tool_result",
 					"tool_use_id": id,
-					"content":     `{"status":"completed"}`,
+					"content":     ir.MissingToolResult,
+					"is_error":    true,
 				})
 			}
 		}

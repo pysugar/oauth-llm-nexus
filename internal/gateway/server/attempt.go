@@ -306,6 +306,21 @@ func buildUpstreamPayload(
 			if err != nil {
 				return nil, ir.NewError(400, "invalid_json", err.Error())
 			}
+			if codec.IsDeepSeekTarget(cand.Provider.Preset, cand.Provider.ID, cand.UpstreamModel) {
+				outBody, err = codec.ApplyDeepSeekChatJSON(outBody, cand.Provider.Quirks.EchoReasoningContent)
+				if err != nil {
+					return nil, ir.NewError(400, "invalid_json", err.Error())
+				}
+			}
+		} else if clientProto == ir.ProtoAnthropic && targetProto == ir.ProtoAnthropic {
+			if cand.Provider.Preset == "deepseek" || cand.Provider.ID == "deepseek" {
+				outBody, err = codec.ApplyDeepSeekAnthropicJSON(outBody)
+			} else if strings.Contains(strings.ToLower(cand.UpstreamModel), "claude") {
+				outBody, err = codec.SanitizeClaudeThinkingJSON(outBody)
+			}
+			if err != nil {
+				return nil, ir.NewError(400, "invalid_json", err.Error())
+			}
 		} else if clientProto == ir.ProtoOpenAIResp && targetProto == ir.ProtoOpenAIResp {
 			outBody, err = codec.StripReasoningSamplingJSON(outBody, cand.UpstreamModel, cand.Provider.Quirks)
 			if err != nil {

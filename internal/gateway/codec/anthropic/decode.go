@@ -67,6 +67,8 @@ type anthDecoder struct {
 	sawStop      bool
 	usage        ir.Usage
 	blocks       map[int]*anthBlockState
+	thinking     []ir.ThinkingBlock // signed/redacted thinking of this reply, saved by tool call id
+	toolIDs      []string
 }
 
 // NewDecoder creates an Anthropic Messages SSE StreamDecoder.
@@ -207,6 +209,13 @@ func (d *anthDecoder) DecodeFrame(frame sse.Event) ([]ir.Event, bool, *ir.Gatewa
 		}
 		if st.kind == "thinking" && st.signature != "" && st.thoughtBuf.Len() > 0 {
 			ir.DefaultSigStore.SaveThought(st.thoughtBuf.String(), st.signature)
+			d.thinking = append(d.thinking, ir.ThinkingBlock{Text: st.thoughtBuf.String(), Signature: st.signature})
+		}
+		if st.kind == "redacted_thinking" && st.signature != "" {
+			d.thinking = append(d.thinking, ir.ThinkingBlock{Signature: st.signature, Redacted: true})
+		}
+		if (st.kind == "tool_use" || st.kind == "server_tool_use") && st.callID != "" {
+			d.toolIDs = append(d.toolIDs, st.callID)
 		}
 		if st.kind == "tool_use" || st.kind == "server_tool_use" {
 			out = append(out, ir.Event{
@@ -229,6 +238,7 @@ func (d *anthDecoder) DecodeFrame(frame sse.Event) ([]ir.Event, bool, *ir.Gatewa
 
 	case "message_stop":
 		d.sawStop = true
+		ir.DefaultSigStore.SaveCallThinking(d.toolIDs, d.thinking)
 		out = append(out, d.Flush()...)
 		return out, true, nil
 

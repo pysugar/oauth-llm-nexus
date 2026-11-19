@@ -249,7 +249,7 @@ func parseRespInput(raw json.RawMessage, req *ir.Request) *ir.GatewayError {
 				callID = it.ID
 			}
 			if callID == "" {
-				callID = ir.NewID("call_")
+				callID = ir.StableCallID(len(req.Messages), 0, it.Name, it.Arguments)
 			}
 			appendAssistantPart(ir.Part{
 				Kind:   ir.KindToolCall,

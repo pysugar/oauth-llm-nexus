@@ -192,7 +192,7 @@ func (c *Codec) ParseRequest(modelHint string, body []byte) (*ir.Request, *ir.Ga
 				case "tool_use", "server_tool_use":
 					callID := ir.UnsanitizeToolID(b.ID)
 					if callID == "" {
-						callID = ir.NewID("call_")
+						callID = ir.StableCallID(len(req.Messages), len(parts), b.Name, string(b.Input))
 					}
 					args := "{}"
 					if len(b.Input) > 0 && string(b.Input) != "null" {

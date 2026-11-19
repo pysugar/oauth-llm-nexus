@@ -47,6 +47,9 @@ func (s *Server) serveTranslated(
 	}
 
 	dec := targetCodec.NewDecoder(cand.Provider.Quirks)
+	if irReq.Source == ir.ProtoAnthropic && targetProto != ir.ProtoAnthropic {
+		dec = sigScrubDecoder{dec}
+	}
 	pump := startPump(sse.NewReader(br))
 	defer pump.Close()
 	cs, _ := w.(*clientStream)
@@ -206,4 +209,30 @@ func probeNonSSEJSONError(status int, contentType string, br *bufio.Reader) *ir.
 		return ge
 	}
 	return ir.NewError(502, "unexpected_json_response", "upstream returned non-SSE JSON payload without events")
+}
+
+// sigScrubDecoder drops non-Claude thinking signatures before they reach an Anthropic client:
+// a client like Claude Code would send them back to a real Claude later and get a 400. Gemini
+// signatures still round-trip through the SigStore by tool call id.
+type sigScrubDecoder struct{ codec.StreamDecoder }
+
+func (d sigScrubDecoder) DecodeFrame(f sse.Event) ([]ir.Event, bool, *ir.GatewayError) {
+	evs, done, ge := d.StreamDecoder.DecodeFrame(f)
+	return scrubSignatures(evs), done, ge
+}
+
+func (d sigScrubDecoder) Flush() []ir.Event { return scrubSignatures(d.StreamDecoder.Flush()) }
+
+func scrubSignatures(evs []ir.Event) []ir.Event {
+	out := evs[:0]
+	for _, ev := range evs {
+		if ev.Kind == ir.EventThoughtSignature {
+			continue
+		}
+		if ev.Kind == ir.EventThought {
+			ev.Signature = ""
+		}
+		out = append(out, ev)
+	}
+	return out
 }

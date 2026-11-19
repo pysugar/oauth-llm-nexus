@@ -225,7 +225,7 @@ func (c *Codec) ParseRequest(modelHint string, body []byte) (*ir.Request, *ir.Ga
 				}
 				callID := tc.ID
 				if callID == "" {
-					callID = ir.NewID("call_")
+					callID = ir.StableCallID(len(req.Messages), len(parts), tc.Function.Name, tc.Function.Arguments)
 				}
 				parts = append(parts, ir.Part{
 					Kind:   ir.KindToolCall,
@@ -237,7 +237,7 @@ func (c *Codec) ParseRequest(modelHint string, body []byte) (*ir.Request, *ir.Ga
 			if msg.FunctionCall != nil && msg.FunctionCall.Name != "" {
 				parts = append(parts, ir.Part{
 					Kind:   ir.KindToolCall,
-					CallID: ir.NewID("call_"),
+					CallID: ir.StableCallID(len(req.Messages), len(parts), msg.FunctionCall.Name, msg.FunctionCall.Arguments),
 					Name:   msg.FunctionCall.Name,
 					Args:   msg.FunctionCall.Arguments,
 				})

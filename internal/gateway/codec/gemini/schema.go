@@ -6,44 +6,44 @@ import (
 )
 
 var snakeToCamelTop = map[string]string{
-	"system_instruction":     "systemInstruction",
-	"generation_config":      "generationConfig",
-	"tool_config":            "toolConfig",
-	"safety_settings":        "safetySettings",
-	"cached_content":         "cachedContent",
-	"function_calling_config": "functionCallingConfig",
-	"allowed_function_names":  "allowedFunctionNames",
-	"function_declarations":   "functionDeclarations",
-	"parameters_json_schema":  "parametersJsonSchema",
-	"inline_data":             "inlineData",
-	"file_data":               "fileData",
-	"mime_type":               "mimeType",
-	"file_uri":                "fileUri",
-	"function_call":           "functionCall",
-	"function_response":       "functionResponse",
-	"thought_signature":       "thoughtSignature",
-	"max_output_tokens":       "maxOutputTokens",
-	"stop_sequences":          "stopSequences",
-	"top_p":                   "topP",
-	"top_k":                   "topK",
-	"presence_penalty":        "presencePenalty",
-	"frequency_penalty":       "frequencyPenalty",
-	"response_mime_type":      "responseMimeType",
-	"response_schema":         "responseSchema",
-	"response_json_schema":    "responseJsonSchema",
-	"thinking_config":         "thinkingConfig",
-	"thinking_budget":         "thinkingBudget",
-	"thinking_level":          "thinkingLevel",
-	"include_thoughts":        "includeThoughts",
-	"usage_metadata":          "usageMetadata",
-	"finish_reason":           "finishReason",
-	"response_id":             "responseId",
-	"model_version":           "modelVersion",
-	"prompt_token_count":      "promptTokenCount",
-	"candidates_token_count":  "candidatesTokenCount",
-	"thoughts_token_count":    "thoughtsTokenCount",
+	"system_instruction":         "systemInstruction",
+	"generation_config":          "generationConfig",
+	"tool_config":                "toolConfig",
+	"safety_settings":            "safetySettings",
+	"cached_content":             "cachedContent",
+	"function_calling_config":    "functionCallingConfig",
+	"allowed_function_names":     "allowedFunctionNames",
+	"function_declarations":      "functionDeclarations",
+	"parameters_json_schema":     "parametersJsonSchema",
+	"inline_data":                "inlineData",
+	"file_data":                  "fileData",
+	"mime_type":                  "mimeType",
+	"file_uri":                   "fileUri",
+	"function_call":              "functionCall",
+	"function_response":          "functionResponse",
+	"thought_signature":          "thoughtSignature",
+	"max_output_tokens":          "maxOutputTokens",
+	"stop_sequences":             "stopSequences",
+	"top_p":                      "topP",
+	"top_k":                      "topK",
+	"presence_penalty":           "presencePenalty",
+	"frequency_penalty":          "frequencyPenalty",
+	"response_mime_type":         "responseMimeType",
+	"response_schema":            "responseSchema",
+	"response_json_schema":       "responseJsonSchema",
+	"thinking_config":            "thinkingConfig",
+	"thinking_budget":            "thinkingBudget",
+	"thinking_level":             "thinkingLevel",
+	"include_thoughts":           "includeThoughts",
+	"usage_metadata":             "usageMetadata",
+	"finish_reason":              "finishReason",
+	"response_id":                "responseId",
+	"model_version":              "modelVersion",
+	"prompt_token_count":         "promptTokenCount",
+	"candidates_token_count":     "candidatesTokenCount",
+	"thoughts_token_count":       "thoughtsTokenCount",
 	"cached_content_token_count": "cachedContentTokenCount",
-	"total_token_count":       "totalTokenCount",
+	"total_token_count":          "totalTokenCount",
 }
 
 // NormalizeKeysCamel recursively converts known Gemini snake_case payload keys to camelCase
@@ -241,10 +241,123 @@ func cleanSchemaNode(node any, defs map[string]any, depth int) any {
 				out["properties"] = cleanProps
 			}
 		case "items":
-			out["items"] = cleanSchemaNode(v, defs, depth+1)
+			if im, ok := v.(map[string]any); ok {
+				out["items"] = cleanSchemaNode(im, defs, depth+1)
+			} else {
+				// items: true / tuple-style items have no Gemini form.
+				out["items"] = map[string]any{"type": "string"}
+			}
+		case "allOf":
+			if arr, ok := v.([]any); ok {
+				for _, item := range arr {
+					mm, _ := cleanSchemaNode(item, defs, depth+1).(map[string]any)
+					mergeSchemaInto(out, mm)
+				}
+			}
+		case "enum":
+			if arr, ok := v.([]any); ok {
+				vals := make([]any, 0, len(arr))
+				for _, e := range arr {
+					switch ev := e.(type) {
+					case string:
+						vals = append(vals, ev)
+					case nil:
+					default:
+						b, _ := json.Marshal(ev)
+						vals = append(vals, string(b))
+					}
+				}
+				if len(vals) > 0 {
+					out["enum"] = vals
+				}
+			}
 		default:
-			out[k] = v
+			if geminiSchemaKeys[k] {
+				out[k] = v
+			}
 		}
 	}
+	finishSchemaNode(out)
 	return out
+}
+
+// geminiSchemaKeys are the OpenAPI-subset keywords Gemini's function schemas accept; everything
+// else (not, if/then, x-*, patternProperties, ...) is a 400 there.
+var geminiSchemaKeys = map[string]bool{
+	"format": true, "title": true, "description": true, "nullable": true, "required": true,
+	"minItems": true, "maxItems": true, "minimum": true, "maximum": true, "minLength": true,
+	"maxLength": true, "pattern": true, "default": true, "propertyOrdering": true,
+	"minProperties": true, "maxProperties": true, "example": true,
+}
+
+func mergeSchemaInto(dst, src map[string]any) {
+	for k, v := range src {
+		switch k {
+		case "properties":
+			props, _ := dst["properties"].(map[string]any)
+			if props == nil {
+				props = map[string]any{}
+			}
+			if sp, ok := v.(map[string]any); ok {
+				for pk, pv := range sp {
+					props[pk] = pv
+				}
+			}
+			dst["properties"] = props
+		case "required":
+			have, _ := dst["required"].([]any)
+			if sr, ok := v.([]any); ok {
+				dst["required"] = append(have, sr...)
+			}
+		default:
+			if _, exists := dst[k]; !exists {
+				dst[k] = v
+			}
+		}
+	}
+}
+
+// finishSchemaNode infers a missing type, gives arrays items, keeps formats Gemini accepts for the
+// type, stringifies enum types, and drops required names that have no property.
+func finishSchemaNode(out map[string]any) {
+	if _, ok := out["type"]; !ok {
+		switch {
+		case out["properties"] != nil:
+			out["type"] = "object"
+		case out["items"] != nil:
+			out["type"] = "array"
+		case out["anyOf"] == nil:
+			out["type"] = "string"
+		}
+	}
+	if out["type"] == "array" && out["items"] == nil {
+		out["items"] = map[string]any{"type": "string"}
+	}
+	if out["enum"] != nil {
+		out["type"] = "string"
+	}
+	if f, ok := out["format"].(string); ok {
+		allowed := map[string]bool{"enum": true, "date-time": true, "int32": true, "int64": true, "float": true, "double": true}
+		if !allowed[f] {
+			delete(out, "format")
+		}
+	}
+	if req, ok := out["required"].([]any); ok {
+		props, _ := out["properties"].(map[string]any)
+		seen := map[string]bool{}
+		kept := make([]any, 0, len(req))
+		for _, r := range req {
+			name, _ := r.(string)
+			if name == "" || seen[name] || props == nil || props[name] == nil {
+				continue
+			}
+			seen[name] = true
+			kept = append(kept, name)
+		}
+		if len(kept) > 0 {
+			out["required"] = kept
+		} else {
+			delete(out, "required")
+		}
+	}
 }

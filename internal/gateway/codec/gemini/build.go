@@ -191,6 +191,7 @@ func buildThinkingConfig(model string, r ir.Reasoning) map[string]any {
 }
 
 func buildGeminiContents(msgs []ir.Message) []map[string]any {
+	msgs = ir.NormalizeToolTurns(msgs)
 	callNames := make(map[string]string)
 	for _, msg := range msgs {
 		if msg.Role == ir.RoleAssistant {
@@ -203,9 +204,10 @@ func buildGeminiContents(msgs []ir.Message) []map[string]any {
 	}
 
 	type gemTurn struct {
-		role  string
-		parts []map[string]any
-		calls []ir.Part
+		role   string
+		parts  []map[string]any
+		calls  []ir.Part
+		sealed bool // never merge later parts into this turn
 	}
 	var turns []gemTurn
 
@@ -213,7 +215,7 @@ func buildGeminiContents(msgs []ir.Message) []map[string]any {
 		if len(parts) == 0 {
 			return
 		}
-		if len(turns) > 0 && turns[len(turns)-1].role == role {
+		if len(turns) > 0 && turns[len(turns)-1].role == role && !turns[len(turns)-1].sealed {
 			turns[len(turns)-1].parts = append(turns[len(turns)-1].parts, parts...)
 			turns[len(turns)-1].calls = append(turns[len(turns)-1].calls, calls...)
 			return
@@ -233,7 +235,7 @@ func buildGeminiContents(msgs []ir.Message) []map[string]any {
 			appendTurn("user", parts, nil)
 
 		case ir.RoleTool:
-			var parts []map[string]any
+			var parts, images []map[string]any
 			for _, p := range msg.Parts {
 				if p.Kind != ir.KindToolResult {
 					continue
@@ -246,6 +248,16 @@ func buildGeminiContents(msgs []ir.Message) []map[string]any {
 					name = "function"
 				}
 				respObj := buildFunctionResponseObj(p.Result)
+				if p.IsError {
+					respObj = map[string]any{"error": p.Result}
+				}
+				for _, rp := range p.ResultParts {
+					if rp.Kind == ir.KindImage || rp.Kind == ir.KindFile {
+						if gp, ok := partToGeminiUserPart(rp); ok {
+							images = append(images, gp)
+						}
+					}
+				}
 				fr := map[string]any{
 					"name":     name,
 					"response": respObj,
@@ -256,6 +268,12 @@ func buildGeminiContents(msgs []ir.Message) []map[string]any {
 				parts = append(parts, map[string]any{"functionResponse": fr})
 			}
 			appendTurn("user", parts, nil)
+			if len(images) > 0 {
+				// A functionResponse turn must hold exactly the responses; images a tool returned go
+				// to the model in a user turn of their own right after it.
+				turns[len(turns)-1].sealed = true
+				turns = append(turns, gemTurn{role: "user", parts: append([]map[string]any{{"text": "Images returned by the tool call(s) above:"}}, images...), sealed: true})
+			}
 
 		case ir.RoleAssistant:
 			var parts []map[string]any
@@ -328,7 +346,7 @@ func buildGeminiContents(msgs []ir.Message) []map[string]any {
 				for _, c := range t.calls {
 					fr := map[string]any{
 						"name":     c.Name,
-						"response": map[string]any{"result": "completed"},
+						"response": map[string]any{"error": ir.MissingToolResult},
 					}
 					if c.CallID != "" {
 						fr["id"] = c.CallID

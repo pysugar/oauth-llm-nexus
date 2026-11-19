@@ -55,9 +55,9 @@ func (e *anthEncoder) ensureStarted(w *sse.Writer, u ir.Usage) error {
 		"stop_reason":   nil,
 		"stop_sequence": nil,
 		"usage": map[string]any{
-			"input_tokens":               u.UncachedInputTokens(),
-			"output_tokens":              0,
-			"cache_read_input_tokens":    u.CacheReadTokens,
+			"input_tokens":                u.UncachedInputTokens(),
+			"output_tokens":               0,
+			"cache_read_input_tokens":     u.CacheReadTokens,
 			"cache_creation_input_tokens": u.CacheWriteTokens,
 		},
 	}
@@ -408,6 +408,12 @@ func encodeAnthError(err *ir.GatewayError) []byte {
 }
 
 func toAnthStopReason(reason string, hasToolUse bool) string {
+	if hasToolUse && (reason == ir.FinishStop || reason == "") {
+		return "tool_use"
+	}
+	if !hasToolUse && reason == ir.FinishToolCalls {
+		return "end_turn"
+	}
 	switch reason {
 	case ir.FinishToolCalls:
 		return "tool_use"

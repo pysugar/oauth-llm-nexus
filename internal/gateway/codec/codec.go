@@ -215,12 +215,9 @@ func DecodeDataURL(rawURL string) (mime string, data []byte, ok bool) {
 	if mime == "" {
 		mime = "application/octet-stream"
 	}
-	decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(payload))
+	decoded, err := DecodeBase64Lenient(payload)
 	if err != nil {
-		decoded, err = base64.RawStdEncoding.DecodeString(strings.TrimSpace(payload))
-		if err != nil {
-			return "", nil, false
-		}
+		return "", nil, false
 	}
 	return mime, decoded, true
 }
@@ -348,4 +345,17 @@ func formatAnyCode(v any) string {
 	default:
 		return ""
 	}
+}
+
+// DecodeBase64Lenient accepts standard and URL-safe base64, padded or not.
+func DecodeBase64Lenient(s string) ([]byte, error) {
+	s = strings.TrimSpace(s)
+	var err error
+	for _, enc := range []*base64.Encoding{base64.StdEncoding, base64.RawStdEncoding, base64.URLEncoding, base64.RawURLEncoding} {
+		var b []byte
+		if b, err = enc.DecodeString(s); err == nil {
+			return b, nil
+		}
+	}
+	return nil, err
 }

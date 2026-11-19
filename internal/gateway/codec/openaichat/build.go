@@ -2,6 +2,7 @@ package openaichat
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/pysugar/oauth-llm-nexus/internal/gateway/codec"
 	"github.com/pysugar/oauth-llm-nexus/internal/gateway/ir"
@@ -189,7 +190,7 @@ func (c *Codec) BuildRequest(req *ir.Request, upstreamModel string, stream bool,
 		})
 	}
 
-	msgs := pairToolMessages(req.Messages)
+	msgs := ir.NormalizeToolTurns(req.Messages)
 	for _, msg := range msgs {
 		switch msg.Role {
 		case ir.RoleSystem:
@@ -214,42 +215,55 @@ func (c *Codec) BuildRequest(req *ir.Request, upstreamModel string, stream bool,
 			out.Messages = append(out.Messages, m)
 
 		case ir.RoleTool:
+			// OpenAI Chat accepts only text in role:tool messages, so images a tool returned go to
+			// the model in a user message right after the tool messages.
+			var images []map[string]any
 			for _, p := range msg.Parts {
 				if p.Kind != ir.KindToolResult {
 					continue
 				}
-				content := any(p.Result)
-				if len(p.ResultParts) > 0 {
-					var arr []map[string]any
-					if p.Result != "" {
-						arr = append(arr, map[string]any{"type": "text", "text": p.Result})
-					}
-					for _, rp := range p.ResultParts {
-						if rp.Kind == ir.KindImage {
-							u := rp.URL
-							if u == "" && len(rp.Data) > 0 {
-								u = codec.EncodeDataURL(rp.Mime, rp.Data)
-							}
-							if u != "" {
-								arr = append(arr, map[string]any{
-									"type":      "image_url",
-									"image_url": map[string]any{"url": u},
-								})
-							}
-						} else if rp.Text != "" {
-							arr = append(arr, map[string]any{"type": "text", "text": rp.Text})
+				text := p.Result
+				var extra []string
+				imgCount := 0
+				for _, rp := range p.ResultParts {
+					if rp.Kind == ir.KindImage {
+						u := rp.URL
+						if u == "" && len(rp.Data) > 0 {
+							u = codec.EncodeDataURL(rp.Mime, rp.Data)
 						}
+						if u != "" {
+							images = append(images, map[string]any{"type": "image_url", "image_url": map[string]any{"url": u}})
+							imgCount++
+						}
+					} else if rp.Text != "" {
+						extra = append(extra, rp.Text)
 					}
-					if len(arr) > 0 {
-						content = arr
+				}
+				for _, e := range extra {
+					if text != "" {
+						text += "\n"
 					}
+					text += e
+				}
+				if imgCount > 0 {
+					if text != "" {
+						text += "\n"
+					}
+					text += "(image output attached in the next user message)"
+				}
+				if p.IsError && text != "" && !strings.HasPrefix(text, "[") {
+					text = "[error] " + text
 				}
 				out.Messages = append(out.Messages, outChatMessage{
 					Role:       "tool",
 					Name:       p.Name,
 					ToolCallID: p.CallID,
-					Content:    content,
+					Content:    text,
 				})
+			}
+			if len(images) > 0 {
+				content := append([]map[string]any{{"type": "text", "text": "Images returned by the tool call(s) above:"}}, images...)
+				out.Messages = append(out.Messages, outChatMessage{Role: "user", Content: content})
 			}
 		}
 	}
@@ -373,70 +387,6 @@ func buildAssistantMessage(msg ir.Message, q codec.Quirks) outChatMessage {
 		}
 	}
 	return m
-}
-
-// pairToolMessages ensures every assistant tool call is paired with a corresponding tool result
-// and removes orphaned tool results whose CallID was not declared by an active assistant tool turn.
-func pairToolMessages(msgs []ir.Message) []ir.Message {
-	out := make([]ir.Message, 0, len(msgs))
-	pendingCalls := make(map[string]string) // callID -> tool name
-	var pendingOrder []string
-
-	flushMissing := func() {
-		if len(pendingOrder) == 0 {
-			return
-		}
-		var synthetic []ir.Part
-		for _, cid := range pendingOrder {
-			if name, stillMissing := pendingCalls[cid]; stillMissing {
-				synthetic = append(synthetic, ir.Part{
-					Kind:   ir.KindToolResult,
-					CallID: cid,
-					Name:   name,
-					Result: `{"status":"completed"}`,
-				})
-				delete(pendingCalls, cid)
-			}
-		}
-		if len(synthetic) > 0 {
-			out = append(out, ir.Message{Role: ir.RoleTool, Parts: synthetic})
-		}
-		pendingOrder = pendingOrder[:0]
-	}
-
-	for _, msg := range msgs {
-		if msg.Role != ir.RoleTool && len(pendingOrder) > 0 {
-			flushMissing()
-		}
-		switch msg.Role {
-		case ir.RoleAssistant:
-			out = append(out, msg)
-			for _, p := range msg.Parts {
-				if p.Kind == ir.KindToolCall && p.CallID != "" {
-					pendingCalls[p.CallID] = p.Name
-					pendingOrder = append(pendingOrder, p.CallID)
-				}
-			}
-		case ir.RoleTool:
-			var kept []ir.Part
-			for _, p := range msg.Parts {
-				if p.Kind != ir.KindToolResult {
-					continue
-				}
-				if _, ok := pendingCalls[p.CallID]; ok {
-					kept = append(kept, p)
-					delete(pendingCalls, p.CallID)
-				}
-			}
-			if len(kept) > 0 {
-				out = append(out, ir.Message{Role: ir.RoleTool, Name: msg.Name, Parts: kept})
-			}
-		default:
-			out = append(out, msg)
-		}
-	}
-	flushMissing()
-	return out
 }
 
 func joinStrings(ss []string) string {

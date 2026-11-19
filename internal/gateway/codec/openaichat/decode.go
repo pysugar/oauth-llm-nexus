@@ -74,6 +74,8 @@ type chatDecoder struct {
 	lastNoIndexSlot int
 	inThinkTag      bool
 	tagTailBuf      string
+	sawText         bool        // visible text was emitted: later <think> tags are just text
+	idxRemap        map[int]int // upstream tool index -> slot, when an index was reused for a new call
 }
 
 // NewDecoder creates an OpenAI Chat SSE StreamDecoder.
@@ -214,7 +216,23 @@ func (d *chatDecoder) Flush() []ir.Event {
 
 func (d *chatDecoder) resolveToolIndex(tc chatInToolRef) int {
 	if tc.Index != nil {
-		idx := *tc.Index
+		up := *tc.Index
+		idx := up
+		if r, ok := d.idxRemap[up]; ok {
+			idx = r
+		}
+		// Some relays reuse an index for the next call (0,0,1): a fragment that brings a new id on
+		// an occupied slot starts a new call instead of being glued onto the previous one.
+		if st := d.tools[idx]; st != nil && tc.ID != "" && st.callID != "" && tc.ID != st.callID {
+			idx = d.nextToolSlot
+			for d.tools[idx] != nil {
+				idx++
+			}
+			if d.idxRemap == nil {
+				d.idxRemap = make(map[int]int)
+			}
+			d.idxRemap[up] = idx
+		}
 		if idx >= d.nextToolSlot {
 			d.nextToolSlot = idx + 1
 		}
@@ -352,10 +370,19 @@ var thinkOpenTags = []string{"<think>", "<thought>"}
 var thinkCloseTags = []string{"</think>", "</thought>"}
 
 func (d *chatDecoder) emitContent(delta string) []ir.Event {
-	if !d.quirks.ThoughtTagParsing && d.tagTailBuf == "" && !d.inThinkTag {
-		// Automatically activate <think> parsing if the stream opens with an explicit tag.
-		if !strings.Contains(delta, "<think") && !strings.Contains(delta, "<thought") {
-			return []ir.Event{{Kind: ir.EventText, Text: delta}}
+	// A <think> tag counts only where the reply opens with it; once visible text was written, a
+	// tag (in code, in prose about tags) is plain text.
+	if d.tagTailBuf == "" && !d.inThinkTag {
+		lead := strings.TrimLeft(delta, " \t\r\n")
+		opens := strings.HasPrefix(lead, "<think") || strings.HasPrefix(lead, "<thought") ||
+			(lead != "" && (strings.HasPrefix("<think>", lead) || strings.HasPrefix("<thought>", lead)))
+		if d.sawText || !opens {
+			if !d.quirks.ThoughtTagParsing || d.sawText || lead != "" {
+				if lead != "" {
+					d.sawText = true
+				}
+				return []ir.Event{{Kind: ir.EventText, Text: delta}}
+			}
 		}
 	}
 

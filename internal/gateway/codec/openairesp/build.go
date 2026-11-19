@@ -133,7 +133,7 @@ func (c *Codec) BuildRequest(req *ir.Request, upstreamModel string, stream bool,
 		}
 	}
 
-	for _, msg := range req.Messages {
+	for _, msg := range ir.NormalizeToolTurns(req.Messages) {
 		switch msg.Role {
 		case ir.RoleSystem:
 			txt := ir.TextOf(msg.Parts)

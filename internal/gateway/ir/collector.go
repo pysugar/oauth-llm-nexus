@@ -184,13 +184,18 @@ func (c *Collector) Build() *Result {
 		}
 		parts = append(parts, p)
 	}
+	// Upstreams mislabel finishes: calls with "stop", or "tool_calls" with no call. The reason
+	// must agree with the content or clients either drop the calls or wait for ones never sent.
 	reason := c.finishReason
-	if reason == "" {
+	switch {
+	case reason == "" || reason == FinishStop:
 		if hasToolCall {
 			reason = FinishToolCalls
-		} else {
+		} else if reason == "" {
 			reason = FinishStop
 		}
+	case reason == FinishToolCalls && !hasToolCall:
+		reason = FinishStop
 	}
 	return &Result{
 		ID:           id,
