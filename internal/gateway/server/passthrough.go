@@ -139,6 +139,9 @@ func (s *Server) servePassthrough(
 		if clientGone || len(raw) == 0 {
 			return
 		}
+		if irReq.UsageInjected && isUsageOnlyChunk(raw) {
+			return // asked for by the gateway, not the client
+		}
 		if _, err := w.Write(raw); err != nil {
 			clientGone = true
 			return
@@ -409,4 +412,23 @@ func encodeInStreamError(proto ir.Protocol, ge *ir.GatewayError) []byte {
 	default:
 		return []byte("data: " + string(body) + "\n\n")
 	}
+}
+
+// isUsageOnlyChunk reports an OpenAI Chat SSE frame carrying usage and no choices.
+func isUsageOnlyChunk(raw []byte) bool {
+	for _, line := range bytes.Split(raw, []byte("\n")) {
+		data, ok := bytes.CutPrefix(bytes.TrimSpace(line), []byte("data:"))
+		if !ok {
+			continue
+		}
+		var probe struct {
+			Choices []json.RawMessage `json:"choices"`
+			Usage   json.RawMessage   `json:"usage"`
+		}
+		if json.Unmarshal(bytes.TrimSpace(data), &probe) != nil {
+			return false
+		}
+		return len(probe.Choices) == 0 && len(probe.Usage) > 0 && string(probe.Usage) != "null"
+	}
+	return false
 }

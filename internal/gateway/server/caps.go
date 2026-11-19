@@ -116,7 +116,7 @@ func (s *Server) capExceeded(subject string) (bool, time.Time, string) {
 		start, reset := periodBounds(c.Period, time.Now())
 		sp := s.spend(subject, c.Period, start)
 		if c.USD > 0 && sp.usd >= c.USD {
-			return true, reset, fmt.Sprintf("%s has used $%.4f of its $%.2f %s limit", subject, sp.usd, c.USD, c.Period)
+			return true, reset, fmt.Sprintf("%s has used $%.6g of its $%.6g %s limit", subject, sp.usd, c.USD, c.Period)
 		}
 		if c.Tokens > 0 && sp.tokens >= c.Tokens {
 			return true, reset, fmt.Sprintf("%s has used %d of its %d %s tokens", subject, sp.tokens, c.Tokens, c.Period)

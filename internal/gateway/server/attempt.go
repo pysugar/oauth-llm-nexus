@@ -306,6 +306,15 @@ func buildUpstreamPayload(
 				return nil, ir.NewError(400, "invalid_json", err.Error())
 			}
 		}
+		irReq.UsageInjected = false
+		if clientProto == ir.ProtoOpenAIChat && targetProto == ir.ProtoOpenAIChat && irReq.Stream && !streamCollect &&
+			cand.Provider.Quirks.IncludeUsageInStream && !cand.Provider.Quirks.OmitStreamOptions &&
+			!bytes.Contains(outBody, []byte(`"stream_options"`)) {
+			// Ask for the final usage chunk so the ledger has tokens; it is hidden from the client.
+			if injected, ierr := codec.RewriteStreamOptionsJSON(outBody, true, true); ierr == nil {
+				outBody, irReq.UsageInjected = injected, true
+			}
+		}
 		if clientProto == ir.ProtoOpenAIChat && targetProto == ir.ProtoOpenAIChat {
 			outBody, err = codec.ApplyOpenAIChatQuirksJSON(outBody, cand.Provider.Quirks)
 			if err != nil {

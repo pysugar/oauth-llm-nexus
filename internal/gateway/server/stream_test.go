@@ -185,3 +185,25 @@ func TestKeepalivesWhileHeldAndFirstTokenTimeout(t *testing.T) {
 		t.Fatalf("expected in-stream error after keepalives, got %d %q", rec.Code, rec.Body.String())
 	}
 }
+
+func TestInjectedUsageChunkIsHiddenButCounted(t *testing.T) {
+	usageOnly := "data: {\"id\":\"c1\",\"model\":\"m\",\"choices\":[],\"usage\":{\"prompt_tokens\":9,\"completion_tokens\":4}}\n\n"
+	finishNoUsage := "data: {\"id\":\"c1\",\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"
+	script := streamScript{chunks: []string{chatContent, finishNoUsage, usageOnly, chatDone}}
+	srv := setupStreamServer(t, script, okScript, func(pa, _ *provider.Provider) { pa.Quirks.IncludeUsageInStream = true })
+	rec := chatCall(srv, true)
+	out := rec.Body.String()
+	if strings.Contains(out, `"choices":[]`) || !strings.Contains(out, "hello") || !strings.Contains(out, "[DONE]") {
+		t.Fatalf("usage-only chunk must be hidden from a client that did not ask for it: %s", out)
+	}
+	if snap := srv.Metrics.ProviderSnapshot("a"); snap == nil || snap.InputTokens != 9 || snap.OutputTokens != 4 {
+		t.Fatalf("usage from the hidden chunk must be counted, got %+v", snap)
+	}
+	// A client that asked for usage keeps the chunk.
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"m","stream":true,"stream_options":{"include_usage":true},"messages":[{"role":"user","content":"hi"}]}`))
+	rec = httptest.NewRecorder()
+	srv.HandleOpenAIChat(rec, req)
+	if !strings.Contains(rec.Body.String(), `"choices":[]`) {
+		t.Fatalf("requested usage chunk must be forwarded: %s", rec.Body.String())
+	}
+}

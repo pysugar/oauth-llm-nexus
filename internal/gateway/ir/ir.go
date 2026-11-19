@@ -132,6 +132,9 @@ type Request struct {
 	User               string
 	Store              *bool
 	PreviousResponseID string
+	// UsageInjected is gateway-internal: the attempt added stream_options.include_usage the client
+	// did not ask for, so the usage-only chunk is read for accounting but not forwarded.
+	UsageInjected bool
 }
 
 // SystemText joins all KindText system parts with double newlines.
