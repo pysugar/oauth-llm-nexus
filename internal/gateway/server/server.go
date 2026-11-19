@@ -17,6 +17,7 @@ import (
 	"github.com/pysugar/oauth-llm-nexus/internal/gateway/codec"
 	"github.com/pysugar/oauth-llm-nexus/internal/gateway/codecs"
 	"github.com/pysugar/oauth-llm-nexus/internal/gateway/ir"
+	"github.com/pysugar/oauth-llm-nexus/internal/gateway/modelmeta"
 	"github.com/pysugar/oauth-llm-nexus/internal/gateway/provider"
 	"github.com/pysugar/oauth-llm-nexus/internal/gateway/router"
 	"github.com/pysugar/oauth-llm-nexus/internal/proxy/monitor"
@@ -38,6 +39,11 @@ type Server struct {
 
 	// Stream overrides DefaultStreamPolicy (tests shrink the timers).
 	Stream *StreamPolicy
+	// Meta answers pricing, context windows and modalities (nil until EnableModelMeta).
+	Meta *modelmeta.Registry
+
+	pricesMu sync.RWMutex
+	prices   map[string]modelmeta.Meta
 
 	overridesMu sync.Mutex // serializes read-modify-write of persisted provider overrides
 }

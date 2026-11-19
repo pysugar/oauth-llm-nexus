@@ -14,6 +14,7 @@ import (
 	"github.com/pysugar/oauth-llm-nexus/internal/auth/google"
 	"github.com/pysugar/oauth-llm-nexus/internal/auth/token"
 	"github.com/pysugar/oauth-llm-nexus/internal/db"
+	"github.com/pysugar/oauth-llm-nexus/internal/gateway/modelmeta"
 	gwprovider "github.com/pysugar/oauth-llm-nexus/internal/gateway/provider"
 	gwserver "github.com/pysugar/oauth-llm-nexus/internal/gateway/server"
 	"github.com/pysugar/oauth-llm-nexus/internal/providers/catalog"
@@ -26,7 +27,8 @@ import (
 
 func main() {
 	// Initialize database
-	database, err := db.InitDB("nexus.db")
+	dbPath := "nexus.db"
+	database, err := db.InitDB(dbPath)
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
@@ -155,6 +157,8 @@ func main() {
 		},
 	})
 	log.Printf("✅ Gateway server initialized (%d providers, %d available)", len(gatewayRegistry.List()), len(gatewayRegistry.Available()))
+	// Pricing, context windows and modalities from models.dev (NEXUS_MODELS_DEV=off to disable).
+	gatewayServer.EnableModelMeta(context.Background(), modelmeta.OptionsFromEnv(modelmeta.CachePathNear(dbPath)))
 
 	// Warm upstream model catalogs concurrently in the background so first-request routing has 0ms discovery overhead.
 	go func() {
@@ -293,6 +297,10 @@ func main() {
 		r.Put("/gateway/policy", gatewayServer.HandleSetModelPolicy)
 		r.Post("/gateway/cooldown/clear", gatewayServer.HandleClearCooldown)
 		r.Post("/gateway/test", gatewayServer.HandleGatewayTest)
+		// Model prices (models.dev catalogue + user overrides)
+		r.Get("/gateway/prices", gatewayServer.HandleListPrices)
+		r.Put("/gateway/prices", gatewayServer.HandlePutPrice)
+		r.Delete("/gateway/prices", gatewayServer.HandleDeletePrice)
 		// Named per-caller client keys with provider/model allowlists (plaintext shown once on create)
 		r.Get("/gateway/keys", gatewayServer.HandleListClientKeys)
 		r.Post("/gateway/keys", gatewayServer.HandleCreateClientKey)

@@ -45,7 +45,7 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 	}
 
 	// Auto-migrate all models
-	if err := db.AutoMigrate(&models.Account{}, &models.Config{}, &models.ModelRoute{}, &models.ModelPolicy{}, &models.ClientKey{}); err != nil {
+	if err := db.AutoMigrate(&models.Account{}, &models.Config{}, &models.ModelRoute{}, &models.ModelPolicy{}, &models.ClientKey{}, &models.ModelPrice{}); err != nil {
 		return nil, err
 	}
 
