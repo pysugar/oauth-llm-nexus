@@ -36,10 +36,14 @@ services:
       - HOST=0.0.0.0
       # Optional: Enable verbose logging
       # - NEXUS_VERBOSE=true
+      # Hostnames (besides localhost and IPs) the admin console may be reached under
+      # - NEXUS_ADMIN_HOSTS=nexus.lan
+      # Optional: allow a self-built web/Tauri frontend to call /v1 directly
+      # - NEXUS_CORS_ORIGINS=http://localhost:*,tauri://localhost
       # Optional: Set admin password for dashboard
       # - NEXUS_ADMIN_PASSWORD=your-secure-password
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/healthz"]
       interval: 30s
       timeout: 3s
       retries: 3
