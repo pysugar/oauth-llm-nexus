@@ -111,7 +111,7 @@ func (s *Server) serveTranslated(
 		outcome.CacheWriteTokens = res.Usage.CacheWriteTokens
 		outcome.ReasoningTokens = res.Usage.ReasoningTokens
 		outcome.ResponseBody = string(outBytes)
-		if irReq.Source == ir.ProtoOpenAIResp && s.RespStore != nil && res.ID != "" {
+		if irReq.Source == ir.ProtoOpenAIResp && s.RespStore != nil && !irReq.SkipRespStore && res.ID != "" {
 			s.RespStore.Save(res.ID, irReq.Messages, res.Content)
 		}
 		return outcome, true, nil
@@ -181,7 +181,7 @@ func (s *Server) serveTranslated(
 	outcome.CachedTokens = res.Usage.CacheReadTokens
 	outcome.CacheWriteTokens = res.Usage.CacheWriteTokens
 	outcome.ReasoningTokens = res.Usage.ReasoningTokens
-	if irReq.Source == ir.ProtoOpenAIResp && s.RespStore != nil && streamErr == nil {
+	if irReq.Source == ir.ProtoOpenAIResp && s.RespStore != nil && !irReq.SkipRespStore && streamErr == nil {
 		respID := res.ID
 		if idProvider, ok := enc.(interface{ ResponseID() string }); ok && idProvider.ResponseID() != "" {
 			respID = idProvider.ResponseID()

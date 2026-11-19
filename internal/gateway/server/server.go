@@ -19,6 +19,7 @@ import (
 	"github.com/pysugar/oauth-llm-nexus/internal/gateway/ir"
 	"github.com/pysugar/oauth-llm-nexus/internal/gateway/modelmeta"
 	"github.com/pysugar/oauth-llm-nexus/internal/gateway/provider"
+	"github.com/pysugar/oauth-llm-nexus/internal/gateway/redact"
 	"github.com/pysugar/oauth-llm-nexus/internal/gateway/router"
 	"github.com/pysugar/oauth-llm-nexus/internal/gateway/usage"
 	"github.com/pysugar/oauth-llm-nexus/internal/proxy/monitor"
@@ -47,6 +48,7 @@ type Server struct {
 
 	caps    capState
 	routing routingState
+	masking *maskState
 
 	pricesMu sync.RWMutex
 	prices   map[string]modelmeta.Meta
@@ -235,13 +237,35 @@ func (s *Server) handleInference(
 		return
 	}
 
-	irReq, ge := clientCodec.ParseRequest(modelHint, rawBody)
+	parse := func(body []byte) (*ir.Request, *ir.GatewayError) {
+		req, ge := clientCodec.ParseRequest(modelHint, body)
+		if ge == nil && streamHintKnown {
+			req.Stream = streamHint
+		}
+		return req, ge
+	}
+
+	// Privacy masking runs on the client-protocol body before anything parses or forwards it, so
+	// passthrough, translation and legacy delegation all see the masked body (fail closed).
+	plainBody := rawBody
+	maskedBody, hits, ge := s.maskBody(rawBody)
 	if ge != nil {
+		s.recordError(r, "", "", ge.HTTPStatus, time.Since(startTime), ge.Message)
 		s.writeError(w, clientCodec, ge)
 		return
 	}
-	if streamHintKnown {
-		irReq.Stream = streamHint
+	rawBody = maskedBody
+	var plain *plainRequest
+	if redact.Masked(hits) > 0 {
+		plain = &plainRequest{body: plainBody, parse: parse}
+	}
+	w, finishRestore := s.restoringWriter(w, hits)
+	defer finishRestore()
+
+	irReq, ge := parse(rawBody)
+	if ge != nil {
+		s.writeError(w, clientCodec, ge)
+		return
 	}
 	ci.Session = sessionID(r, irReq)
 
@@ -290,7 +314,7 @@ func (s *Server) handleInference(
 	if irReq.Stream {
 		w = newClientStream(w, clientProto, s.streamPolicy())
 	}
-	result, ge := s.executePlan(w, r, clientProto, clientCodec, irReq, rawBody, plan, startTime)
+	result, ge := s.executePlan(w, r, clientProto, clientCodec, irReq, rawBody, plain, plan, startTime)
 	if ge != nil {
 		// Fall back to legacy OAuth if all gateway candidates failed and a legacy candidate follows.
 		if cs, ok := w.(*clientStream); ok && cs.headersSent {

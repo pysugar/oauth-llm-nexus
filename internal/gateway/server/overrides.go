@@ -32,11 +32,16 @@ type providerOverride struct {
 	KeyStrategy    string   `json:"key_strategy,omitempty"`
 	AddedKeys      []string `json:"added_keys,omitempty"`
 	RemovedKeys    []string `json:"removed_key_sha256,omitempty"`
+	Unredacted     *bool    `json:"unredacted,omitempty"`
+	// ExtraBody / SystemPrompts, when set, replace providers.yaml's (an empty map clears them).
+	ExtraBody     *map[string]json.RawMessage `json:"extra_body,omitempty"`
+	SystemPrompts *map[string]string          `json:"system_prompts,omitempty"`
 }
 
 func (o *providerOverride) empty() bool {
 	return o == nil || (o.Enabled == nil && o.FreeOnly == nil && o.IncludeNonChat == nil &&
-		o.Prefer == "" && o.KeyStrategy == "" && len(o.AddedKeys) == 0 && len(o.RemovedKeys) == 0)
+		o.Prefer == "" && o.KeyStrategy == "" && len(o.AddedKeys) == 0 && len(o.RemovedKeys) == 0 &&
+		o.Unredacted == nil && o.ExtraBody == nil && o.SystemPrompts == nil)
 }
 
 func keyFingerprint(key string) string {
@@ -107,6 +112,9 @@ func applyOverride(p *provider.Provider, o *providerOverride) {
 		Enabled:        o.Enabled,
 		FreeOnly:       o.FreeOnly,
 		IncludeNonChat: o.IncludeNonChat,
+		Unredacted:     o.Unredacted,
+		ExtraBody:      o.ExtraBody,
+		SystemPrompts:  o.SystemPrompts,
 	}
 	if o.Prefer != "" {
 		pr := ir.Protocol(o.Prefer)
@@ -147,6 +155,9 @@ type providerPatch struct {
 	KeyStrategy    *string
 	AddedKey       string
 	RemovedKey     string // raw key resolved from the masked label before removal
+	Unredacted     *bool
+	ExtraBody      *map[string]json.RawMessage // the provider's new extra_body (after validation)
+	SystemPrompts  *map[string]string
 }
 
 // persistProviderPatch merges patch into the stored override for providerID.
@@ -179,6 +190,15 @@ func (s *Server) persistProviderPatch(providerID string, patch providerPatch) er
 	}
 	if patch.KeyStrategy != nil && strings.TrimSpace(*patch.KeyStrategy) != "" {
 		o.KeyStrategy = provider.NormalizeKeyStrategy(*patch.KeyStrategy)
+	}
+	if patch.Unredacted != nil {
+		o.Unredacted = boolPtr(*patch.Unredacted)
+	}
+	if patch.ExtraBody != nil {
+		o.ExtraBody = patch.ExtraBody
+	}
+	if patch.SystemPrompts != nil {
+		o.SystemPrompts = patch.SystemPrompts
 	}
 	if k := strings.TrimSpace(patch.AddedKey); k != "" {
 		o.RemovedKeys = removeString(o.RemovedKeys, keyFingerprint(k))

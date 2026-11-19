@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pysugar/oauth-llm-nexus/internal/gateway/codec"
@@ -20,8 +21,9 @@ func (s *Server) executePlan(
 	r *http.Request,
 	clientProto ir.Protocol,
 	clientCodec codec.Codec,
-	irReq *ir.Request,
-	rawBody []byte,
+	maskedReq *ir.Request,
+	maskedBody []byte,
+	plain *plainRequest,
 	plan *router.Plan,
 	_ time.Time,
 ) (attemptOutcome, *ir.GatewayError) {
@@ -30,6 +32,17 @@ func (s *Server) executePlan(
 
 	for _, cand := range plan.Candidates {
 		lastProvider = cand.Provider.ID
+
+		// A provider that skips masking (a local model) gets the client's request as written.
+		irReq, rawBody := maskedReq, maskedBody
+		if plain != nil && cand.Provider.IsUnredacted() {
+			req, ge := plain.get()
+			if ge != nil {
+				lastErr = ge
+				continue
+			}
+			irReq, rawBody = req, plain.body
+		}
 
 		targetProto, passthrough, ok := cand.Provider.TargetFor(clientProto)
 		if !ok {
@@ -68,6 +81,9 @@ func (s *Server) executePlan(
 		}
 
 		payload, buildErr := buildUpstreamPayload(clientProto, targetProto, passthrough, streamCollect, effectiveReq, rawBody, cand)
+		if buildErr == nil {
+			payload, buildErr = applyRequestTransforms(targetProto, payload, cand)
+		}
 		if buildErr != nil {
 			lastErr = buildErr
 			if buildErr.HTTPStatus < 500 && buildErr.HTTPStatus != 404 && buildErr.HTTPStatus != 429 {
@@ -103,6 +119,26 @@ func (s *Server) executePlan(
 		lastErr = ir.NewError(502, "all_attempts_failed", "all backend candidates failed")
 	}
 	return attemptOutcome{ProviderID: lastProvider}, lastErr
+}
+
+// plainRequest is the client's request before masking, parsed on first use: for providers that
+// skip privacy masking.
+type plainRequest struct {
+	body  []byte
+	parse func([]byte) (*ir.Request, *ir.GatewayError)
+	once  sync.Once
+	req   *ir.Request
+	ge    *ir.GatewayError
+}
+
+func (p *plainRequest) get() (*ir.Request, *ir.GatewayError) {
+	p.once.Do(func() {
+		p.req, p.ge = p.parse(p.body)
+		if p.req != nil {
+			p.req.SkipRespStore = true
+		}
+	})
+	return p.req, p.ge
 }
 
 func lastErrOrNil(committed bool, err *ir.GatewayError) *ir.GatewayError {
@@ -353,6 +389,29 @@ func buildUpstreamPayload(
 		return nil, ir.NewError(500, "missing_codec", "no codec registered for "+string(targetProto))
 	}
 	return targetCodec.BuildRequest(irReq, cand.UpstreamModel, true, cand.Provider.Quirks)
+}
+
+// applyRequestTransforms applies the provider's declarative transforms to the outgoing body, in
+// the target protocol: the system prompt configured for the upstream model is appended, then
+// extra_body fields fill in (or, written "!name", replace) top-level fields. Both run after
+// masking, so operator-configured text is never masked.
+func applyRequestTransforms(targetProto ir.Protocol, payload []byte, cand router.Candidate) ([]byte, *ir.GatewayError) {
+	out := payload
+	if text := cand.Provider.SystemPromptFor(cand.UpstreamModel); text != "" {
+		next, err := codec.AppendSystemPromptJSON(targetProto, out, text)
+		if err != nil {
+			return nil, ir.NewError(400, "invalid_json", "append system prompt: "+err.Error())
+		}
+		out = next
+	}
+	if extra := cand.Provider.GetExtraBody(); len(extra) > 0 {
+		next, err := codec.MergeExtraBodyJSON(out, extra)
+		if err != nil {
+			return nil, ir.NewError(400, "invalid_json", "merge extra_body: "+err.Error())
+		}
+		out = next
+	}
+	return out, nil
 }
 
 func setProvenanceHeaders(w http.ResponseWriter, cand router.Candidate, routeLabel string) {

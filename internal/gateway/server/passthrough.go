@@ -60,7 +60,7 @@ func (s *Server) servePassthrough(
 		outcome.OutputTokens = u.OutputTokens
 		outcome.CachedTokens = u.CacheReadTokens
 		outcome.ReasoningTokens = u.ReasoningTokens
-		if irReq.Source == ir.ProtoOpenAIResp && s.RespStore != nil {
+		if irReq.Source == ir.ProtoOpenAIResp && s.RespStore != nil && !irReq.SkipRespStore {
 			if respID, parts := extractResponsesJSONTurn(body); respID != "" {
 				s.RespStore.Save(respID, irReq.Messages, parts)
 			}
@@ -190,7 +190,7 @@ func (s *Server) servePassthrough(
 	outcome.OutputTokens = u.OutputTokens
 	outcome.CachedTokens = u.CacheReadTokens
 	outcome.ReasoningTokens = u.ReasoningTokens
-	if irReq.Source == ir.ProtoOpenAIResp && s.RespStore != nil {
+	if irReq.Source == ir.ProtoOpenAIResp && s.RespStore != nil && !irReq.SkipRespStore {
 		if respID, parts := extractResponsesSSETurn(usageBytes); respID != "" {
 			s.RespStore.Save(respID, irReq.Messages, parts)
 		}

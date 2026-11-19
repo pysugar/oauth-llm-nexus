@@ -135,6 +135,10 @@ type Request struct {
 	// UsageInjected is gateway-internal: the attempt added stream_options.include_usage the client
 	// did not ask for, so the usage-only chunk is read for accounting but not forwarded.
 	UsageInjected bool
+	// SkipRespStore is gateway-internal: the request went unmasked to a provider that skips
+	// privacy masking, so its turn must not enter the shared ResponseStore (a later turn could
+	// replay it, unmasked, to another backend).
+	SkipRespStore bool
 }
 
 // SystemText joins all KindText system parts with double newlines.

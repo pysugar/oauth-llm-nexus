@@ -18,6 +18,7 @@ import (
 	"github.com/pysugar/oauth-llm-nexus/internal/gateway/codec"
 	"github.com/pysugar/oauth-llm-nexus/internal/gateway/codecs"
 	"github.com/pysugar/oauth-llm-nexus/internal/gateway/ir"
+	"github.com/pysugar/oauth-llm-nexus/internal/gateway/redact"
 	"github.com/pysugar/oauth-llm-nexus/internal/gateway/router"
 )
 
@@ -66,7 +67,27 @@ func (s *Server) HandleOpenAIEmbeddings(w http.ResponseWriter, r *http.Request) 
 		s.writeError(w, errCodec, ir.NewError(400, "invalid_json", "invalid embeddings request JSON: "+err.Error()))
 		return
 	}
+	// Embeddings input is masked only when mask_embeddings is set: a placeholder embeds as a
+	// different vector than the text it stands for, which changes retrieval.
+	plainBody, plainReq := rawBody, req
+	if s.maskSettings().MaskEmbeddings {
+		masked, hits, ge := s.maskBody(rawBody)
+		if ge != nil {
+			s.recordError(r, "", req.Model, ge.HTTPStatus, time.Since(start), ge.Message)
+			s.writeError(w, errCodec, ge)
+			return
+		}
+		if redact.Masked(hits) > 0 {
+			rawBody = masked
+			req = embeddingRequest{}
+			if err := json.Unmarshal(rawBody, &req); err != nil {
+				s.writeError(w, errCodec, ir.NewError(503, "masking_unavailable", "masked embeddings request is not valid JSON"))
+				return
+			}
+		}
+	}
 	req.Model = strings.TrimSpace(req.Model)
+	plainReq.Model = req.Model
 	if trimmed := bytes.TrimSpace(req.Input); len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
 		s.writeError(w, errCodec, ir.NewError(400, "missing_input", "input is required"))
 		return
@@ -96,7 +117,11 @@ func (s *Server) HandleOpenAIEmbeddings(w http.ResponseWriter, r *http.Request) 
 	var lastProvider string
 	for _, cand := range plan.Candidates {
 		lastProvider = cand.Provider.ID
-		res, attemptErr := s.attemptEmbedding(r, cand, &req, rawBody, plan.Forced)
+		candReq, candBody := &req, rawBody
+		if cand.Provider.IsUnredacted() {
+			candReq, candBody = &plainReq, plainBody
+		}
+		res, attemptErr := s.attemptEmbedding(r, cand, candReq, candBody, plan.Forced)
 		if attemptErr == nil {
 			ci.Route = res.routeLabel
 			setProvenanceHeaders(w, cand, res.routeLabel)

@@ -162,6 +162,9 @@ func main() {
 	log.Printf("✅ Gateway server initialized (%d providers, %d available)", len(gatewayRegistry.List()), len(gatewayRegistry.Available()))
 	// Pricing, context windows and modalities from models.dev (NEXUS_MODELS_DEV=off to disable).
 	gatewayServer.EnableModelMeta(context.Background(), modelmeta.OptionsFromEnv(modelmeta.CachePathNear(dbPath)))
+	// Privacy masking (off unless NEXUS_MASKING=on or the persisted setting enables it); the
+	// placeholder key lives next to the database.
+	gatewayServer.EnableMasking(gwserver.MaskingKeyPath(dbPath))
 	// Persisted usage ledger (NEXUS_USAGE_RETENTION_DAYS, default 90; 0 keeps everything).
 	retentionDays := 90
 	if v, err := strconv.Atoi(strings.TrimSpace(os.Getenv("NEXUS_USAGE_RETENTION_DAYS"))); err == nil && v >= 0 {
@@ -311,6 +314,10 @@ func main() {
 		r.Get("/gateway/caps", gatewayServer.HandleListCaps)
 		r.Put("/gateway/caps", gatewayServer.HandlePutCap)
 		r.Delete("/gateway/caps", gatewayServer.HandleDeleteCap)
+		// Privacy masking settings, counters and a dry-run preview
+		r.Get("/gateway/masking", gatewayServer.HandleGetMasking)
+		r.Put("/gateway/masking", gatewayServer.HandlePutMasking)
+		r.Post("/gateway/masking/preview", gatewayServer.HandleMaskingPreview)
 		r.Get("/gateway/prices", gatewayServer.HandleListPrices)
 		r.Put("/gateway/prices", gatewayServer.HandlePutPrice)
 		r.Delete("/gateway/prices", gatewayServer.HandleDeletePrice)

@@ -18,28 +18,31 @@ import (
 )
 
 type adminProviderDTO struct {
-	ID             string                  `json:"id"`
-	Preset         string                  `json:"preset"`
-	DisplayName    string                  `json:"display_name"`
-	Enabled        bool                    `json:"enabled"`
-	Available      bool                    `json:"available"`
-	NoKey          bool                    `json:"no_key"`
-	FreeOnly       bool                    `json:"free_only,omitempty"`
-	IncludeNonChat bool                    `json:"include_non_chat,omitempty"`
-	KeyStrategy    string                  `json:"key_strategy"`
-	KeyCount       int                     `json:"key_count"`
-	MaskedKeys     []string                `json:"masked_keys,omitempty"`
-	KeyStatuses    []provider.KeyStatus    `json:"key_statuses,omitempty"`
-	Prefer         string                  `json:"prefer"`
-	Native         []string                `json:"native"`
-	Endpoints      provider.Endpoints      `json:"endpoints"`
-	Cooldown       *router.CooldownInfo    `json:"cooldown,omitempty"`
-	Stats          *ProviderMetricSnapshot `json:"stats,omitempty"`
-	ModelCount     int                     `json:"model_count"`
-	CatalogFetched string                  `json:"catalog_fetched_at,omitempty"`
-	CatalogError   string                  `json:"catalog_error,omitempty"`
-	Models         []string                `json:"models,omitempty"`
-	Persisted      bool                    `json:"persisted_override,omitempty"`
+	ID             string                     `json:"id"`
+	Preset         string                     `json:"preset"`
+	DisplayName    string                     `json:"display_name"`
+	Enabled        bool                       `json:"enabled"`
+	Available      bool                       `json:"available"`
+	NoKey          bool                       `json:"no_key"`
+	FreeOnly       bool                       `json:"free_only,omitempty"`
+	IncludeNonChat bool                       `json:"include_non_chat,omitempty"`
+	KeyStrategy    string                     `json:"key_strategy"`
+	KeyCount       int                        `json:"key_count"`
+	MaskedKeys     []string                   `json:"masked_keys,omitempty"`
+	KeyStatuses    []provider.KeyStatus       `json:"key_statuses,omitempty"`
+	Prefer         string                     `json:"prefer"`
+	Native         []string                   `json:"native"`
+	Endpoints      provider.Endpoints         `json:"endpoints"`
+	Cooldown       *router.CooldownInfo       `json:"cooldown,omitempty"`
+	Stats          *ProviderMetricSnapshot    `json:"stats,omitempty"`
+	ModelCount     int                        `json:"model_count"`
+	CatalogFetched string                     `json:"catalog_fetched_at,omitempty"`
+	CatalogError   string                     `json:"catalog_error,omitempty"`
+	Models         []string                   `json:"models,omitempty"`
+	Persisted      bool                       `json:"persisted_override,omitempty"`
+	Unredacted     bool                       `json:"unredacted,omitempty"`
+	ExtraBody      map[string]json.RawMessage `json:"extra_body,omitempty"`
+	SystemPrompts  map[string]string          `json:"system_prompts,omitempty"`
 }
 
 type adminCandidateDTO struct {
@@ -113,6 +116,9 @@ func (s *Server) buildProviderDTO(p *provider.Provider, cooldowns map[string]rou
 		Native:         native,
 		Endpoints:      p.Endpoints,
 		Stats:          s.Metrics.ProviderSnapshot(p.ID),
+		Unredacted:     p.IsUnredacted(),
+		ExtraBody:      p.GetExtraBody(),
+		SystemPrompts:  p.GetSystemPrompts(),
 	}
 	if p.Keys != nil {
 		dto.KeyCount = p.Keys.Count()
@@ -158,6 +164,10 @@ func (s *Server) HandleUpdateProvider(w http.ResponseWriter, r *http.Request) {
 		RemoveAPIKey   string  `json:"remove_api_key"`
 		ClearCooldown  bool    `json:"clear_cooldown"`
 		Refresh        bool    `json:"refresh"`
+		Unredacted     *bool   `json:"unredacted"`
+		// extra_body / system_prompts replace the whole map; null or {} clears it
+		ExtraBody     json.RawMessage `json:"extra_body"`
+		SystemPrompts json.RawMessage `json:"system_prompts"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32*1024)).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request JSON: " + err.Error()})
@@ -189,6 +199,29 @@ func (s *Server) HandleUpdateProvider(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	var extraBody *map[string]json.RawMessage
+	if len(body.ExtraBody) > 0 {
+		m := map[string]json.RawMessage{}
+		if string(body.ExtraBody) != "null" {
+			if err := json.Unmarshal(body.ExtraBody, &m); err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "extra_body must be an object: " + err.Error()})
+				return
+			}
+		}
+		extraBody = &m
+	}
+	var systemPrompts *map[string]string
+	if len(body.SystemPrompts) > 0 {
+		m := map[string]string{}
+		if string(body.SystemPrompts) != "null" {
+			if err := json.Unmarshal(body.SystemPrompts, &m); err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "system_prompts must map model patterns to text: " + err.Error()})
+				return
+			}
+		}
+		systemPrompts = &m
+	}
+
 	removedRawKey := ""
 	if rm := strings.TrimSpace(body.RemoveAPIKey); rm != "" && p.Keys != nil {
 		removedRawKey, _ = p.Keys.FindByMasked(rm)
@@ -202,6 +235,9 @@ func (s *Server) HandleUpdateProvider(w http.ResponseWriter, r *http.Request) {
 		KeyStrategy:    body.KeyStrategy,
 		AddAPIKey:      body.AddAPIKey,
 		RemoveAPIKey:   body.RemoveAPIKey,
+		Unredacted:     body.Unredacted,
+		ExtraBody:      extraBody,
+		SystemPrompts:  systemPrompts,
 	})
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -216,6 +252,9 @@ func (s *Server) HandleUpdateProvider(w http.ResponseWriter, r *http.Request) {
 		KeyStrategy:    body.KeyStrategy,
 		AddedKey:       body.AddAPIKey,
 		RemovedKey:     removedRawKey,
+		Unredacted:     body.Unredacted,
+		ExtraBody:      p.GetExtraBodyIf(extraBody != nil),
+		SystemPrompts:  p.GetSystemPromptsIf(systemPrompts != nil),
 	})
 	if persistErr != nil {
 		log.Printf("⚠️ Failed to persist runtime overrides for provider %s: %v", p.ID, persistErr)
