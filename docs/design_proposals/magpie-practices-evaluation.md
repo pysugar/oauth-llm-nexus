@@ -67,3 +67,29 @@
 
 11. **Rule / Purpose-Based Conditional Routing**
     - Route requests dynamically based on request shape: e.g., route requests containing images (`ir.KindImage`) only to vision-capable candidates, route long-context requests (>64k tokens) to long-window backends, or route lightweight background/title requests to fast flash models.
+
+---
+
+## 3. Status (2026-11-20, v1.1.0)
+
+First-round items above: 6 (strategies `rotate`/`usage`/`fastest`) **done** in v1.0.0; 7 (keepalives) **done**
+(hold-before-commit + protocol-correct keepalives); 8 (agent connect presets) **open**; 9 (client keys + spend
+caps) **done**; 10 (redaction) **done** in v1.1.0; 11 (rule routing) **partly** — capability ordering
+(context window, vision) done, intent routing deliberately skipped.
+
+Second-round review of magpie (HEAD `a18ed4995`, API-key features only) and outcome:
+
+| Practice | Outcome |
+| --- | --- |
+| Admin API browser guard (Origin / Sec-Fetch / Host) | done (`middleware/adminguard.go`) |
+| Hold until first content, keepalives, truncation as error, first-token timeout | done (`server/stream.go`) |
+| Translation lessons (tool pairing, stable ids, tool images, Claude thinking, DeepSeek, Gemini schema, finish reasons) | done (`ir/toolpair.go`, `codec/*`) |
+| Anthropic prompt-cache marks on translated requests | done |
+| models.dev pricing, persisted usage ledger, spend caps | done (`modelmeta`, `usage`, `server/caps.go`) |
+| Routing groups' strategies, cache-aware affinity, retryable classifier | done (`server/order.go`, `router/classify.go`) |
+| Embeddings + rerank APIs | done (Voyage preset under review, see handoff §6.2) |
+| Privacy masking (rules, HMAC placeholders, streaming restore, fail closed) | done (`gateway/redact`) |
+| Declarative request transforms (extra_body, per-model system prompt) | done (`provider/transforms.go`) |
+| web_search / web_fetch MCP | open (backlog) |
+| Encrypted config export | open (backlog) |
+| Intent routing, gateway-side memory, JS middleware, MCP router, OTLP, multi-machine sync | skipped by decision (memory belongs in the PKM app) |
