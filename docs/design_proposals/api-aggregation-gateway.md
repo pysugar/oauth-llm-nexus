@@ -126,9 +126,12 @@ The `/api/gateway/*` endpoints (protected by `NEXUS_ADMIN_PASSWORD` when set) ex
 | `GET /api/gateway/models/{client}` | Inspect all supporting candidates (DB routes + canonical catalog matches) for a single model |
 | `POST /api/gateway/select` / `POST /api/gateway/models/{client}/select` | Promote/upsert candidate backend to `priority = 1` at runtime (and optionally clear its cooldown) |
 | `POST /api/gateway/models/{client}/failover` | Materialize all discovered supporting backends for `{client}` into priority-ordered failover DB routes |
-| `PUT /api/gateway/policy` / `PUT /api/gateway/models/{client}/policy` | Toggle per-model strategy between `"failover"` and `"pinned"` |
+| `PUT /api/gateway/policy` / `PUT /api/gateway/models/{client}/policy` | Set per-model strategy: `"failover"`, `"pinned"`, `"rotate"`, `"usage"` (least used) or `"fastest"` |
 | `POST /api/gateway/cooldown/clear` | Clear cooldowns (provider-level and per-key) for one provider or all providers |
 | `POST /api/gateway/test` | Execute a live protocol compatibility probe (`openai-chat`, `openai-responses`, `anthropic`, `gemini`, supporting `stream` & `tools`) with optional pinned `provider` |
+| `GET /api/gateway/usage` | Usage ledger summary (`from`, `to`, `group_by=provider\|model\|caller\|key\|day`, `caller`, `provider`) with costs; `?recent=N` lists raw records |
+| `GET/PUT/DELETE /api/gateway/prices` | Model price overrides (USD per 1M tokens); `?provider=&model=` shows effective metadata |
+| `GET/PUT/DELETE /api/gateway/caps` | Spend caps: `subject` = `caller:<key name>` or `key:<provider>#<fp>`, `period` day\|month, `usd`, `tokens` |
 | `GET /api/gateway/keys` | List client keys (masked, never the secret) plus the read-only `legacy` key, with allowlists, `last_used_at`, and per-key `stats` |
 | `POST /api/gateway/keys` | Issue a named client key; the plaintext `api_key` is returned **only in this response** |
 | `PATCH /api/gateway/keys/{id}` | Update `allowed_providers`, `allowed_models` (`[]` clears = unrestricted; omitted = unchanged) or `disabled`; `{id}` is the numeric id or the name |

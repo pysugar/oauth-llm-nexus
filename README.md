@@ -16,6 +16,11 @@
     -   **Vertex AI Transparent Proxy**: `/v1/publishers/google/models/*` (server-side Vertex key injection)
     -   **Codex Adapter (provider=codex)**: OpenAI-facing `/v1/chat/completions` and `/v1/responses` with stream-first behavior
 -   **Multi-Backend API Aggregation & Runtime Switching**: Aggregate **OpenAI**, **OpenRouter**, **NVIDIA NIM**, **AMD Radeon Token Factory**, **Ollama**, **DeepSeek API**, and **Google Gemini API** behind any of the 4 client protocols (`config/providers.yaml`), with sticky multi-key rotation, adaptive cooldown, ordered failover or pinned policy, and instant Dashboard / API backend switching (`docs/design_proposals/api-aggregation-gateway.md`).
+-   **Unified Retrieval APIs**: `/v1/embeddings` (OpenAI-compatible backends passed through, Gemini translated, `input_type` retrieval hint) and `/v1/rerank` (Cohere / Jina / Voyage body), with the same routing and failover as chat. Voyage AI preset included.
+-   **Usage, Cost & Spend Caps**: A persisted usage ledger priced from [models.dev](https://models.dev) (or your own prices), a `/ui` *Usage & Cost* view, and daily/monthly USD or token caps per client key and per upstream key.
+-   **Reliable Streaming**: Replies are held until the first content (protocol-correct keepalives meanwhile), so empty, truncated or slow-starting replies fail over; truncation after commit is reported in-stream instead of as a fake finish. Per-provider `first_token_timeout`.
+-   **Smarter Routing**: `failover`, `pinned`, `rotate`, `usage` (least used) and `fastest` strategies; conversations stick to the backend holding their prompt cache; image requests prefer vision models; Anthropic prompt-cache marks on translated Claude requests.
+-   **Per-App Client Keys**: Named keys with provider/model allowlists (e.g. keep a notes app on local or trusted backends).
 -   **Smart Model Mapping**: Configurable routing from client model names to backend models via Dashboard.
 -   **Account Pool Management**: Link multiple Google accounts to pool quotas and increase limits.
 -   **User-Specific Quota Routing**: Route requests to specific accounts using `X-Nexus-Account` header for quota isolation.
@@ -129,6 +134,13 @@ The server will start on `127.0.0.1:8080` by default (or `:8086` in release mode
 | `GEMINI_API_KEY` | - | Fallback key for Gemini API transparent proxy when neither `NEXUS_GEMINI_API_KEYS` nor `NEXUS_GEMINI_API_KEY` is set |
 | `NEXUS_GEMINI_BASE_URL` | `https://generativelanguage.googleapis.com` | Gemini API upstream base URL override |
 | `NEXUS_GEMINI_PROXY_TIMEOUT` | `5m` | Upstream timeout for Gemini API transparent proxy |
+| `NEXUS_ADMIN_HOSTS` | - | Extra hostnames (comma-separated, `*.suffix` allowed) under which `/ui` and `/api` may be reached; loopback names and IP addresses are always allowed (DNS-rebinding guard) |
+| `NEXUS_CORS_ORIGINS` | - | Opt-in CORS for `/v1`, `/v1beta`, `/anthropic` (e.g. `http://localhost:*,tauri://localhost`) |
+| `NEXUS_USAGE_RETENTION_DAYS` | `90` | Days of usage ledger to keep (`0` keeps everything) |
+| `NEXUS_MODELS_DEV` / `NEXUS_MODELS_DEV_URL` | on / `https://models.dev/api.json` | Model pricing & context catalogue (`off` disables network access) |
+| `NEXUS_<ID>_FIRST_TOKEN_TIMEOUT` | - | Fail over when a provider sends no first token in time (e.g. `20s`) |
+| `NEXUS_<ID>_CACHE_TTL` | - | `1h` for one-hour Anthropic prompt-cache marks on translated Claude requests |
+| `NEXUS_ANTHROPIC_ADAPTIVE_MODELS` | - | Extra model prefixes that only accept adaptive thinking |
 
 **Example: LAN Access with Password Protection**
 ```bash

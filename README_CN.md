@@ -16,6 +16,11 @@
     -   **Vertex AI 透明代理**：`/v1/publishers/google/models/*`（服务端注入 Vertex key）
     -   **Codex 适配（provider=codex）**：对外提供 OpenAI 风格 `/v1/chat/completions` 与 `/v1/responses`，采用 stream-first 策略
 -   **多后端 API 聚合与运行时切换**：将 **OpenAI**、**OpenRouter**、**NVIDIA NIM**、**AMD Radeon Token Factory**、**Ollama**、**DeepSeek API** 与 **Google Gemini API** 统一接入 4 种客户端协议（`config/providers.yaml`），支持多 Key 轮询、指数冷却、有序故障转移 / 固定策略，以及通过 Dashboard 与 Admin API 实时切换后端（详见 [设计文档](docs/design_proposals/api-aggregation-gateway.md)）。
+-   **统一检索接口**：`/v1/embeddings`（OpenAI 兼容后端直通、Gemini 自动翻译、`input_type` 检索提示）与 `/v1/rerank`（Cohere / Jina / Voyage 请求体），与聊天共用路由与故障转移；内置 Voyage AI 预设。
+-   **用量、成本与花费上限**：持久化用量账本，按 [models.dev](https://models.dev)（或自定义价格）计算成本；`/ui` 新增「用量与成本」视图；支持按客户端 key、上游 key 设置每日/每月美元或 token 上限。
+-   **可靠流式**：首个内容到达前先缓冲（期间发送协议正确的保活），空回复、截断、迟迟不出首字的上游都会自动故障转移；已提交后的截断以流内错误告知，不再伪造完成；可按 provider 设置 `first_token_timeout`。
+-   **更聪明的路由**：`failover`、`pinned`、`rotate`、`usage`（最少使用）、`fastest` 五种策略；会话粘住持有提示缓存的后端；带图请求优先视觉模型；翻译到 Claude 的请求自动打提示缓存标记。
+-   **按应用发放的客户端 Key**：带 provider / 模型白名单的命名 key（例如让笔记 App 只能访问本地或可信后端）。
 -   **智能模型映射**：通过 Dashboard 配置客户端模型名到后端模型的路由。
 -   **账号池管理**：链接多个 Google 账号以池化配额，提升限制。
 -   **用户级配额路由**：使用 `X-Nexus-Account` 请求头将请求路由到指定账号，实现配额隔离。
@@ -120,6 +125,13 @@ docker-compose up -d
 | `NEXUS_MODE` | - | 设置为 `release` 启用生产模式（默认端口改为 8086） |
 | `NEXUS_ADMIN_PASSWORD` | - | 可选密码，用于保护 Dashboard 和 API 端点 |
 | `NEXUS_VERBOSE` | - | 设置为 `1` 或 `true` 启用详细的请求/响应日志 |
+| `NEXUS_ADMIN_HOSTS` | - | 允许访问 `/ui`、`/api` 的额外主机名（逗号分隔，支持 `*.后缀`）；回环名与 IP 地址始终允许（防 DNS rebinding） |
+| `NEXUS_CORS_ORIGINS` | - | 为 `/v1`、`/v1beta`、`/anthropic` 开启 CORS（如 `http://localhost:*,tauri://localhost`） |
+| `NEXUS_USAGE_RETENTION_DAYS` | `90` | 用量账本保留天数（`0` 为永久） |
+| `NEXUS_MODELS_DEV` / `NEXUS_MODELS_DEV_URL` | 开启 / `https://models.dev/api.json` | 模型价格与上下文窗口数据源（`off` 关闭联网） |
+| `NEXUS_<ID>_FIRST_TOKEN_TIMEOUT` | - | 上游迟迟不出首个 token 时故障转移（如 `20s`） |
+| `NEXUS_<ID>_CACHE_TTL` | - | 设为 `1h` 时为翻译到 Claude 的请求使用一小时提示缓存 |
+| `NEXUS_ANTHROPIC_ADAPTIVE_MODELS` | - | 额外指定只接受 adaptive thinking 的模型前缀 |
 | `NEXUS_ANTIGRAVITY_USER_AGENT` | `antigravity/1.15.8 windows/amd64` | 覆盖上游 Antigravity User-Agent |
 | `NEXUS_VERTEX_API_KEY` | - | 启用 Vertex 透明代理（`/v1/publishers/google/models/*`） |
 | `NEXUS_VERTEX_BASE_URL` | `https://aiplatform.googleapis.com` | Vertex 上游基地址覆盖 |
