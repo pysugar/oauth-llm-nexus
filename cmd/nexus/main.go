@@ -5,8 +5,11 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -159,6 +162,12 @@ func main() {
 	log.Printf("✅ Gateway server initialized (%d providers, %d available)", len(gatewayRegistry.List()), len(gatewayRegistry.Available()))
 	// Pricing, context windows and modalities from models.dev (NEXUS_MODELS_DEV=off to disable).
 	gatewayServer.EnableModelMeta(context.Background(), modelmeta.OptionsFromEnv(modelmeta.CachePathNear(dbPath)))
+	// Persisted usage ledger (NEXUS_USAGE_RETENTION_DAYS, default 90; 0 keeps everything).
+	retentionDays := 90
+	if v, err := strconv.Atoi(strings.TrimSpace(os.Getenv("NEXUS_USAGE_RETENTION_DAYS"))); err == nil && v >= 0 {
+		retentionDays = v
+	}
+	gatewayServer.EnableUsageLedger(time.Duration(retentionDays) * 24 * time.Hour)
 
 	// Warm upstream model catalogs concurrently in the background so first-request routing has 0ms discovery overhead.
 	go func() {
@@ -298,6 +307,7 @@ func main() {
 		r.Post("/gateway/cooldown/clear", gatewayServer.HandleClearCooldown)
 		r.Post("/gateway/test", gatewayServer.HandleGatewayTest)
 		// Model prices (models.dev catalogue + user overrides)
+		r.Get("/gateway/usage", gatewayServer.HandleUsage)
 		r.Get("/gateway/prices", gatewayServer.HandleListPrices)
 		r.Put("/gateway/prices", gatewayServer.HandlePutPrice)
 		r.Delete("/gateway/prices", gatewayServer.HandleDeletePrice)
@@ -425,7 +435,23 @@ func main() {
 		log.Printf("🔌 Vertex AI API: http://%s/v1/publishers/google/models/{model}:<action>", displayURL)
 	}
 
-	if err := http.ListenAndServe(addr, r); err != nil {
+	// Graceful shutdown on SIGINT/SIGTERM (docker stop): finish in-flight requests, then flush
+	// the usage ledger so no records are lost.
+	httpServer := &http.Server{Addr: addr, Handler: r, ReadHeaderTimeout: 30 * time.Second}
+	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	shutdownDone := make(chan struct{})
+	go func() {
+		defer close(shutdownDone)
+		<-sigCtx.Done()
+		log.Println("🛑 Shutting down...")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		_ = httpServer.Shutdown(shutdownCtx)
+		gatewayServer.Ledger.Close(shutdownCtx)
+	}()
+	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("Server failed: %v", err)
 	}
+	<-shutdownDone
 }

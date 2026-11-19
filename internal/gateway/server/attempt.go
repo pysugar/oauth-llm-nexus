@@ -229,6 +229,11 @@ func (s *Server) attemptWithKeys(
 		}
 
 		if pipeErr == nil {
+			route := "passthrough"
+			if !passthrough {
+				route = "translated:" + string(targetProto)
+			}
+			noteAttempt(r, cand.UpstreamModel, apiKey, route, &outcome)
 			if cand.Provider.Keys != nil {
 				if hints.ProactivelyExhausted && cand.Provider.Keys.Count() > 1 {
 					cand.Provider.Keys.MarkExhaustedAndRotate(apiKey, hints.RetryAfter)

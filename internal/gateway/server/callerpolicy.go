@@ -97,10 +97,12 @@ func callerName(r *http.Request) string {
 func (s *Server) recordSuccess(r *http.Request, providerID, clientModel string, status int, latency time.Duration, usage ir.Usage) {
 	s.Metrics.RecordSuccess(providerID, clientModel, status, latency, usage)
 	s.Metrics.RecordKeySuccess(callerName(r), providerID, clientModel, status, latency, usage)
+	s.recordUsage(r, providerID, clientModel, status, latency, usage, "")
 }
 
 // recordError updates global/provider/model metrics and the calling key's counters.
 func (s *Server) recordError(r *http.Request, providerID, clientModel string, status int, latency time.Duration, errMsg string) {
 	s.Metrics.RecordError(providerID, clientModel, status, latency, errMsg)
 	s.Metrics.RecordKeyError(callerName(r), providerID, clientModel, status, latency, errMsg)
+	s.recordUsage(r, providerID, clientModel, status, latency, ir.Usage{}, errMsg)
 }

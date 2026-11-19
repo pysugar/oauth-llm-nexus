@@ -8,6 +8,18 @@
       nav_routing: "路由与矩阵",
       nav_tester: "四协议测试台",
       nav_connect: "接入与日志",
+      nav_usage: "用量与成本",
+      usage_title: "用量与成本",
+      usage_sub: "持久化账本：每次调用的 token、缓存与按 models.dev / 自定义价格计算的成本（美元）",
+      usage_requests: "请求",
+      usage_errors: "错误",
+      usage_input: "输入",
+      usage_output: "输出",
+      usage_cache: "缓存读/写",
+      usage_cost: "成本",
+      usage_latency: "平均延迟",
+      usage_empty: "所选时间段内没有记录",
+      usage_unpriced: "未定价",
       sync: "同步状态",
       clear_all_cd: "清除全部冷却",
       providers_title: "可用后端",
@@ -129,6 +141,18 @@
       nav_routing: "Routing",
       nav_tester: "Protocol Tester",
       nav_connect: "Connect & Logs",
+      nav_usage: "Usage & Cost",
+      usage_title: "Usage & Cost",
+      usage_sub: "Persisted ledger: tokens, cache and cost per call, priced from models.dev or your overrides (USD)",
+      usage_requests: "Requests",
+      usage_errors: "Errors",
+      usage_input: "Input",
+      usage_output: "Output",
+      usage_cache: "Cache R/W",
+      usage_cost: "Cost",
+      usage_latency: "Avg latency",
+      usage_empty: "No records in this range",
+      usage_unpriced: "unpriced",
       sync: "Sync",
       clear_all_cd: "Clear Cooldowns",
       providers_title: "Backends",
@@ -527,6 +551,7 @@
       providers: t("nav_providers"),
       routing: t("nav_routing"),
       tester: t("nav_tester"),
+      usage: t("nav_usage"),
       connect: t("nav_connect")
     };
     document.querySelectorAll("#mainNav [data-view]").forEach((btn) => {
@@ -561,6 +586,8 @@
       btn.textContent = modeLabels[btn.dataset.tmode] || btn.dataset.tmode;
     });
 
+    $("#usageTitle").textContent = t("usage_title");
+    $("#usageSub").textContent = t("usage_sub");
     $("#connectTitle").textContent = t("connect_title");
     $("#connectSub").textContent = t("connect_sub");
     $("#copySnippetBtn").textContent = "📋 " + t("copy_snippet");
@@ -575,7 +602,7 @@
   }
 
   function setView(viewName, syncHash = true) {
-    const allowed = ["providers", "routing", "tester", "connect"];
+    const allowed = ["providers", "routing", "tester", "usage", "connect"];
     if (!allowed.includes(viewName)) viewName = "providers";
     state.view = viewName;
     if (syncHash && window.location.hash !== "#" + viewName) {
@@ -590,6 +617,57 @@
     if (viewName === "connect") {
       loadConnectData();
     }
+    if (viewName === "usage") {
+      loadUsage();
+    }
+  }
+
+  function formatUSD(v) {
+    const n = Number(v || 0);
+    if (n === 0) return "$0";
+    if (n < 0.01) return "$" + n.toFixed(4);
+    return "$" + n.toFixed(2);
+  }
+
+  async function loadUsage() {
+    const range = $("#usageRange").value || "24h";
+    const group = $("#usageGroup").value || "provider";
+    const res = await apiJSON("/api/gateway/usage?from=" + encodeURIComponent(range) + "&group_by=" + encodeURIComponent(group));
+    if (!res.ok || !res.data) {
+      showToast((res.data && res.data.error) || "Usage load failed");
+      return;
+    }
+    renderUsage(res.data.summary || {});
+  }
+
+  function renderUsage(sum) {
+    const total = sum.total || {};
+    const tile = (label, value) => el("div", { class: "usage-tile" }, el("span", { class: "sub" }, label), el("strong", {}, value));
+    $("#usageTotals").replaceChildren(
+      tile(t("usage_requests"), formatCompactNum(total.requests)),
+      tile(t("usage_errors"), formatCompactNum(total.errors)),
+      tile(t("usage_input"), formatCompactNum(total.input_tokens)),
+      tile(t("usage_output"), formatCompactNum(total.output_tokens)),
+      tile(t("usage_cache"), formatCompactNum(total.cache_read_tokens) + " / " + formatCompactNum(total.cache_write_tokens)),
+      tile(t("usage_cost"), formatUSD(total.cost_usd))
+    );
+    const rows = sum.rows || [];
+    const head = el("tr", {}, ...["", t("usage_requests"), t("usage_errors"), t("usage_input"), t("usage_output"), t("usage_cache"), t("usage_latency"), t("usage_cost")].map((h) => el("th", {}, h)));
+    if (rows.length === 0) {
+      $("#usageTable").replaceChildren(el("thead", {}, head), el("tbody", {}, el("tr", {}, el("td", { colspan: "8", class: "sub" }, t("usage_empty")))));
+      return;
+    }
+    const body = rows.map((r) => el("tr", {},
+      el("td", { class: "mono" }, r.key || "—"),
+      el("td", {}, formatCompactNum(r.requests)),
+      el("td", {}, formatCompactNum(r.errors)),
+      el("td", {}, formatCompactNum(r.input_tokens)),
+      el("td", {}, formatCompactNum(r.output_tokens)),
+      el("td", {}, formatCompactNum(r.cache_read_tokens) + " / " + formatCompactNum(r.cache_write_tokens)),
+      el("td", {}, (r.avg_latency_ms || 0) + " ms"),
+      el("td", {}, formatUSD(r.cost_usd) + (r.unpriced_requests ? " (" + r.unpriced_requests + " " + t("usage_unpriced") + ")" : ""))
+    ));
+    $("#usageTable").replaceChildren(el("thead", {}, head), el("tbody", {}, ...body));
   }
 
   // Data loading
@@ -2256,6 +2334,9 @@
       const h = window.location.hash.replace("#", "").trim();
       if (h) setView(h, false);
     });
+    $("#usageRange").addEventListener("change", loadUsage);
+    $("#usageGroup").addEventListener("change", loadUsage);
+    $("#usageRefreshBtn").addEventListener("click", loadUsage);
 
     $("#syncAllBtn").addEventListener("click", syncAll);
     $("#clearAllCooldownsBtn").addEventListener("click", () => clearCooldown(""));

@@ -54,6 +54,7 @@ type embeddingResult struct {
 func (s *Server) HandleOpenAIEmbeddings(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	errCodec := codecs.MustFor(ir.ProtoOpenAIChat)
+	r, ci := withCall(r, "embeddings", ir.ProtoOpenAIChat)
 
 	rawBody, err := readBodyLimited(r.Body, maxRequestBodyBytes)
 	if err != nil {
@@ -94,6 +95,7 @@ func (s *Server) HandleOpenAIEmbeddings(w http.ResponseWriter, r *http.Request) 
 		lastProvider = cand.Provider.ID
 		res, attemptErr := s.attemptEmbedding(r, cand, &req, rawBody, plan.Forced)
 		if attemptErr == nil {
+			ci.Route = res.routeLabel
 			setProvenanceHeaders(w, cand, res.routeLabel)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
@@ -411,6 +413,7 @@ func (s *Server) postJSONWithKeys(r *http.Request, cand router.Candidate, proto 
 		if readErr != nil {
 			return nil, ir.NewError(502, "upstream_read_failed", readErr.Error())
 		}
+		noteAttempt(r, cand.UpstreamModel, apiKey, "passthrough", nil)
 		if p.Keys != nil {
 			if hints.ProactivelyExhausted && p.Keys.Count() > 1 {
 				p.Keys.MarkExhaustedAndRotate(apiKey, hints.RetryAfter)

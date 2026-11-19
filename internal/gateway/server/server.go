@@ -20,6 +20,7 @@ import (
 	"github.com/pysugar/oauth-llm-nexus/internal/gateway/modelmeta"
 	"github.com/pysugar/oauth-llm-nexus/internal/gateway/provider"
 	"github.com/pysugar/oauth-llm-nexus/internal/gateway/router"
+	"github.com/pysugar/oauth-llm-nexus/internal/gateway/usage"
 	"github.com/pysugar/oauth-llm-nexus/internal/proxy/monitor"
 	"gorm.io/gorm"
 )
@@ -41,6 +42,8 @@ type Server struct {
 	Stream *StreamPolicy
 	// Meta answers pricing, context windows and modalities (nil until EnableModelMeta).
 	Meta *modelmeta.Registry
+	// Ledger persists per-call usage (nil until EnableUsageLedger).
+	Ledger *usage.Ledger
 
 	pricesMu sync.RWMutex
 	prices   map[string]modelmeta.Meta
@@ -221,6 +224,7 @@ func (s *Server) handleInference(
 ) {
 	startTime := time.Now()
 	clientCodec := codecs.MustFor(clientProto)
+	r, ci := withCall(r, "chat", clientProto)
 
 	rawBody, err := readBodyLimited(r.Body, maxRequestBodyBytes)
 	if err != nil {
@@ -236,6 +240,7 @@ func (s *Server) handleInference(
 	if streamHintKnown {
 		irReq.Stream = streamHint
 	}
+	ci.Session = sessionID(r, irReq)
 
 	// Client key allowlists: the model alias is checked before routing, providers (including
 	// legacy OAuth delegation targets) are filtered from the resolved plan before any upstream call.
@@ -300,10 +305,11 @@ func (s *Server) handleInference(
 	}
 
 	s.recordSuccess(r, result.ProviderID, irReq.Model, result.Status, time.Since(startTime), ir.Usage{
-		InputTokens:     result.InputTokens,
-		OutputTokens:    result.OutputTokens,
-		CacheReadTokens: result.CachedTokens,
-		ReasoningTokens: result.ReasoningTokens,
+		InputTokens:      result.InputTokens,
+		OutputTokens:     result.OutputTokens,
+		CacheReadTokens:  result.CachedTokens,
+		CacheWriteTokens: result.CacheWriteTokens,
+		ReasoningTokens:  result.ReasoningTokens,
 	})
 	s.logMonitorSuccess(r, irReq.Model, result, rawBody, startTime)
 }

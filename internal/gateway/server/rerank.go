@@ -19,6 +19,7 @@ import (
 func (s *Server) HandleRerank(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	errCodec := codecs.MustFor(ir.ProtoOpenAIChat)
+	r, _ = withCall(r, "rerank", ir.ProtoOpenAIChat)
 	rawBody, err := readBodyLimited(r.Body, maxRequestBodyBytes)
 	if err != nil {
 		s.writeError(w, errCodec, ir.NewError(400, "read_body_failed", err.Error()))

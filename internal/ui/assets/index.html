@@ -42,6 +42,7 @@
       <button type="button" class="seg-btn on" data-view="providers"></button>
       <button type="button" class="seg-btn" data-view="routing"></button>
       <button type="button" class="seg-btn" data-view="tester"></button>
+      <button type="button" class="seg-btn" data-view="usage"></button>
       <button type="button" class="seg-btn" data-view="connect"></button>
     </nav>
 
@@ -179,6 +180,34 @@
     </section>
 
     <!-- View 4: Client Connect Snippets & Recent Calls -->
+    <section class="view" id="view-usage" data-view-panel="usage" hidden>
+      <div class="card panel">
+        <div class="panel-head">
+          <div>
+            <h2 id="usageTitle"></h2>
+            <p class="sub" id="usageSub"></p>
+          </div>
+          <div class="usage-controls">
+            <select id="usageRange" class="input">
+              <option value="24h">24h</option>
+              <option value="7d">7d</option>
+              <option value="30d">30d</option>
+            </select>
+            <select id="usageGroup" class="input">
+              <option value="provider">provider</option>
+              <option value="model">model</option>
+              <option value="caller">caller</option>
+              <option value="key">key</option>
+              <option value="day">day</option>
+            </select>
+            <button type="button" class="btn subtle" id="usageRefreshBtn">↻</button>
+          </div>
+        </div>
+        <div class="usage-totals" id="usageTotals"></div>
+        <div class="usage-table-wrap"><table class="usage-table" id="usageTable"></table></div>
+      </div>
+    </section>
+
     <section class="view" id="view-connect" data-view-panel="connect" hidden>
       <div class="card panel">
         <div class="panel-head">

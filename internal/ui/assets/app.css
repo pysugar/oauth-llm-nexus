@@ -1295,3 +1295,13 @@ input:focus, select:focus {
   word-break: break-all;
   font-size: 12px;
 }
+
+/* Usage & Cost view */
+.usage-controls { display: flex; gap: 8px; align-items: center; }
+.usage-totals { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin: 12px 0 16px; }
+.usage-tile { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border: 1px solid var(--line, rgba(127,127,127,.25)); border-radius: 10px; }
+.usage-tile strong { font-size: 18px; font-variant-numeric: tabular-nums; }
+.usage-table-wrap { overflow-x: auto; }
+.usage-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.usage-table th, .usage-table td { padding: 7px 10px; text-align: right; border-bottom: 1px solid var(--line, rgba(127,127,127,.18)); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.usage-table th:first-child, .usage-table td:first-child { text-align: left; }
